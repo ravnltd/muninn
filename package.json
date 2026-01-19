@@ -1,0 +1,24 @@
+{
+  "name": "claude-context-engine",
+  "version": "2.0.0",
+  "description": "Semantic memory system for Claude Code - persistent context across sessions",
+  "type": "module",
+  "bin": {
+    "context": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --compile --outfile=context",
+    "install-global": "bun build ./src/index.ts --compile --outfile=/usr/local/bin/context",
+    "dev": "bun run src/index.ts",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  },
+  "author": "Ravn",
+  "license": "MIT"
+}
