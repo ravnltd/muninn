@@ -34,10 +34,36 @@ context status
 
 ## Architecture
 
+### Codebase Structure (v2)
+
+```
+src/
+├── index.ts                 # CLI entry point and command router
+├── types.ts                 # All interfaces and type definitions
+├── database/
+│   ├── connection.ts        # Singleton DB connection manager
+│   └── queries/
+│       ├── infra.ts         # Infrastructure queries (N+1 optimized)
+│       └── search.ts        # FTS5 semantic search (parameterized)
+├── commands/
+│   ├── infra/               # server, service, route, status
+│   ├── analysis.ts          # Project analysis, Claude API integration
+│   ├── memory.ts            # file, decision, issue, learn, pattern, debt
+│   ├── query.ts             # Semantic search with optional re-ranking
+│   ├── session.ts           # Session tracking
+│   └── ship.ts              # Pre-deploy checklist
+└── utils/
+    ├── errors.ts            # Result types, error logging
+    ├── format.ts            # Output formatting (CLI, JSON, Mermaid)
+    └── validation.ts        # Zod schemas for CLI inputs
+```
+
+### Database Layout
+
 ```
 ~/.claude/
 ├── CLAUDE.md           # Global behavior rules (tells Claude to use memory)
-├── memory.db           # Global database (optional, for cross-project learnings)
+├── memory.db           # Global database (infrastructure, patterns, cross-project learnings)
 └── schema.sql          # Database schema
 
 ~/projects/myapp/
@@ -206,7 +232,7 @@ The `CLAUDE.md` file instructs Claude to:
 The schema includes `embedding BLOB` fields for future vector search. To enable semantic search:
 
 1. Install a local embedding model (e.g., via Ollama)
-2. Modify `context.ts` to generate embeddings on insert
+2. Modify `src/database/queries/search.ts` to generate embeddings on insert
 3. Use cosine similarity for semantic queries
 
 ```typescript
