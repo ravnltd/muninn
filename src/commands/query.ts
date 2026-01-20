@@ -18,15 +18,17 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
   const useSmartQuery = args.includes("--smart");
   const useVectorOnly = args.includes("--vector");
   const useFtsOnly = args.includes("--fts");
+  const useBrief = args.includes("--brief");
   const queryTerms = args.filter(a => !a.startsWith("--")).join(" ");
 
   if (!queryTerms) {
-    console.error("Usage: context query <text> [--smart] [--vector] [--fts]");
+    console.error("Usage: context query <text> [--smart] [--vector] [--fts] [--brief]");
     console.error("");
     console.error("Options:");
     console.error("  --smart    Use Claude re-ranking for better relevance");
     console.error("  --vector   Use vector similarity search only");
     console.error("  --fts      Use full-text search only (default without embeddings)");
+    console.error("  --brief    Return concise summaries instead of full content");
     process.exit(1);
   }
 
@@ -44,19 +46,19 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
     console.error("🧠 Using Claude re-ranking for semantic search...\n");
     try {
       const results = await semanticQueryWithReranking(db, queryTerms, projectId);
-      displayQueryResults(results);
-      outputJson(results);
+      displayQueryResults(results, useBrief);
+      outputJson(useBrief ? toBriefResults(results) : results);
     } catch (error) {
       logError('smartQuery', error);
       // Fall back to regular query
       const results = await performSemanticQuery(db, queryTerms, projectId, mode);
-      displayQueryResults(results);
-      outputJson(results);
+      displayQueryResults(results, useBrief);
+      outputJson(useBrief ? toBriefResults(results) : results);
     }
   } else {
     const results = await performSemanticQuery(db, queryTerms, projectId, mode);
-    displayQueryResults(results);
-    outputJson(results);
+    displayQueryResults(results, useBrief);
+    outputJson(useBrief ? toBriefResults(results) : results);
   }
 }
 
@@ -99,7 +101,7 @@ async function performSemanticQuery(
 // Display Query Results
 // ============================================================================
 
-function displayQueryResults(results: QueryResult[]): void {
+function displayQueryResults(results: QueryResult[], brief = false): void {
   if (results.length === 0) {
     console.error("No results found. Try different search terms or run `context analyze` first.");
     return;
@@ -109,15 +111,59 @@ function displayQueryResults(results: QueryResult[]): void {
 
   for (const result of results) {
     const typeIcon = getTypeIcon(result.type);
-    const content = result.content?.substring(0, 100) || '';
-    const ellipsis = (result.content?.length || 0) > 100 ? '...' : '';
 
-    console.error(`${typeIcon} [${result.type}] ${result.title}`);
-    if (content) {
-      console.error(`   ${content}${ellipsis}`);
+    if (brief) {
+      // Brief mode: one line per result
+      const summary = getBriefSummary(result);
+      console.error(`${typeIcon} ${result.title} — ${summary}`);
+    } else {
+      // Full mode: show content preview
+      const content = result.content?.substring(0, 100) || '';
+      const ellipsis = (result.content?.length || 0) > 100 ? '...' : '';
+
+      console.error(`${typeIcon} [${result.type}] ${result.title}`);
+      if (content) {
+        console.error(`   ${content}${ellipsis}`);
+      }
+      console.error('');
     }
-    console.error('');
   }
+}
+
+// ============================================================================
+// Brief Output Helpers
+// ============================================================================
+
+interface BriefResult {
+  type: string;
+  id: number;
+  title: string;
+  summary: string;
+}
+
+function getBriefSummary(result: QueryResult): string {
+  switch (result.type) {
+    case 'file':
+      return `fragility ${result.relevance ? Math.abs(result.relevance * 10).toFixed(0) : '?'}`;
+    case 'decision':
+      return result.content?.substring(0, 40) || 'decision';
+    case 'issue':
+      return result.content?.substring(0, 40) || 'issue';
+    case 'learning':
+    case 'global-learning':
+      return result.content?.substring(0, 40) || 'learning';
+    default:
+      return result.content?.substring(0, 40) || '';
+  }
+}
+
+function toBriefResults(results: QueryResult[]): BriefResult[] {
+  return results.map(r => ({
+    type: r.type,
+    id: r.id,
+    title: r.title,
+    summary: getBriefSummary(r),
+  }));
 }
 
 function getTypeIcon(type: string): string {

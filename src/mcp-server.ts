@@ -526,6 +526,175 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["files"],
         },
       },
+      {
+        name: "context_bookmark_add",
+        description:
+          "Save context to working memory. Use this to 'set aside' important information (code patterns, decisions, snippets) that you can recall later without keeping it in your context window.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            label: {
+              type: "string",
+              description: "Short label for the bookmark (e.g., 'auth pattern', 'db schema')",
+            },
+            content: {
+              type: "string",
+              description: "The content to bookmark",
+            },
+            source: {
+              type: "string",
+              description: "Source reference (e.g., 'file:src/auth.ts:10-50')",
+            },
+            content_type: {
+              type: "string",
+              enum: ["text", "code", "json", "markdown"],
+              description: "Type of content (default: text)",
+            },
+            priority: {
+              type: "number",
+              description: "Priority 1-5 (1 = highest, default: 3)",
+            },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Tags for filtering",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["label", "content"],
+        },
+      },
+      {
+        name: "context_bookmark_get",
+        description:
+          "Retrieve a bookmarked piece of context by label. Use this to recall information you previously set aside.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            label: {
+              type: "string",
+              description: "Label of the bookmark to retrieve",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["label"],
+        },
+      },
+      {
+        name: "context_bookmark_list",
+        description:
+          "List all bookmarks in working memory. Shows what context you have saved for quick recall.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_bookmark_delete",
+        description: "Delete a bookmark from working memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            label: {
+              type: "string",
+              description: "Label of the bookmark to delete",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["label"],
+        },
+      },
+      {
+        name: "context_bookmark_clear",
+        description: "Clear all bookmarks from working memory.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_focus_set",
+        description:
+          "Set your current work focus area. Queries will automatically prioritize results from this area. Use when starting work on a specific feature or module.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            area: {
+              type: "string",
+              description: "Focus area (e.g., 'authentication', 'api/v2', 'database layer')",
+            },
+            description: {
+              type: "string",
+              description: "What you're working on (optional)",
+            },
+            files: {
+              type: "array",
+              items: { type: "string" },
+              description: "File patterns to prioritize (e.g., ['src/auth/*', 'src/middleware/*'])",
+            },
+            keywords: {
+              type: "array",
+              items: { type: "string" },
+              description: "Keywords to boost in search (e.g., ['auth', 'session', 'token'])",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["area"],
+        },
+      },
+      {
+        name: "context_focus_get",
+        description:
+          "Get your current work focus. Shows what area you're focused on and any file/keyword boosts.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_focus_clear",
+        description: "Clear your current work focus.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
     ],
   };
 });
@@ -727,6 +896,62 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = runContext(`conflicts ${files.map(f => `"${f}"`).join(" ")}`, cwd);
         break;
       }
+
+      case "context_bookmark_add": {
+        const label = typedArgs.label as string;
+        const content = typedArgs.content as string;
+        const source = typedArgs.source ? `--source "${typedArgs.source}"` : "";
+        const contentType = typedArgs.content_type ? `--type ${typedArgs.content_type}` : "";
+        const priority = typedArgs.priority ? `--priority ${typedArgs.priority}` : "";
+        const tags = typedArgs.tags ? `--tags '${JSON.stringify(typedArgs.tags)}'` : "";
+
+        result = runContext(
+          `bookmark add --label "${label}" --content "${content.replace(/"/g, '\\"')}" ${source} ${contentType} ${priority} ${tags}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_bookmark_get": {
+        const label = typedArgs.label as string;
+        result = runContext(`bookmark get "${label}"`, cwd);
+        break;
+      }
+
+      case "context_bookmark_list":
+        result = runContext("bookmark list", cwd);
+        break;
+
+      case "context_bookmark_delete": {
+        const label = typedArgs.label as string;
+        result = runContext(`bookmark delete "${label}"`, cwd);
+        break;
+      }
+
+      case "context_bookmark_clear":
+        result = runContext("bookmark clear", cwd);
+        break;
+
+      case "context_focus_set": {
+        const area = typedArgs.area as string;
+        const desc = typedArgs.description ? `--description "${typedArgs.description}"` : "";
+        const files = typedArgs.files ? `--files '${JSON.stringify(typedArgs.files)}'` : "";
+        const keywords = typedArgs.keywords ? `--keywords '${JSON.stringify(typedArgs.keywords)}'` : "";
+
+        result = runContext(
+          `focus set --area "${area}" ${desc} ${files} ${keywords}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_focus_get":
+        result = runContext("focus get", cwd);
+        break;
+
+      case "context_focus_clear":
+        result = runContext("focus clear", cwd);
+        break;
 
       default:
         throw new Error(`Unknown tool: ${name}`);

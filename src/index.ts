@@ -15,6 +15,8 @@ import { handleEmbedCommand } from "./commands/embed";
 import { checkFiles, analyzeImpact, getSmartStatus, checkConflicts } from "./commands/intelligence";
 import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { showDependencies, refreshDependencies, generateDependencyGraph, findCircularDependencies } from "./commands/deps";
+import { handleBookmarkCommand } from "./commands/bookmark";
+import { handleFocusCommand } from "./commands/focus";
 import { outputSuccess } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -34,6 +36,19 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   brief                       Smart session brief (markdown summary)
   resume                      Resume from last session
 
+📌 Working Memory Commands:
+  bookmark add [options]      Save context for later recall
+  bookmark get <label>        Retrieve bookmarked content
+  bookmark list               List all bookmarks
+  bookmark delete <label>     Delete a bookmark
+  bookmark clear              Clear all bookmarks
+
+🎯 Focus Commands:
+  focus set <area>            Set current work area (boosts related queries)
+  focus get                   Show current focus
+  focus clear                 Clear current focus
+  focus list                  Show focus history
+
 📦 Dependency Commands:
   deps <file>                 Show imports and dependents for a file
   deps --refresh              Rebuild dependency graph for all files
@@ -45,7 +60,7 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   analyze                     Auto-analyze project with Claude API
   status                      Current project state (JSON)
   fragile                     List fragile files
-  query <text> [options]      Search context (--smart, --vector, --fts)
+  query <text> [options]      Search context (--smart, --vector, --fts, --brief)
   ship                        Pre-deploy checklist
 
 🔍 Vector Search Commands:
@@ -385,6 +400,17 @@ async function main(): Promise<void> {
         } else {
           console.error("Usage: context deps <file> | --refresh | --graph [file] | --cycles");
         }
+        break;
+
+      // Working memory commands
+      case "bookmark":
+      case "bm":
+        handleBookmarkCommand(db, projectId, subArgs);
+        break;
+
+      // Focus commands
+      case "focus":
+        handleFocusCommand(db, projectId, subArgs);
         break;
 
       default:

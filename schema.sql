@@ -592,3 +592,48 @@ JOIN services s1 ON sd.service_id = s1.id
 JOIN servers srv1 ON s1.server_id = srv1.id
 LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
 LEFT JOIN servers srv2 ON s2.server_id = srv2.id;
+
+-- ============================================================================
+-- SESSION WORKING MEMORY TABLES
+-- ============================================================================
+
+-- Bookmarks: Session-scoped working memory for Claude
+-- Allows Claude to "set aside" context and recall it later without keeping it in context window
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,                    -- "auth pattern", "db schema", etc.
+    content TEXT NOT NULL,                  -- The bookmarked content
+    source TEXT,                            -- "file:path:lines" or "decision:id" etc.
+    content_type TEXT DEFAULT 'text',       -- text, code, json, markdown
+    priority INTEGER DEFAULT 3,             -- 1-5, for sorting (1 = highest)
+    tags TEXT,                              -- JSON array of tags for filtering
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME,                    -- Optional auto-expiry
+    UNIQUE(project_id, label)               -- One bookmark per label per project
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_session ON bookmarks(session_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_project ON bookmarks(project_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_label ON bookmarks(label);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_priority ON bookmarks(priority);
+
+-- Focus: Tell Claude what area you're working in
+-- Queries automatically prioritize results from the focus area
+CREATE TABLE IF NOT EXISTS focus (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+    area TEXT NOT NULL,                     -- "authentication", "api/v2", "database layer"
+    description TEXT,                       -- Optional description of what you're doing
+    files TEXT,                             -- JSON array of file patterns to prioritize
+    keywords TEXT,                          -- JSON array of keywords to boost
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    cleared_at DATETIME,                    -- When focus was cleared
+    UNIQUE(project_id, session_id)          -- One focus per session per project
+);
+
+CREATE INDEX IF NOT EXISTS idx_focus_project ON focus(project_id);
+CREATE INDEX IF NOT EXISTS idx_focus_session ON focus(session_id);
+CREATE INDEX IF NOT EXISTS idx_focus_area ON focus(area);
