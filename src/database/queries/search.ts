@@ -7,6 +7,8 @@
 import type { Database } from "bun:sqlite";
 import type { QueryResult, GlobalLearning, Pattern } from "../../types";
 import { logError } from "../../utils/errors";
+import { isVoyageAvailable } from "../../embeddings";
+import { hasEmbeddings, hybridSearch as vectorHybridSearch } from "./vector";
 
 // ============================================================================
 // Semantic Query (Fixed - Parameterized)
@@ -43,8 +45,48 @@ interface LearningSearchResult {
 /**
  * Perform semantic search across all knowledge
  * Uses parameterized queries to prevent SQL injection
+ * Supports hybrid search (FTS + vector) when embeddings are available
  */
-export function semanticQuery(
+export async function semanticQuery(
+  db: Database,
+  query: string,
+  projectId?: number,
+  options?: { mode?: 'auto' | 'fts' | 'vector' | 'hybrid' }
+): Promise<QueryResult[]> {
+  const mode = options?.mode ?? 'auto';
+
+  // Determine if we should use hybrid/vector search
+  const useVectorSearch =
+    mode === 'vector' ||
+    mode === 'hybrid' ||
+    (mode === 'auto' && isVoyageAvailable() && projectId && hasEmbeddings(db, projectId));
+
+  // If vector mode or hybrid mode with embeddings available, try vector search first
+  if (useVectorSearch && projectId) {
+    try {
+      const vectorResults = await vectorHybridSearch(db, query, projectId);
+      if (vectorResults.length > 0) {
+        // Merge with FTS results for hybrid mode
+        if (mode === 'hybrid' || mode === 'auto') {
+          const ftsResults = ftsOnlyQuery(db, query, projectId);
+          return mergeResults(vectorResults, ftsResults);
+        }
+        return vectorResults;
+      }
+    } catch (error) {
+      logError('semanticQuery:vector', error);
+      // Fall through to FTS
+    }
+  }
+
+  // Fall back to FTS-only
+  return ftsOnlyQuery(db, query, projectId);
+}
+
+/**
+ * FTS-only query (original semanticQuery implementation)
+ */
+function ftsOnlyQuery(
   db: Database,
   query: string,
   projectId?: number
@@ -203,6 +245,35 @@ export function semanticQuery(
   return results
     .sort((a, b) => a.relevance - b.relevance)
     .slice(0, 10);
+}
+
+/**
+ * Merge vector and FTS results, removing duplicates
+ * Prioritizes vector results (they appear first)
+ */
+function mergeResults(vectorResults: QueryResult[], ftsResults: QueryResult[]): QueryResult[] {
+  const seen = new Set<string>();
+  const merged: QueryResult[] = [];
+
+  // Add vector results first (higher priority)
+  for (const result of vectorResults) {
+    const key = `${result.type}:${result.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(result);
+    }
+  }
+
+  // Add FTS results that aren't already in the list
+  for (const result of ftsResults) {
+    const key = `${result.type}:${result.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(result);
+    }
+  }
+
+  return merged.slice(0, 10);
 }
 
 // ============================================================================

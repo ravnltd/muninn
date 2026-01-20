@@ -14,27 +14,47 @@ import { logError } from "../utils/errors";
 // Semantic Query with Global Learning Integration
 // ============================================================================
 
-export function handleQueryCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleQueryCommand(db: Database, projectId: number, args: string[]): Promise<void> {
   const useSmartQuery = args.includes("--smart");
-  const queryTerms = args.filter(a => a !== "--smart").join(" ");
+  const useVectorOnly = args.includes("--vector");
+  const useFtsOnly = args.includes("--fts");
+  const queryTerms = args.filter(a => !a.startsWith("--")).join(" ");
 
   if (!queryTerms) {
-    console.error("Usage: context query <text> [--smart]");
+    console.error("Usage: context query <text> [--smart] [--vector] [--fts]");
+    console.error("");
+    console.error("Options:");
+    console.error("  --smart    Use Claude re-ranking for better relevance");
+    console.error("  --vector   Use vector similarity search only");
+    console.error("  --fts      Use full-text search only (default without embeddings)");
     process.exit(1);
+  }
+
+  // Determine search mode
+  let mode: 'auto' | 'fts' | 'vector' | 'hybrid' = 'auto';
+  if (useVectorOnly) {
+    mode = 'vector';
+    console.error("🔍 Using vector similarity search...\n");
+  } else if (useFtsOnly) {
+    mode = 'fts';
+    console.error("🔍 Using full-text search...\n");
   }
 
   if (useSmartQuery) {
     console.error("🧠 Using Claude re-ranking for semantic search...\n");
-    semanticQueryWithReranking(db, queryTerms, projectId)
-      .then(results => outputJson(results))
-      .catch(error => {
-        logError('smartQuery', error);
-        // Fall back to regular query
-        const results = performSemanticQuery(db, queryTerms, projectId);
-        outputJson(results);
-      });
+    try {
+      const results = await semanticQueryWithReranking(db, queryTerms, projectId);
+      displayQueryResults(results);
+      outputJson(results);
+    } catch (error) {
+      logError('smartQuery', error);
+      // Fall back to regular query
+      const results = await performSemanticQuery(db, queryTerms, projectId, mode);
+      displayQueryResults(results);
+      outputJson(results);
+    }
   } else {
-    const results = performSemanticQuery(db, queryTerms, projectId);
+    const results = await performSemanticQuery(db, queryTerms, projectId, mode);
     displayQueryResults(results);
     outputJson(results);
   }
@@ -44,23 +64,30 @@ export function handleQueryCommand(db: Database, projectId: number, args: string
 // Perform Semantic Query
 // ============================================================================
 
-function performSemanticQuery(db: Database, query: string, projectId: number): QueryResult[] {
-  const results = semanticQuery(db, query, projectId);
+async function performSemanticQuery(
+  db: Database,
+  query: string,
+  projectId: number,
+  mode: 'auto' | 'fts' | 'vector' | 'hybrid' = 'auto'
+): Promise<QueryResult[]> {
+  const results = await semanticQuery(db, query, projectId, { mode });
 
-  // Also search global learnings
-  try {
-    const globalDb = getGlobalDb();
-    const globalLearnings = searchGlobalLearnings(globalDb, query);
-    results.push(...globalLearnings.map(l => ({
-      id: l.id,
-      title: l.title,
-      content: l.content,
-      relevance: -0.5, // Boost global learnings
-      type: "global-learning" as const,
-    })));
-    closeGlobalDb();
-  } catch (error) {
-    logError('performSemanticQuery:global', error);
+  // Also search global learnings (only for fts/auto modes)
+  if (mode !== 'vector') {
+    try {
+      const globalDb = getGlobalDb();
+      const globalLearnings = searchGlobalLearnings(globalDb, query);
+      results.push(...globalLearnings.map(l => ({
+        id: l.id,
+        title: l.title,
+        content: l.content,
+        relevance: -0.5, // Boost global learnings
+        type: "global-learning" as const,
+      })));
+      closeGlobalDb();
+    } catch (error) {
+      logError('performSemanticQuery:global', error);
+    }
   }
 
   return results
@@ -119,7 +146,7 @@ async function semanticQueryWithReranking(
   projectId: number
 ): Promise<QueryResult[]> {
   // Stage 1: Get candidates using FTS5
-  const candidates = performSemanticQuery(db, query, projectId);
+  const candidates = await performSemanticQuery(db, query, projectId, 'fts');
 
   if (candidates.length <= 3) {
     return candidates; // Not enough to rerank
@@ -127,7 +154,7 @@ async function semanticQueryWithReranking(
 
   // Stage 2: Use Claude to rerank
   try {
-    const candidateList = candidates.map((c, i) =>
+    const candidateList = candidates.map((c: QueryResult, i: number) =>
       `[${i}] ${c.type}: ${c.title} - ${c.content?.substring(0, 100) || ""}...`
     ).join("\n");
 

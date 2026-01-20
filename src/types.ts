@@ -357,6 +357,34 @@ export interface QueryResult {
 }
 
 // ============================================================================
+// Vector Search Types
+// ============================================================================
+
+export type EmbeddingProvider = 'voyage' | 'disabled';
+
+export interface VectorSearchResult {
+  id: number;
+  type: QueryResultType;
+  title: string;
+  content: string | null;
+  similarity: number;
+}
+
+export interface HybridSearchOptions {
+  vectorWeight?: number;
+  ftsWeight?: number;
+  limit?: number;
+  minSimilarity?: number;
+}
+
+export interface EmbeddingStats {
+  table: string;
+  total: number;
+  withEmbedding: number;
+  coverage: number;
+}
+
+// ============================================================================
 // Analysis Types
 // ============================================================================
 

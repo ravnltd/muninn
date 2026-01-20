@@ -5,7 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import { outputJson, outputSuccess, getTimeAgo } from "../utils/format";
-import { exitWithUsage } from "../utils/errors";
+import { exitWithUsage, safeJsonParse } from "../utils/errors";
 import { parseSessionEndArgs } from "../utils/validation";
 
 // ============================================================================
@@ -221,14 +221,59 @@ export function generateResume(db: Database, projectId: number): string {
     }
   }
 
+  if (lastSession.queries_made) {
+    try {
+      const queries = JSON.parse(lastSession.queries_made as string);
+      if (queries.length > 0) {
+        md += `## Queries Made\n`;
+        for (const q of queries.slice(0, 5)) {
+          md += `- "${q}"\n`;
+        }
+        if (queries.length > 5) {
+          md += `- ...and ${queries.length - 5} more\n`;
+        }
+        md += "\n";
+      }
+    } catch {
+      // Invalid JSON, skip
+    }
+  }
+
   if (lastSession.next_steps) {
     md += `## Next Steps\n`;
-    md += `${lastSession.next_steps}\n\n`;
+    // Parse next_steps as a checklist if it contains bullet points
+    const nextSteps = lastSession.next_steps as string;
+    if (nextSteps.includes("\n") || nextSteps.includes("-")) {
+      const steps = nextSteps.split(/[\n•-]/).map(s => s.trim()).filter(Boolean);
+      for (const step of steps) {
+        md += `- [ ] ${step}\n`;
+      }
+    } else {
+      md += `- [ ] ${nextSteps}\n`;
+    }
+    md += "\n";
   }
 
   if (lastSession.learnings) {
     md += `## Learnings from Session\n`;
     md += `${lastSession.learnings}\n\n`;
+  }
+
+  // Add context about issues found/resolved
+  if (lastSession.issues_found || lastSession.issues_resolved) {
+    const found = safeJsonParse<number[]>(lastSession.issues_found as string, []);
+    const resolved = safeJsonParse<number[]>(lastSession.issues_resolved as string, []);
+
+    if (found.length > 0 || resolved.length > 0) {
+      md += `## Issues\n`;
+      if (found.length > 0) {
+        md += `- Found: ${found.map(id => `#${id}`).join(", ")}\n`;
+      }
+      if (resolved.length > 0) {
+        md += `- Resolved: ${resolved.map(id => `#${id}`).join(", ")}\n`;
+      }
+      md += "\n";
+    }
   }
 
   if (isOngoing) {
@@ -241,4 +286,130 @@ export function generateResume(db: Database, projectId: number): string {
   }
 
   return md;
+}
+
+// ============================================================================
+// Session Tracking Helpers
+// ============================================================================
+
+/**
+ * Get the current active session ID for a project
+ */
+export function getActiveSessionId(db: Database, projectId: number): number | null {
+  const session = db.query<{ id: number }, [number]>(`
+    SELECT id FROM sessions
+    WHERE project_id = ? AND ended_at IS NULL
+    ORDER BY started_at DESC
+    LIMIT 1
+  `).get(projectId);
+
+  return session?.id || null;
+}
+
+/**
+ * Track a file read in the current active session
+ */
+export function trackFileRead(db: Database, projectId: number, filePath: string): void {
+  const sessionId = getActiveSessionId(db, projectId);
+  if (!sessionId) return;
+
+  const session = db.query<{ files_read: string | null }, [number]>(`
+    SELECT files_read FROM sessions WHERE id = ?
+  `).get(sessionId);
+
+  const filesRead = safeJsonParse<string[]>(session?.files_read || "[]", []);
+
+  if (!filesRead.includes(filePath)) {
+    filesRead.push(filePath);
+    db.run(`
+      UPDATE sessions SET files_read = ? WHERE id = ?
+    `, [JSON.stringify(filesRead), sessionId]);
+  }
+}
+
+/**
+ * Track a query made in the current active session
+ */
+export function trackQuery(db: Database, projectId: number, query: string): void {
+  const sessionId = getActiveSessionId(db, projectId);
+  if (!sessionId) return;
+
+  const session = db.query<{ queries_made: string | null }, [number]>(`
+    SELECT queries_made FROM sessions WHERE id = ?
+  `).get(sessionId);
+
+  const queriesMade = safeJsonParse<string[]>(session?.queries_made || "[]", []);
+
+  // Keep last 50 queries to avoid unbounded growth
+  if (queriesMade.length >= 50) {
+    queriesMade.shift();
+  }
+
+  queriesMade.push(query);
+  db.run(`
+    UPDATE sessions SET queries_made = ? WHERE id = ?
+  `, [JSON.stringify(queriesMade), sessionId]);
+}
+
+/**
+ * Track a file modification in the current active session
+ */
+export function trackFileTouched(db: Database, projectId: number, filePath: string): void {
+  const sessionId = getActiveSessionId(db, projectId);
+  if (!sessionId) return;
+
+  const session = db.query<{ files_touched: string | null }, [number]>(`
+    SELECT files_touched FROM sessions WHERE id = ?
+  `).get(sessionId);
+
+  const filesTouched = safeJsonParse<string[]>(session?.files_touched || "[]", []);
+
+  if (!filesTouched.includes(filePath)) {
+    filesTouched.push(filePath);
+    db.run(`
+      UPDATE sessions SET files_touched = ? WHERE id = ?
+    `, [JSON.stringify(filesTouched), sessionId]);
+  }
+}
+
+/**
+ * Track an issue found in the current active session
+ */
+export function trackIssueFound(db: Database, projectId: number, issueId: number): void {
+  const sessionId = getActiveSessionId(db, projectId);
+  if (!sessionId) return;
+
+  const session = db.query<{ issues_found: string | null }, [number]>(`
+    SELECT issues_found FROM sessions WHERE id = ?
+  `).get(sessionId);
+
+  const issuesFound = safeJsonParse<number[]>(session?.issues_found || "[]", []);
+
+  if (!issuesFound.includes(issueId)) {
+    issuesFound.push(issueId);
+    db.run(`
+      UPDATE sessions SET issues_found = ? WHERE id = ?
+    `, [JSON.stringify(issuesFound), sessionId]);
+  }
+}
+
+/**
+ * Track an issue resolved in the current active session
+ */
+export function trackIssueResolved(db: Database, projectId: number, issueId: number): void {
+  const sessionId = getActiveSessionId(db, projectId);
+  if (!sessionId) return;
+
+  const session = db.query<{ issues_resolved: string | null }, [number]>(`
+    SELECT issues_resolved FROM sessions WHERE id = ?
+  `).get(sessionId);
+
+  const issuesResolved = safeJsonParse<number[]>(session?.issues_resolved || "[]", []);
+
+  if (!issuesResolved.includes(issueId)) {
+    issuesResolved.push(issueId);
+    db.run(`
+      UPDATE sessions SET issues_resolved = ? WHERE id = ?
+    `, [JSON.stringify(issuesResolved), sessionId]);
+  }
 }

@@ -11,12 +11,21 @@ import { outputJson, outputSuccess, computeContentHash, getFileMtime } from "../
 import { logError, exitWithUsage } from "../utils/errors";
 import { getGlobalDb, closeGlobalDb } from "../database/connection";
 import { addGlobalLearning, addPattern, searchPatterns, getAllPatterns, listTechDebt, addTechDebt, resolveTechDebt } from "../database/queries/search";
+import {
+  generateEmbedding,
+  serializeEmbedding,
+  isVoyageAvailable,
+  fileToText,
+  decisionToText,
+  issueToText,
+  learningToText,
+} from "../embeddings";
 
 // ============================================================================
 // File Commands
 // ============================================================================
 
-export function fileAdd(db: Database, projectId: number, args: string[]): void {
+export async function fileAdd(db: Database, projectId: number, args: string[]): Promise<void> {
   const { values } = parseFileArgs(args);
 
   if (!values.path) {
@@ -62,6 +71,28 @@ export function fileAdd(db: Database, projectId: number, args: string[]): void {
     fsMtime,
   ]);
 
+  // Generate embedding if Voyage API is available
+  if (isVoyageAvailable()) {
+    try {
+      const text = fileToText(values.path, values.purpose || null);
+      const embedding = await generateEmbedding(text);
+      if (embedding) {
+        // Get the ID (either new insert or existing record)
+        const file = db.query<{ id: number }, [number, string]>(
+          "SELECT id FROM files WHERE project_id = ? AND path = ?"
+        ).get(projectId, values.path);
+        if (file) {
+          db.run("UPDATE files SET embedding = ? WHERE id = ?", [
+            serializeEmbedding(embedding),
+            file.id,
+          ]);
+        }
+      }
+    } catch (error) {
+      logError("fileAdd:embedding", error);
+    }
+  }
+
   console.error(`✅ File '${values.path}' added/updated`);
   outputSuccess({ path: values.path });
 }
@@ -104,7 +135,7 @@ export function fileList(db: Database, projectId: number, filter?: string): void
 // Decision Commands
 // ============================================================================
 
-export function decisionAdd(db: Database, projectId: number, args: string[]): void {
+export async function decisionAdd(db: Database, projectId: number, args: string[]): Promise<void> {
   const { values } = parseDecisionArgs(args);
 
   if (!values.title || !values.decision) {
@@ -122,9 +153,27 @@ export function decisionAdd(db: Database, projectId: number, args: string[]): vo
     values.affects || null,
   ]);
 
-  console.error(`✅ Decision D${result.lastInsertRowid} recorded`);
+  const insertedId = Number(result.lastInsertRowid);
+
+  // Generate embedding if Voyage API is available
+  if (isVoyageAvailable()) {
+    try {
+      const text = decisionToText(values.title, values.decision, values.reasoning || null);
+      const embedding = await generateEmbedding(text);
+      if (embedding) {
+        db.run("UPDATE decisions SET embedding = ? WHERE id = ?", [
+          serializeEmbedding(embedding),
+          insertedId,
+        ]);
+      }
+    } catch (error) {
+      logError("decisionAdd:embedding", error);
+    }
+  }
+
+  console.error(`✅ Decision D${insertedId} recorded`);
   outputSuccess({
-    id: Number(result.lastInsertRowid),
+    id: insertedId,
     title: values.title,
   });
 }
@@ -155,7 +204,7 @@ export function decisionList(db: Database, projectId: number): void {
 // Issue Commands
 // ============================================================================
 
-export function issueAdd(db: Database, projectId: number, args: string[]): void {
+export async function issueAdd(db: Database, projectId: number, args: string[]): Promise<void> {
   const { values } = parseIssueArgs(args);
 
   if (!values.title) {
@@ -175,9 +224,27 @@ export function issueAdd(db: Database, projectId: number, args: string[]): void 
     values.workaround || null,
   ]);
 
-  console.error(`✅ Issue #${result.lastInsertRowid} created`);
+  const insertedId = Number(result.lastInsertRowid);
+
+  // Generate embedding if Voyage API is available
+  if (isVoyageAvailable()) {
+    try {
+      const text = issueToText(values.title, values.description || null, values.workaround || null);
+      const embedding = await generateEmbedding(text);
+      if (embedding) {
+        db.run("UPDATE issues SET embedding = ? WHERE id = ?", [
+          serializeEmbedding(embedding),
+          insertedId,
+        ]);
+      }
+    } catch (error) {
+      logError("issueAdd:embedding", error);
+    }
+  }
+
+  console.error(`✅ Issue #${insertedId} created`);
   outputSuccess({
-    id: Number(result.lastInsertRowid),
+    id: insertedId,
     title: values.title,
   });
 }
@@ -223,7 +290,7 @@ export function issueList(db: Database, projectId: number, status?: string): voi
 // Learning Commands
 // ============================================================================
 
-export function learnAdd(db: Database, projectId: number, args: string[]): void {
+export async function learnAdd(db: Database, projectId: number, args: string[]): Promise<void> {
   const { values } = parseLearnArgs(args);
 
   if (!values.title || !values.content) {
@@ -260,9 +327,27 @@ export function learnAdd(db: Database, projectId: number, args: string[]): void 
       values.context || null,
     ]);
 
-    console.error(`✅ Learning L${result.lastInsertRowid} recorded`);
+    const insertedId = Number(result.lastInsertRowid);
+
+    // Generate embedding if Voyage API is available
+    if (isVoyageAvailable()) {
+      try {
+        const text = learningToText(values.title, values.content, values.context || null);
+        const embedding = await generateEmbedding(text);
+        if (embedding) {
+          db.run("UPDATE learnings SET embedding = ? WHERE id = ?", [
+            serializeEmbedding(embedding),
+            insertedId,
+          ]);
+        }
+      } catch (error) {
+        logError("learnAdd:embedding", error);
+      }
+    }
+
+    console.error(`✅ Learning L${insertedId} recorded`);
     outputSuccess({
-      id: Number(result.lastInsertRowid),
+      id: insertedId,
       title: values.title,
       global: false,
     });

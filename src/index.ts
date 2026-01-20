@@ -11,6 +11,10 @@ import { runAnalysis, showStatus, showFragile, generateBrief, showStack } from "
 import { fileAdd, fileGet, fileList, decisionAdd, decisionList, issueAdd, issueResolve, issueList, learnAdd, learnList, patternAdd, patternSearch, patternList, debtAdd, debtList, debtResolve } from "./commands/memory";
 import { sessionStart, sessionEnd, sessionLast, sessionList, generateResume } from "./commands/session";
 import { handleShipCommand } from "./commands/ship";
+import { handleEmbedCommand } from "./commands/embed";
+import { checkFiles, analyzeImpact, getSmartStatus, checkConflicts } from "./commands/intelligence";
+import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
+import { showDependencies, refreshDependencies, generateDependencyGraph, findCircularDependencies } from "./commands/deps";
 import { outputSuccess } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -21,44 +25,35 @@ import { join } from "path";
 
 const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
 
-🔒 Security Commands:
-  secure [files...]           OWASP security scan (SQL injection, XSS, etc.)
-  secrets [files...]          Detect hardcoded secrets and API keys
-  audit                       Check dependencies for vulnerabilities
-
-📊 Quality Commands:
-  quality [files...]          Code quality analysis (complexity, types, etc.)
-  types                       Check TypeScript type coverage
-  test-gen <file>             Generate Vitest tests for a file
-  ship                        Pre-deploy checklist
-  review <file>               AI code review
-
-⚡ Performance Commands:
-  perf [files...]             Detect performance issues (N+1, sync ops, etc.)
-  queries                     Analyze database query patterns
-
-📈 Growth Commands:
-  growth                      Analyze virality potential
-  scaffold <type>             Generate growth features (referral, share, invite)
-
 🧠 Intelligence Commands:
+  check <files...>            Pre-edit warnings (fragility, issues, staleness)
+  impact <file>               Analyze what depends on this file
+  smart-status (ss)           Actionable status with recommendations
+  drift                       Detect knowledge drift (stale files + git changes)
+  conflicts <files...>        Check if files changed since last query
   brief                       Smart session brief (markdown summary)
   resume                      Resume from last session
-  drift                       Detect knowledge drift (stale + git changes)
-  smart-status (ss)           Actionable status with recommendations
-  suggest <task>              AI suggests files for your task
-  check <files...>            Pre-edit warnings for files
-  impact <file>               Analyze change impact
-  conflicts <files...>        Check if files changed since last query
-  hooks                       Install git hooks for auto-updates
+
+📦 Dependency Commands:
+  deps <file>                 Show imports and dependents for a file
+  deps --refresh              Rebuild dependency graph for all files
+  deps --graph [file]         Generate Mermaid dependency diagram
+  deps --cycles               Find circular dependencies
 
 📁 Project Commands:
   init                        Initialize context DB for current project
   analyze                     Auto-analyze project with Claude API
   status                      Current project state (JSON)
   fragile                     List fragile files
-  query <text> [--smart]      Search context (--smart uses Claude re-ranking)
+  query <text> [options]      Search context (--smart, --vector, --fts)
+  ship                        Pre-deploy checklist
 
+🔍 Vector Search Commands:
+  embed status                Show embedding coverage statistics
+  embed backfill [table]      Generate missing embeddings
+  embed test "text"           Test embedding generation
+
+📝 Memory Commands:
   file add <path> [options]   Add/update file knowledge
   file get <path>             Get file details
   file list [filter]          List known files
@@ -73,9 +68,11 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   learn add [options]         Record a learning (--global for cross-project)
   learn list                  List learnings
 
+📋 Session Commands:
   session start <goal>        Start a work session
   session end <id> [options]  End a session
   session last                Get last session
+  session list                List recent sessions
 
 🌐 Global Commands:
   pattern add [options]       Add a reusable pattern
@@ -203,7 +200,11 @@ async function main(): Promise<void> {
     switch (command) {
       case "query":
       case "q":
-        handleQueryCommand(db, projectId, subArgs);
+        await handleQueryCommand(db, projectId, subArgs);
+        break;
+
+      case "embed":
+        await handleEmbedCommand(db, projectId, subArgs);
         break;
 
       case "file":
@@ -211,7 +212,7 @@ async function main(): Promise<void> {
         const fileCmd = subArgs[0];
         switch (fileCmd) {
           case "add":
-            fileAdd(db, projectId, subArgs.slice(1));
+            await fileAdd(db, projectId, subArgs.slice(1));
             break;
           case "get":
             fileGet(db, projectId, subArgs[1]);
@@ -229,7 +230,7 @@ async function main(): Promise<void> {
         const decCmd = subArgs[0];
         switch (decCmd) {
           case "add":
-            decisionAdd(db, projectId, subArgs.slice(1));
+            await decisionAdd(db, projectId, subArgs.slice(1));
             break;
           case "list":
             decisionList(db, projectId);
@@ -244,7 +245,7 @@ async function main(): Promise<void> {
         const issueCmd = subArgs[0];
         switch (issueCmd) {
           case "add":
-            issueAdd(db, projectId, subArgs.slice(1));
+            await issueAdd(db, projectId, subArgs.slice(1));
             break;
           case "resolve":
             issueResolve(db, parseInt(subArgs[1]), subArgs.slice(2).join(" "));
@@ -262,7 +263,7 @@ async function main(): Promise<void> {
         const learnCmd = subArgs[0];
         switch (learnCmd) {
           case "add":
-            learnAdd(db, projectId, subArgs.slice(1));
+            await learnAdd(db, projectId, subArgs.slice(1));
             break;
           case "list":
             learnList(db, projectId);
@@ -326,6 +327,64 @@ async function main(): Promise<void> {
 
       case "ship":
         await handleShipCommand(db, projectId, process.cwd());
+        break;
+
+      // Intelligence commands
+      case "check":
+        if (subArgs.length === 0) {
+          console.error("Usage: context check <file1> [file2] ...");
+        } else {
+          checkFiles(db, projectId, process.cwd(), subArgs);
+        }
+        break;
+
+      case "impact":
+        if (subArgs.length === 0) {
+          console.error("Usage: context impact <file>");
+        } else {
+          analyzeImpact(db, projectId, process.cwd(), subArgs[0]);
+        }
+        break;
+
+      case "smart-status":
+      case "ss":
+        getSmartStatus(db, projectId, process.cwd());
+        break;
+
+      case "drift":
+        detectDrift(db, projectId, process.cwd());
+        break;
+
+      case "conflicts":
+        if (subArgs.length === 0) {
+          console.error("Usage: context conflicts <file1> [file2] ...");
+        } else {
+          checkConflicts(db, projectId, process.cwd(), subArgs);
+        }
+        break;
+
+      case "git-info":
+        outputSuccess(getGitInfo(process.cwd()));
+        break;
+
+      case "sync-hashes":
+        syncFileHashes(db, projectId, process.cwd());
+        break;
+
+      // Dependency commands
+      case "deps":
+        if (subArgs.includes("--refresh")) {
+          refreshDependencies(db, projectId, process.cwd());
+        } else if (subArgs.includes("--graph")) {
+          const focusFile = subArgs.find(a => !a.startsWith("--"));
+          generateDependencyGraph(db, projectId, process.cwd(), focusFile);
+        } else if (subArgs.includes("--cycles")) {
+          findCircularDependencies(process.cwd());
+        } else if (subArgs.length > 0 && !subArgs[0].startsWith("--")) {
+          showDependencies(db, projectId, process.cwd(), subArgs[0]);
+        } else {
+          console.error("Usage: context deps <file> | --refresh | --graph [file] | --cycles");
+        }
         break;
 
       default:

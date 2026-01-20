@@ -2,6 +2,45 @@
 
 A semantic memory system for Claude Code. Instead of losing context between sessions, Claude stores and queries a structured database of project knowledge.
 
+## MCP Integration (Recommended)
+
+The context commands are available as **native Claude Code tools** via MCP. This means Claude won't "forget" to use them — they appear in Claude's tool list alongside Read, Write, etc.
+
+### Setup
+
+```bash
+# Install the CLI
+chmod +x install.sh
+./install.sh
+
+# Register MCP server with Claude Code (user scope = all projects)
+claude mcp add --scope user --transport stdio claude-context -- bun run /path/to/claude-context/src/mcp-server.ts
+
+# Verify it's connected
+claude mcp list
+```
+
+### Available Tools
+
+Once registered, Claude has these native tools:
+
+| Tool | Purpose |
+|------|---------|
+| `context_status` | Get project state, fragile files, issues, decisions |
+| `context_fragile` | List dangerous files |
+| `context_query` | Search project memory |
+| `context_file_add` | Record file knowledge |
+| `context_decision_add` | Record architectural decisions |
+| `context_issue_add` | Track issues |
+| `context_issue_resolve` | Mark issues fixed |
+| `context_learn_add` | Save learnings |
+| `context_debt_add` | Track tech debt |
+| `context_ship` | Pre-deploy checklist |
+
+### Why MCP?
+
+The original approach relied on CLAUDE.md telling Claude to run bash commands. Problem: Claude often forgot. MCP makes these first-class tools that Claude can't ignore.
+
 ## The Problem
 
 - Claude forgets everything between sessions
