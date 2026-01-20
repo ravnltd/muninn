@@ -4,3 +4,4 @@ context
 *.db-shm
 *.db-wal
 .claude/
+context-mcp
