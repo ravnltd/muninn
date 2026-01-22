@@ -514,6 +514,7 @@ export interface FileCheck {
   relatedIssues: Array<{ id: number; title: string }>;
   relatedDecisions: Array<{ id: number; title: string }>;
   isStale: boolean;
+  correlatedFiles?: Array<{ file: string; cochange_count: number }>;
 }
 
 export interface ImpactResult {

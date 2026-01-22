@@ -5,8 +5,27 @@
 
 import type { Database } from "bun:sqlite";
 import { outputJson, outputSuccess, getTimeAgo } from "../utils/format";
-import { exitWithUsage, safeJsonParse } from "../utils/errors";
+import { exitWithUsage, safeJsonParse, logError } from "../utils/errors";
 import { parseSessionEndArgs } from "../utils/validation";
+import { getApiKey, redactApiKeys } from "../utils/api-keys";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+interface FileCorrelation {
+  file: string;
+  cochange_count: number;
+  correlation_strength: number;
+  last_cochange: string;
+}
+
+interface ExtractedLearning {
+  title: string;
+  content: string;
+  category: string;
+  confidence: number;
+}
 
 // ============================================================================
 // Session Start
@@ -411,5 +430,391 @@ export function trackIssueResolved(db: Database, projectId: number, issueId: num
     db.run(`
       UPDATE sessions SET issues_resolved = ? WHERE id = ?
     `, [JSON.stringify(issuesResolved), sessionId]);
+  }
+}
+
+// ============================================================================
+// File Correlation Tracking
+// ============================================================================
+
+/**
+ * Update file correlations based on files changed together
+ */
+export function updateFileCorrelations(
+  db: Database,
+  projectId: number,
+  files: string[]
+): void {
+  if (files.length < 2) return;
+
+  // Sort files to ensure consistent ordering (file_a < file_b alphabetically)
+  const sortedFiles = [...files].sort();
+
+  // Create all pairs
+  for (let i = 0; i < sortedFiles.length; i++) {
+    for (let j = i + 1; j < sortedFiles.length; j++) {
+      const fileA = sortedFiles[i];
+      const fileB = sortedFiles[j];
+
+      try {
+        // Upsert correlation
+        db.run(
+          `INSERT INTO file_correlations (project_id, file_a, file_b, cochange_count, last_cochange)
+           VALUES (?, ?, ?, 1, datetime('now'))
+           ON CONFLICT(project_id, file_a, file_b) DO UPDATE SET
+             cochange_count = cochange_count + 1,
+             last_cochange = datetime('now'),
+             correlation_strength = CAST(cochange_count + 1 AS REAL) /
+               (1 + (julianday('now') - julianday(created_at)))`,
+          [projectId, fileA, fileB]
+        );
+      } catch {
+        // Table might not exist in older databases, skip silently
+      }
+    }
+  }
+}
+
+/**
+ * Get files that often change together with a given file
+ */
+export function getCorrelatedFiles(
+  db: Database,
+  projectId: number,
+  filePath: string,
+  limit: number = 5
+): FileCorrelation[] {
+  try {
+    // Check both directions (file could be file_a or file_b)
+    const correlations = db.query<{
+      file: string;
+      cochange_count: number;
+      correlation_strength: number;
+      last_cochange: string;
+    }, [string, number, string, string, number]>(
+      `SELECT
+         CASE WHEN file_a = ? THEN file_b ELSE file_a END as file,
+         cochange_count,
+         COALESCE(correlation_strength, CAST(cochange_count AS REAL) / 10) as correlation_strength,
+         last_cochange
+       FROM file_correlations
+       WHERE project_id = ? AND (file_a = ? OR file_b = ?)
+       ORDER BY cochange_count DESC, last_cochange DESC
+       LIMIT ?`
+    ).all(filePath, projectId, filePath, filePath, limit);
+
+    return correlations;
+  } catch {
+    return []; // Table might not exist
+  }
+}
+
+/**
+ * Get top file correlations across the project
+ */
+export function getTopCorrelations(
+  db: Database,
+  projectId: number,
+  limit: number = 10
+): Array<{
+  file_a: string;
+  file_b: string;
+  cochange_count: number;
+  correlation_strength: number;
+}> {
+  try {
+    return db.query<{
+      file_a: string;
+      file_b: string;
+      cochange_count: number;
+      correlation_strength: number;
+    }, [number, number]>(
+      `SELECT file_a, file_b, cochange_count,
+         COALESCE(correlation_strength, CAST(cochange_count AS REAL) / 10) as correlation_strength
+       FROM file_correlations
+       WHERE project_id = ? AND cochange_count > 1
+       ORDER BY cochange_count DESC
+       LIMIT ?`
+    ).all(projectId, limit);
+  } catch {
+    return []; // Table might not exist
+  }
+}
+
+// ============================================================================
+// Auto-Learning Extraction
+// ============================================================================
+
+/**
+ * Extract learnings from a completed session using Claude
+ */
+export async function extractSessionLearnings(
+  db: Database,
+  projectId: number,
+  sessionId: number,
+  context: {
+    goal: string;
+    outcome: string;
+    files: string[];
+    success: number;
+  }
+): Promise<ExtractedLearning[]> {
+  const keyResult = getApiKey("anthropic");
+  if (!keyResult.ok) {
+    return []; // No API key, skip extraction
+  }
+
+  // Don't extract from failed sessions with no useful info
+  if (context.success === 0 && context.files.length === 0) {
+    return [];
+  }
+
+  try {
+    const prompt = buildExtractionPrompt(context);
+    const response = await callClaudeForExtraction(keyResult.value, prompt);
+    const learnings = parseExtractedLearnings(response);
+
+    // Record the extractions
+    for (const learning of learnings) {
+      if (learning.confidence >= 0.7) {
+        // High confidence - auto-save
+        const result = db.run(
+          `INSERT INTO learnings (project_id, category, title, content, source, confidence)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [projectId, learning.category, learning.title, learning.content,
+           `session:${sessionId}`, Math.round(learning.confidence * 10)]
+        );
+
+        try {
+          db.run(
+            `INSERT INTO session_learnings (session_id, learning_id, confidence, auto_applied)
+             VALUES (?, ?, ?, 1)`,
+            [sessionId, Number(result.lastInsertRowid), learning.confidence]
+          );
+        } catch {
+          // Table might not exist
+        }
+      } else {
+        // Lower confidence - record but don't auto-save
+        try {
+          db.run(
+            `INSERT INTO session_learnings (session_id, confidence, auto_applied)
+             VALUES (?, ?, 0)`,
+            [sessionId, learning.confidence]
+          );
+        } catch {
+          // Table might not exist
+        }
+      }
+    }
+
+    return learnings;
+  } catch (error) {
+    logError('extractSessionLearnings', error);
+    return [];
+  }
+}
+
+function buildExtractionPrompt(context: {
+  goal: string;
+  outcome: string;
+  files: string[];
+  success: number;
+}): string {
+  const successLabel = context.success === 0 ? 'failed' :
+                       context.success === 1 ? 'partial' : 'success';
+
+  return `Analyze this coding session and extract reusable learnings.
+
+SESSION:
+- Goal: ${context.goal}
+- Outcome: ${context.outcome}
+- Status: ${successLabel}
+- Files Modified: ${context.files.slice(0, 20).join(', ')}${context.files.length > 20 ? ` (+${context.files.length - 20} more)` : ''}
+
+Extract 0-3 learnings that would be useful for future sessions. Focus on:
+1. Patterns that worked well
+2. Gotchas or pitfalls discovered
+3. Conventions or preferences established
+
+Return ONLY a JSON array (no markdown, no explanation):
+[
+  {
+    "title": "Short title (max 50 chars)",
+    "content": "The learning itself (1-2 sentences)",
+    "category": "pattern|gotcha|preference|convention",
+    "confidence": 0.0-1.0
+  }
+]
+
+If no meaningful learnings, return empty array: []`;
+}
+
+async function callClaudeForExtraction(apiKey: string, prompt: string): Promise<string> {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 500,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Claude API error ${response.status}: ${redactApiKeys(errorText)}`);
+  }
+
+  const data = await response.json() as { content: Array<{ type: string; text: string }> };
+  return data.content[0]?.text || "[]";
+}
+
+function parseExtractedLearnings(response: string): ExtractedLearning[] {
+  try {
+    // Extract JSON from response (handle markdown code blocks)
+    const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const jsonStr = jsonMatch ? jsonMatch[1] : response;
+
+    const parsed = JSON.parse(jsonStr.trim());
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((item): item is ExtractedLearning =>
+      typeof item === 'object' &&
+      typeof item.title === 'string' &&
+      typeof item.content === 'string' &&
+      typeof item.category === 'string' &&
+      typeof item.confidence === 'number'
+    );
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================================
+// Enhanced Session End with Auto-Learning
+// ============================================================================
+
+/**
+ * End session with correlation tracking and learning extraction
+ */
+export async function sessionEndEnhanced(
+  db: Database,
+  projectId: number,
+  sessionId: number,
+  args: string[]
+): Promise<{ learnings: ExtractedLearning[] }> {
+  const { values } = parseSessionEndArgs(args);
+
+  // Get session
+  const session = db.query<{ id: number; goal: string; started_at: string; files_touched: string | null }, [number]>(
+    "SELECT id, goal, started_at, files_touched FROM sessions WHERE id = ?"
+  ).get(sessionId);
+
+  if (!session) {
+    throw new Error(`Session #${sessionId} not found`);
+  }
+
+  // Get files touched
+  const filesTouched = safeJsonParse<string[]>(session.files_touched || values.files || "[]", []);
+
+  // Update correlations
+  updateFileCorrelations(db, projectId, filesTouched);
+
+  // Standard end update
+  db.run(`
+    UPDATE sessions SET
+      ended_at = CURRENT_TIMESTAMP,
+      outcome = ?,
+      files_touched = ?,
+      learnings = ?,
+      next_steps = ?,
+      success = ?
+    WHERE id = ?
+  `, [
+    values.outcome || null,
+    JSON.stringify(filesTouched),
+    values.learnings || null,
+    values.next || null,
+    values.success ?? 2,
+    sessionId,
+  ]);
+
+  // Extract learnings
+  const learnings = await extractSessionLearnings(db, projectId, sessionId, {
+    goal: session.goal || "",
+    outcome: values.outcome || "",
+    files: filesTouched,
+    success: values.success ?? 2
+  });
+
+  console.error(`\n✅ Session #${sessionId} ended`);
+  if (values.outcome) {
+    console.error(`   Outcome: ${values.outcome}`);
+  }
+  console.error(`   Files: ${filesTouched.length}`);
+
+  if (learnings.length > 0) {
+    console.error(`\n💡 Extracted ${learnings.length} learning(s):`);
+    for (const l of learnings) {
+      const icon = l.confidence >= 0.7 ? '✓' : '○';
+      console.error(`   ${icon} [${l.category}] ${l.title}`);
+    }
+  }
+
+  if (values.next) {
+    console.error(`   Next: ${values.next}`);
+  }
+  console.error("");
+
+  return { learnings };
+}
+
+// ============================================================================
+// Correlation Commands
+// ============================================================================
+
+/**
+ * Handle correlation subcommands
+ */
+export function handleCorrelationCommand(
+  db: Database,
+  projectId: number,
+  args: string[]
+): void {
+  const file = args[0];
+
+  if (file) {
+    const correlated = getCorrelatedFiles(db, projectId, file);
+    if (correlated.length === 0) {
+      console.error(`No correlations found for ${file}`);
+      console.error("Correlations are built as you complete sessions.");
+    } else {
+      console.error(`\n🔗 Files that often change with ${file}:\n`);
+      for (const c of correlated) {
+        const strength = Math.round(c.correlation_strength * 100);
+        console.error(`   ${c.file} (${c.cochange_count}x, ${strength}% strength)`);
+      }
+    }
+    outputJson(correlated);
+  } else {
+    const top = getTopCorrelations(db, projectId);
+    if (top.length === 0) {
+      console.error("No file correlations recorded yet.");
+      console.error("Correlations are built as you complete sessions.");
+    } else {
+      console.error("\n🔗 Top File Correlations:\n");
+      for (const c of top) {
+        console.error(`   ${c.file_a} ↔ ${c.file_b} (${c.cochange_count}x)`);
+      }
+    }
+    outputJson(top);
   }
 }

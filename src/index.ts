@@ -10,7 +10,7 @@ import { handleInfraCommand } from "./commands/infra";
 import { handleQueryCommand } from "./commands/query";
 import { runAnalysis, showStatus, showFragile, generateBrief, showStack } from "./commands/analysis";
 import { fileAdd, fileGet, fileList, decisionAdd, decisionList, issueAdd, issueResolve, issueList, learnAdd, learnList, patternAdd, patternSearch, patternList, debtAdd, debtList, debtResolve } from "./commands/memory";
-import { sessionStart, sessionEnd, sessionLast, sessionList, generateResume } from "./commands/session";
+import { sessionStart, sessionEnd, sessionLast, sessionList, generateResume, sessionEndEnhanced, handleCorrelationCommand } from "./commands/session";
 import { handleShipCommand } from "./commands/ship";
 import { handleEmbedCommand } from "./commands/embed";
 import { checkFiles, analyzeImpact, getSmartStatus, checkConflicts } from "./commands/intelligence";
@@ -93,9 +93,10 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
 
 📋 Session Commands:
   session start <goal>        Start a work session
-  session end <id> [options]  End a session
+  session end <id> [options]  End a session (auto-extracts learnings)
   session last                Get last session
   session list                List recent sessions
+  session correlations [file] Show file change correlations
 
 🌐 Global Commands:
   pattern add [options]       Add a reusable pattern
@@ -311,7 +312,8 @@ async function main(): Promise<void> {
             sessionStart(db, projectId, subArgs.slice(1).join(" "));
             break;
           case "end":
-            sessionEnd(db, parseInt(subArgs[1]), subArgs.slice(2));
+            // Use enhanced session end with auto-learning extraction
+            await sessionEndEnhanced(db, projectId, parseInt(subArgs[1]), subArgs.slice(2));
             break;
           case "last":
             sessionLast(db, projectId);
@@ -319,8 +321,12 @@ async function main(): Promise<void> {
           case "list":
             sessionList(db, projectId);
             break;
+          case "correlations":
+          case "corr":
+            handleCorrelationCommand(db, projectId, subArgs.slice(1));
+            break;
           default:
-            console.error("Usage: context session <start|end|last|list> [args]");
+            console.error("Usage: context session <start|end|last|list|correlations> [args]");
         }
         break;
 

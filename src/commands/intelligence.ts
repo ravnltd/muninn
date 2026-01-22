@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { outputJson, computeContentHash } from "../utils/format";
 import { safeJsonParse } from "../utils/errors";
+import { getCorrelatedFiles } from "./session";
 
 // ============================================================================
 // Pre-Edit Check Command
@@ -133,6 +134,18 @@ function checkSingleFile(
     suggestions.push(`${relatedDecisions.length} decision(s) affect this file`);
   }
 
+  // Get correlated files (files that often change together)
+  const correlations = getCorrelatedFiles(db, projectId, filePath, 5);
+  const correlatedFiles = correlations.map(c => ({
+    file: c.file,
+    cochange_count: c.cochange_count
+  }));
+
+  if (correlatedFiles.length > 0) {
+    const topCorrelated = correlatedFiles.slice(0, 3).map(c => c.file).join(", ");
+    suggestions.push(`Often changes with: ${topCorrelated}`);
+  }
+
   return {
     path: filePath,
     warnings,
@@ -141,6 +154,7 @@ function checkSingleFile(
     relatedIssues,
     relatedDecisions,
     isStale,
+    correlatedFiles: correlatedFiles.length > 0 ? correlatedFiles : undefined,
   };
 }
 
@@ -170,6 +184,13 @@ function displayCheckResults(results: FileCheck[]): void {
 
     if (check.relatedDecisions.length > 0) {
       console.error(`   📋 Decisions: ${check.relatedDecisions.map(d => `D${d.id}`).join(", ")}`);
+    }
+
+    if (check.correlatedFiles && check.correlatedFiles.length > 0) {
+      console.error(`   🔗 Often changes with:`);
+      for (const corr of check.correlatedFiles.slice(0, 3)) {
+        console.error(`      - ${corr.file} (${corr.cochange_count}x together)`);
+      }
     }
 
     console.error("");

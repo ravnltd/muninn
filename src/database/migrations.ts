@@ -229,6 +229,56 @@ export const MIGRATIONS: Migration[] = [
       ).get();
       return !!exists;
     }
+  },
+
+  // Version 6: File change correlations and session intelligence
+  {
+    version: 6,
+    name: "session_intelligence",
+    description: "Track file co-changes for predictive suggestions and enhanced session tracking",
+    up: `
+      -- File correlations: track which files change together
+      CREATE TABLE IF NOT EXISTS file_correlations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        file_a TEXT NOT NULL,               -- First file path
+        file_b TEXT NOT NULL,               -- Second file path (alphabetically after file_a)
+        cochange_count INTEGER DEFAULT 1,   -- How many times changed together
+        last_cochange DATETIME DEFAULT CURRENT_TIMESTAMP,
+        avg_time_gap_seconds INTEGER,       -- Average time between changes
+        correlation_strength REAL,          -- 0-1 calculated strength
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, file_a, file_b)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_correlations_project ON file_correlations(project_id);
+      CREATE INDEX IF NOT EXISTS idx_correlations_file_a ON file_correlations(file_a);
+      CREATE INDEX IF NOT EXISTS idx_correlations_file_b ON file_correlations(file_b);
+      CREATE INDEX IF NOT EXISTS idx_correlations_strength ON file_correlations(correlation_strength DESC);
+
+      -- Session learnings: auto-extracted patterns from sessions
+      CREATE TABLE IF NOT EXISTS session_learnings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        learning_id INTEGER REFERENCES learnings(id) ON DELETE SET NULL,
+        extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        confidence REAL,                    -- 0-1 confidence in the extraction
+        auto_applied INTEGER DEFAULT 0      -- Whether it was automatically saved
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_session_learnings_session ON session_learnings(session_id);
+
+      -- Add status field to sessions if missing (for tracking active/ended)
+      -- SQLite doesn't support ALTER COLUMN, so we check and add only
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('session_intelligence_enabled', 'true');
+    `,
+    validate: (db) => {
+      const exists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='file_correlations'`
+      ).get();
+      return !!exists;
+    }
   }
 ];
 
@@ -389,7 +439,7 @@ export function runMigrations(
 const REQUIRED_PROJECT_TABLES = [
   'projects', 'files', 'symbols', 'decisions', 'issues',
   'sessions', 'learnings', 'relationships',
-  'bookmarks', 'focus'
+  'bookmarks', 'focus', 'file_correlations', 'session_learnings'
 ];
 
 // Tables that exist in global database only
