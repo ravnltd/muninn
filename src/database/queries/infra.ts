@@ -2,9 +2,14 @@
  * Infrastructure queries
  * Optimized queries for server/service/route management
  * Fixes N+1 query issues by using JOINs and batching
+ *
+ * Includes both raw SQL (legacy) and Drizzle ORM (new) versions
  */
 
 import type { Database } from "bun:sqlite";
+import { eq, sql } from "drizzle-orm";
+import type { DrizzleDb } from "../connection";
+import { servers, services, routes, infraEvents } from "../schema";
 import type {
   Server,
   Service,
@@ -16,6 +21,85 @@ import type {
   InfraEventWithNames,
 } from "../../types";
 import { logError } from "../../utils/errors";
+
+// ============================================================================
+// Drizzle ORM Queries (Type-Safe)
+// ============================================================================
+
+export const drizzleInfra = {
+  /** Get all servers ordered by name */
+  getAllServers(db: DrizzleDb) {
+    return db.select().from(servers).orderBy(servers.name);
+  },
+
+  /** Get server by name */
+  getServerByName(db: DrizzleDb, name: string) {
+    return db.select().from(servers).where(eq(servers.name, name)).get();
+  },
+
+  /** Get server by ID */
+  getServerById(db: DrizzleDb, id: number) {
+    return db.select().from(servers).where(eq(servers.id, id)).get();
+  },
+
+  /** Get service by name */
+  getServiceByName(db: DrizzleDb, name: string) {
+    return db.select().from(services).where(eq(services.name, name)).get();
+  },
+
+  /** Get services by server ID */
+  getServicesByServerId(db: DrizzleDb, serverId: number) {
+    return db.select().from(services).where(eq(services.serverId, serverId)).orderBy(services.name);
+  },
+
+  /** Get all routes with service info */
+  getAllRoutes(db: DrizzleDb) {
+    return db
+      .select({
+        id: routes.id,
+        domain: routes.domain,
+        path: routes.path,
+        serviceId: routes.serviceId,
+        method: routes.method,
+        proxyType: routes.proxyType,
+        sslType: routes.sslType,
+        rateLimit: routes.rateLimit,
+        authRequired: routes.authRequired,
+        notes: routes.notes,
+        createdAt: routes.createdAt,
+        serviceName: services.name,
+        serverName: servers.name,
+      })
+      .from(routes)
+      .innerJoin(services, eq(routes.serviceId, services.id))
+      .innerJoin(servers, eq(services.serverId, servers.id))
+      .orderBy(routes.domain, routes.path);
+  },
+
+  /** Log an infrastructure event */
+  logEvent(
+    db: DrizzleDb,
+    params: {
+      serverId?: number;
+      serviceId?: number;
+      eventType: string;
+      severity: "info" | "warning" | "error" | "critical";
+      title: string;
+      description?: string;
+      metadata?: Record<string, unknown>;
+    }
+  ) {
+    return db.insert(infraEvents).values({
+      serverId: params.serverId ?? null,
+      serviceId: params.serviceId ?? null,
+      eventType: params.eventType,
+      severity: params.severity,
+      title: params.title,
+      description: params.description ?? null,
+      metadata: params.metadata ? JSON.stringify(params.metadata) : null,
+    });
+  },
+};
 
 // ============================================================================
 // Server Queries

@@ -7,9 +7,12 @@
  * - Reliability pragmas (busy_timeout, WAL, etc.)
  * - Connection caching with proper cleanup
  * - Integrity checking
+ * - Drizzle ORM support for type-safe queries
  */
 
 import { Database } from "bun:sqlite";
+import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import * as schema from "./schema";
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
 import {
@@ -36,12 +39,23 @@ export const SCHEMA_PATH = join(process.env.HOME || "~", ".claude", "schema.sql"
 export { getSchemaVersion, getLatestVersion, checkIntegrity, logDbError };
 export type { MigrationState, IntegrityCheck };
 
+// Re-export schema for direct imports
+export * from "./schema";
+
+// ============================================================================
+// Type Exports
+// ============================================================================
+
+export type DrizzleDb = BunSQLiteDatabase<typeof schema>;
+
 // ============================================================================
 // Connection State
 // ============================================================================
 
 let globalDbInstance: Database | null = null;
+let globalDrizzleInstance: DrizzleDb | null = null;
 let projectDbInstance: Database | null = null;
+let projectDrizzleInstance: DrizzleDb | null = null;
 let currentProjectDbPath: string | null = null;
 
 // ============================================================================
@@ -67,6 +81,20 @@ export function getGlobalDb(): Database {
   initGlobalTables(globalDbInstance);
 
   return globalDbInstance;
+}
+
+/**
+ * Get global database with Drizzle ORM wrapper
+ * Use for type-safe queries
+ */
+export function getGlobalDrizzle(): DrizzleDb {
+  if (globalDrizzleInstance) {
+    return globalDrizzleInstance;
+  }
+
+  const db = getGlobalDb();
+  globalDrizzleInstance = drizzle(db, { schema });
+  return globalDrizzleInstance;
 }
 
 function initGlobalTables(db: Database): void {
@@ -294,6 +322,20 @@ export function getProjectDb(): Database {
   return projectDbInstance;
 }
 
+/**
+ * Get project database with Drizzle ORM wrapper
+ * Use for type-safe queries
+ */
+export function getProjectDrizzle(): DrizzleDb {
+  if (projectDrizzleInstance && currentProjectDbPath === getProjectDbPath()) {
+    return projectDrizzleInstance;
+  }
+
+  const db = getProjectDb();
+  projectDrizzleInstance = drizzle(db, { schema });
+  return projectDrizzleInstance;
+}
+
 export function initProjectDb(path: string): Database {
   const dir = join(path, LOCAL_DB_DIR);
   if (!existsSync(dir)) {
@@ -381,10 +423,12 @@ export function closeAll(): void {
   if (globalDbInstance) {
     globalDbInstance.close();
     globalDbInstance = null;
+    globalDrizzleInstance = null;
   }
   if (projectDbInstance) {
     projectDbInstance.close();
     projectDbInstance = null;
+    projectDrizzleInstance = null;
     currentProjectDbPath = null;
   }
 }
@@ -393,6 +437,7 @@ export function closeGlobalDb(): void {
   if (globalDbInstance) {
     globalDbInstance.close();
     globalDbInstance = null;
+    globalDrizzleInstance = null;
   }
 }
 
@@ -400,6 +445,7 @@ export function closeProjectDb(): void {
   if (projectDbInstance) {
     projectDbInstance.close();
     projectDbInstance = null;
+    projectDrizzleInstance = null;
     currentProjectDbPath = null;
   }
 }
