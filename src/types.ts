@@ -153,6 +153,8 @@ export interface InfraStatus {
 // Project Types
 // ============================================================================
 
+export type ProjectMode = 'exploring' | 'building' | 'hardening' | 'shipping' | 'maintaining';
+
 export interface Project {
   id: number;
   path: string;
@@ -160,8 +162,18 @@ export interface Project {
   type: string | null;
   stack: string | null; // JSON array
   status: 'active' | 'maintenance' | 'archived';
+  mode: ProjectMode; // Phase awareness for behavior adjustment
   created_at: string;
   updated_at: string;
+}
+
+export interface ModeTransition {
+  id: number;
+  project_id: number;
+  from_mode: ProjectMode | null;
+  to_mode: ProjectMode;
+  reason: string | null;
+  transitioned_at: string;
 }
 
 export interface ProjectState extends Project {
@@ -220,6 +232,8 @@ export interface StaleFile {
 // ============================================================================
 
 export type DecisionStatus = 'active' | 'superseded' | 'reconsidering';
+export type ConstraintType = 'must_hold' | 'should_hold' | 'nice_to_have';
+export type DecisionLinkType = 'depends_on' | 'invalidates' | 'requires_reconsider' | 'supersedes' | 'contradicts';
 
 export interface Decision {
   id: number;
@@ -232,8 +246,30 @@ export interface Decision {
   affects: string | null; // JSON array
   status: DecisionStatus;
   superseded_by: number | null;
+  invariant: string | null; // The deeper WHY - constraint that must hold
+  constraint_type: ConstraintType; // How critical is this invariant
   decided_at: string;
   created_at: string;
+}
+
+export interface DecisionLink {
+  id: number;
+  decision_id: number;
+  linked_decision_id: number;
+  link_type: DecisionLinkType;
+  strength: number; // 0-1 how tightly coupled
+  reason: string | null;
+  created_at: string;
+}
+
+export interface DecisionRipple {
+  decision_id: number;
+  decision_title: string;
+  link_type: DecisionLinkType;
+  strength: number;
+  linked_id: number;
+  linked_title: string;
+  linked_status: DecisionStatus;
 }
 
 export type IssueType = 'bug' | 'tech-debt' | 'enhancement' | 'question' | 'potential';
@@ -524,6 +560,61 @@ export interface ImpactResult {
   affectedByDecisions: Array<{ id: number; title: string }>;
   relatedIssues: Array<{ id: number; title: string }>;
   suggestedTests: string[];
+  blastSummary?: BlastSummary;
+}
+
+// ============================================================================
+// Blast Radius Types
+// ============================================================================
+
+/** Individual dependency edge in the blast radius graph */
+export interface BlastRadiusEdge {
+  id: number;
+  project_id: number;
+  source_file: string;       // File being changed
+  affected_file: string;     // File that would be affected
+  distance: number;          // Hops: 1=direct, 2+=transitive
+  dependency_path: string | null; // JSON array showing path
+  is_test: number;           // 1 if affected_file is a test
+  is_route: number;          // 1 if affected_file is a route/page
+  computed_at: string;
+}
+
+/** Aggregated blast radius summary for a file */
+export interface BlastSummary {
+  id?: number;
+  project_id?: number;
+  file_path: string;
+  direct_dependents: number;     // Count of distance=1
+  transitive_dependents: number; // Count of distance>1
+  total_affected: number;        // Total unique affected files
+  max_depth: number;             // Deepest transitive chain
+  affected_tests: number;        // Count of affected test files
+  affected_routes: number;       // Count of affected route files
+  blast_score: number;           // Computed risk score (0-100)
+  computed_at?: string;
+}
+
+/** Full blast radius result for display */
+export interface BlastResult {
+  file: string;
+  summary: BlastSummary;
+  directDependents: string[];
+  transitiveDependents: Array<{
+    file: string;
+    distance: number;
+    path: string[];
+  }>;
+  affectedTests: string[];
+  affectedRoutes: string[];
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+}
+
+/** Blast radius computation options */
+export interface BlastComputeOptions {
+  maxDepth?: number;    // Maximum depth to traverse (default: 10)
+  maxFiles?: number;    // Maximum files to process (default: 500)
+  forceRefresh?: boolean; // Force recomputation even if cached
 }
 
 export interface DriftResult {

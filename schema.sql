@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS projects (
     type TEXT,                              -- web-app, api, cli, library, monorepo
     stack TEXT,                             -- JSON array: ["sveltekit", "typescript", "drizzle"]
     status TEXT DEFAULT 'active',           -- active, maintenance, archived
+    mode TEXT DEFAULT 'exploring',          -- exploring, building, hardening, shipping, maintaining
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -76,6 +77,8 @@ CREATE TABLE IF NOT EXISTS decisions (
     affects TEXT,                           -- JSON array of affected areas/files
     status TEXT DEFAULT 'active',           -- active, superseded, reconsidering
     superseded_by INTEGER REFERENCES decisions(id),
+    invariant TEXT,                         -- The deeper WHY - constraint that must hold
+    constraint_type TEXT DEFAULT 'should_hold', -- must_hold, should_hold, nice_to_have
     decided_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     embedding BLOB,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -151,6 +154,28 @@ CREATE TABLE IF NOT EXISTS relationships (
     UNIQUE(source_type, source_id, target_type, target_id, relationship)
 );
 
+-- Decision entanglement - track which decisions depend on each other
+CREATE TABLE IF NOT EXISTS decision_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    linked_decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    link_type TEXT NOT NULL,                -- depends_on, invalidates, requires_reconsider, supersedes, contradicts
+    strength REAL DEFAULT 0.5,              -- 0-1 how tightly coupled
+    reason TEXT,                            -- why these are linked
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(decision_id, linked_decision_id, link_type)
+);
+
+-- Project mode transitions - track phase changes
+CREATE TABLE IF NOT EXISTS mode_transitions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    from_mode TEXT,                         -- NULL for initial mode
+    to_mode TEXT NOT NULL,                  -- exploring, building, hardening, shipping, maintaining
+    reason TEXT,                            -- why the transition happened
+    transitioned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================================
 -- INDEXES FOR FAST QUERIES
 -- ============================================================================
@@ -180,6 +205,13 @@ CREATE INDEX IF NOT EXISTS idx_learnings_category ON learnings(category);
 
 CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_type, target_id);
+
+CREATE INDEX IF NOT EXISTS idx_decision_links_decision ON decision_links(decision_id);
+CREATE INDEX IF NOT EXISTS idx_decision_links_linked ON decision_links(linked_decision_id);
+CREATE INDEX IF NOT EXISTS idx_decision_links_type ON decision_links(link_type);
+
+CREATE INDEX IF NOT EXISTS idx_mode_transitions_project ON mode_transitions(project_id);
+CREATE INDEX IF NOT EXISTS idx_mode_transitions_time ON mode_transitions(transitioned_at DESC);
 
 -- ============================================================================
 -- VIEWS FOR COMMON QUERIES
@@ -240,6 +272,22 @@ FROM issues i
 JOIN projects p ON i.project_id = p.id
 ORDER BY timestamp DESC
 LIMIT 50;
+
+-- Decision ripple effect - if you touch decision X, these also need review
+CREATE VIEW IF NOT EXISTS v_decision_ripple AS
+SELECT
+    d1.id as decision_id,
+    d1.title as decision_title,
+    dl.link_type,
+    dl.strength,
+    d2.id as linked_id,
+    d2.title as linked_title,
+    d2.status as linked_status
+FROM decisions d1
+JOIN decision_links dl ON d1.id = dl.decision_id
+JOIN decisions d2 ON dl.linked_decision_id = d2.id
+WHERE d2.status = 'active'
+ORDER BY dl.strength DESC;
 
 -- ============================================================================
 -- FULL-TEXT SEARCH (SQLite FTS5)
@@ -637,3 +685,80 @@ CREATE TABLE IF NOT EXISTS focus (
 CREATE INDEX IF NOT EXISTS idx_focus_project ON focus(project_id);
 CREATE INDEX IF NOT EXISTS idx_focus_session ON focus(session_id);
 CREATE INDEX IF NOT EXISTS idx_focus_area ON focus(area);
+
+-- ============================================================================
+-- BLAST RADIUS ENGINE TABLES
+-- Precompute transitive dependency impact for safer editing
+-- ============================================================================
+
+-- Individual dependency edges with distance (hops)
+CREATE TABLE IF NOT EXISTS blast_radius (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    source_file TEXT NOT NULL,              -- File being changed
+    affected_file TEXT NOT NULL,            -- File that would be affected
+    distance INTEGER NOT NULL DEFAULT 1,    -- Hops: 1=direct, 2+=transitive
+    dependency_path TEXT,                   -- JSON array: path from source to affected
+    is_test INTEGER DEFAULT 0,              -- 1 if affected_file is a test
+    is_route INTEGER DEFAULT 0,             -- 1 if affected_file is a route/page
+    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, source_file, affected_file)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blast_radius_project ON blast_radius(project_id);
+CREATE INDEX IF NOT EXISTS idx_blast_radius_source ON blast_radius(source_file);
+CREATE INDEX IF NOT EXISTS idx_blast_radius_affected ON blast_radius(affected_file);
+CREATE INDEX IF NOT EXISTS idx_blast_radius_distance ON blast_radius(distance);
+CREATE INDEX IF NOT EXISTS idx_blast_radius_tests ON blast_radius(project_id, is_test) WHERE is_test = 1;
+CREATE INDEX IF NOT EXISTS idx_blast_radius_routes ON blast_radius(project_id, is_route) WHERE is_route = 1;
+
+-- Aggregated summary per file for quick lookup
+CREATE TABLE IF NOT EXISTS blast_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,                -- The file being summarized
+    direct_dependents INTEGER DEFAULT 0,    -- Count of distance=1
+    transitive_dependents INTEGER DEFAULT 0, -- Count of distance>1
+    total_affected INTEGER DEFAULT 0,       -- Total unique affected files
+    max_depth INTEGER DEFAULT 0,            -- Deepest transitive chain
+    affected_tests INTEGER DEFAULT 0,       -- Count of affected test files
+    affected_routes INTEGER DEFAULT 0,      -- Count of affected route files
+    blast_score REAL DEFAULT 0.0,           -- Computed risk score (0-100)
+    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(project_id, file_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blast_summary_project ON blast_summary(project_id);
+CREATE INDEX IF NOT EXISTS idx_blast_summary_file ON blast_summary(file_path);
+CREATE INDEX IF NOT EXISTS idx_blast_summary_score ON blast_summary(blast_score DESC);
+
+-- View: High-impact files (blast score > 50)
+CREATE VIEW IF NOT EXISTS v_high_impact_files AS
+SELECT
+    bs.file_path,
+    bs.blast_score,
+    bs.total_affected,
+    bs.affected_tests,
+    bs.affected_routes,
+    bs.max_depth,
+    f.fragility,
+    f.purpose,
+    p.name as project_name
+FROM blast_summary bs
+JOIN projects p ON bs.project_id = p.id
+LEFT JOIN files f ON bs.project_id = f.project_id AND bs.file_path = f.path
+WHERE bs.blast_score >= 50
+ORDER BY bs.blast_score DESC;
+
+-- View: Affected tests for a given file
+CREATE VIEW IF NOT EXISTS v_blast_tests AS
+SELECT
+    br.source_file,
+    br.affected_file as test_file,
+    br.distance,
+    br.dependency_path,
+    p.name as project_name
+FROM blast_radius br
+JOIN projects p ON br.project_id = p.id
+WHERE br.is_test = 1
+ORDER BY br.distance ASC;

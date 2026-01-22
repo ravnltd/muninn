@@ -16,6 +16,7 @@ import { handleEmbedCommand } from "./commands/embed";
 import { checkFiles, analyzeImpact, getSmartStatus, checkConflicts } from "./commands/intelligence";
 import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { showDependencies, refreshDependencies, generateDependencyGraph, findCircularDependencies } from "./commands/deps";
+import { computeBlastRadius, showBlastRadius, showHighImpactFiles } from "./commands/blast";
 import { handleBookmarkCommand } from "./commands/bookmark";
 import { handleFocusCommand } from "./commands/focus";
 import { hookCheck, hookInit, hookPostEdit, hookBrain } from "./commands/hooks";
@@ -63,6 +64,11 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   deps --refresh              Rebuild dependency graph for all files
   deps --graph [file]         Generate Mermaid dependency diagram
   deps --cycles               Find circular dependencies
+
+🔥 Blast Radius Commands:
+  blast <file>                Show blast radius for a file (what breaks if changed)
+  blast --refresh             Recompute blast radius for all files
+  blast --high                Show high-impact files (score >= 30)
 
 📁 Project Commands:
   init                        Initialize context DB for current project
@@ -431,6 +437,19 @@ async function main(): Promise<void> {
           showDependencies(db, projectId, process.cwd(), subArgs[0]);
         } else {
           console.error("Usage: context deps <file> | --refresh | --graph [file] | --cycles");
+        }
+        break;
+
+      // Blast radius commands
+      case "blast":
+        if (subArgs.includes("--refresh")) {
+          computeBlastRadius(db, projectId, process.cwd());
+        } else if (subArgs.includes("--high")) {
+          showHighImpactFiles(db, projectId);
+        } else if (subArgs.length > 0 && !subArgs[0].startsWith("--")) {
+          showBlastRadius(db, projectId, process.cwd(), subArgs[0]);
+        } else {
+          console.error("Usage: context blast <file> | --refresh | --high");
         }
         break;
 

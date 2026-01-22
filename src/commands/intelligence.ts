@@ -13,10 +13,12 @@ import type {
   SmartStatus,
   ProjectHealth,
   StaleFile,
+  BlastSummary,
 } from "../types";
 import { outputJson, computeContentHash } from "../utils/format";
 import { safeJsonParse } from "../utils/errors";
 import { getCorrelatedFiles } from "./session";
+import { getBlastRadius } from "./blast";
 
 // ============================================================================
 // Pre-Edit Check Command
@@ -204,43 +206,53 @@ function displayCheckResults(results: FileCheck[]): void {
 export function analyzeImpact(
   db: Database,
   projectId: number,
-  _projectPath: string,
+  projectPath: string,
   filePath: string
 ): ImpactResult {
-  // Get file info
-  const fileRecord = db.query<{
-    id: number;
-    dependencies: string | null;
-    dependents: string | null;
-  }, [number, string]>(`
-    SELECT id, dependencies, dependents
-    FROM files
-    WHERE project_id = ? AND path = ?
-  `).get(projectId, filePath);
+  // Get blast radius data (uses BFS for full transitive analysis)
+  const blastResult = getBlastRadius(db, projectId, projectPath, filePath);
 
   let directDependents: string[] = [];
   let indirectDependents: string[] = [];
+  let blastSummary: BlastSummary | undefined;
 
-  if (fileRecord) {
-    directDependents = safeJsonParse<string[]>(fileRecord.dependents || "[]", []);
+  if (blastResult) {
+    directDependents = blastResult.directDependents;
+    indirectDependents = blastResult.transitiveDependents.map(t => t.file);
+    blastSummary = blastResult.summary;
+  } else {
+    // Fallback to basic lookup if blast radius not available
+    const fileRecord = db.query<{
+      id: number;
+      dependencies: string | null;
+      dependents: string | null;
+    }, [number, string]>(`
+      SELECT id, dependencies, dependents
+      FROM files
+      WHERE project_id = ? AND path = ?
+    `).get(projectId, filePath);
 
-    // Get indirect dependents (files that depend on direct dependents)
-    const indirectSet = new Set<string>();
-    for (const dep of directDependents) {
-      const depRecord = db.query<{ dependents: string | null }, [number, string]>(`
-        SELECT dependents FROM files WHERE project_id = ? AND path = ?
-      `).get(projectId, dep);
+    if (fileRecord) {
+      directDependents = safeJsonParse<string[]>(fileRecord.dependents || "[]", []);
 
-      if (depRecord?.dependents) {
-        const deps = safeJsonParse<string[]>(depRecord.dependents, []);
-        deps.forEach(d => {
-          if (!directDependents.includes(d) && d !== filePath) {
-            indirectSet.add(d);
-          }
-        });
+      // Get indirect dependents (files that depend on direct dependents)
+      const indirectSet = new Set<string>();
+      for (const dep of directDependents) {
+        const depRecord = db.query<{ dependents: string | null }, [number, string]>(`
+          SELECT dependents FROM files WHERE project_id = ? AND path = ?
+        `).get(projectId, dep);
+
+        if (depRecord?.dependents) {
+          const deps = safeJsonParse<string[]>(depRecord.dependents, []);
+          deps.forEach(d => {
+            if (!directDependents.includes(d) && d !== filePath) {
+              indirectSet.add(d);
+            }
+          });
+        }
       }
+      indirectDependents = Array.from(indirectSet);
     }
-    indirectDependents = Array.from(indirectSet);
   }
 
   // Get decisions that affect this file
@@ -256,8 +268,11 @@ export function analyzeImpact(
     AND (affected_files LIKE ? OR related_symbols LIKE ?)
   `).all(projectId, `%${filePath}%`, `%${filePath}%`);
 
-  // Suggest tests based on file type
+  // Suggest tests - now using blast radius data if available
   const suggestedTests: string[] = [];
+  if (blastResult && blastResult.affectedTests.length > 0) {
+    suggestedTests.push(`Run affected tests: ${blastResult.affectedTests.slice(0, 3).join(", ")}`);
+  }
   if (filePath.includes("/components/") || filePath.includes("/routes/")) {
     suggestedTests.push(`Test UI rendering after changes`);
   }
@@ -267,7 +282,7 @@ export function analyzeImpact(
   if (filePath.includes("/utils/") || filePath.includes("/lib/")) {
     suggestedTests.push(`Run unit tests for utility functions`);
   }
-  if (directDependents.length > 0) {
+  if (directDependents.length > 0 && suggestedTests.length < 4) {
     suggestedTests.push(`Test dependent files: ${directDependents.slice(0, 3).join(", ")}`);
   }
 
@@ -278,16 +293,35 @@ export function analyzeImpact(
     affectedByDecisions,
     relatedIssues,
     suggestedTests,
+    blastSummary,
   };
 
-  displayImpactResult(result);
+  displayImpactResult(result, blastResult);
   outputJson(result);
   return result;
 }
 
-function displayImpactResult(result: ImpactResult): void {
+function displayImpactResult(
+  result: ImpactResult,
+  blastResult?: { summary: BlastSummary; riskLevel: string; affectedTests: string[]; affectedRoutes: string[] } | null
+): void {
   console.error("\n📊 Impact Analysis:\n");
   console.error(`File: ${result.file}\n`);
+
+  // Show blast summary if available
+  if (blastResult && result.blastSummary) {
+    const riskEmoji = {
+      low: '🟢',
+      medium: '🟡',
+      high: '🟠',
+      critical: '🔴',
+    }[blastResult.riskLevel] || '⚪';
+
+    console.error(`🔥 Blast Radius: ${riskEmoji} ${blastResult.riskLevel.toUpperCase()} (score: ${result.blastSummary.blast_score.toFixed(1)})`);
+    console.error(`   Total Affected: ${result.blastSummary.total_affected} files | Max Depth: ${result.blastSummary.max_depth} hops`);
+    console.error(`   Tests: ${result.blastSummary.affected_tests} | Routes: ${result.blastSummary.affected_routes}`);
+    console.error("");
+  }
 
   if (result.directDependents.length > 0) {
     console.error(`📁 Direct Dependents (${result.directDependents.length}):`);
@@ -301,12 +335,36 @@ function displayImpactResult(result: ImpactResult): void {
   }
 
   if (result.indirectDependents.length > 0) {
-    console.error(`📁 Indirect Dependents (${result.indirectDependents.length}):`);
+    console.error(`📁 Transitive Dependents (${result.indirectDependents.length}):`);
     for (const dep of result.indirectDependents.slice(0, 5)) {
       console.error(`   - ${dep}`);
     }
     if (result.indirectDependents.length > 5) {
       console.error(`   ... and ${result.indirectDependents.length - 5} more`);
+    }
+    console.error("");
+  }
+
+  // Show affected tests from blast radius
+  if (blastResult && blastResult.affectedTests.length > 0) {
+    console.error(`🧪 Affected Tests (${blastResult.affectedTests.length}):`);
+    for (const test of blastResult.affectedTests.slice(0, 5)) {
+      console.error(`   - ${test}`);
+    }
+    if (blastResult.affectedTests.length > 5) {
+      console.error(`   ... and ${blastResult.affectedTests.length - 5} more`);
+    }
+    console.error("");
+  }
+
+  // Show affected routes from blast radius
+  if (blastResult && blastResult.affectedRoutes.length > 0) {
+    console.error(`🌐 Affected Routes (${blastResult.affectedRoutes.length}):`);
+    for (const route of blastResult.affectedRoutes.slice(0, 5)) {
+      console.error(`   - ${route}`);
+    }
+    if (blastResult.affectedRoutes.length > 5) {
+      console.error(`   ... and ${blastResult.affectedRoutes.length - 5} more`);
     }
     console.error("");
   }

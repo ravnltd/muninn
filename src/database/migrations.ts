@@ -279,6 +279,220 @@ export const MIGRATIONS: Migration[] = [
       ).get();
       return !!exists;
     }
+  },
+
+  // Version 7: Claude Intelligence System v2 - Decision Entanglement, Intent Preservation, Project Modes
+  {
+    version: 7,
+    name: "intelligence_v2",
+    description: "Decision entanglement, intent preservation (invariants), and project mode awareness",
+    up: `
+      -- ========================================================================
+      -- DECISION ENTANGLEMENT
+      -- Track which decisions depend on or invalidate other decisions
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS decision_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        linked_decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        link_type TEXT NOT NULL,              -- 'depends_on', 'invalidates', 'requires_reconsider', 'supersedes', 'contradicts'
+        strength REAL DEFAULT 0.5,            -- 0-1 how tightly coupled
+        reason TEXT,                          -- why these are linked
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(decision_id, linked_decision_id, link_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_decision_links_decision ON decision_links(decision_id);
+      CREATE INDEX IF NOT EXISTS idx_decision_links_linked ON decision_links(linked_decision_id);
+      CREATE INDEX IF NOT EXISTS idx_decision_links_type ON decision_links(link_type);
+
+      -- View: If you touch decision X, these also need review
+      CREATE VIEW IF NOT EXISTS v_decision_ripple AS
+      SELECT
+        d1.id as decision_id,
+        d1.title as decision_title,
+        dl.link_type,
+        dl.strength,
+        d2.id as linked_id,
+        d2.title as linked_title,
+        d2.status as linked_status
+      FROM decisions d1
+      JOIN decision_links dl ON d1.id = dl.decision_id
+      JOIN decisions d2 ON dl.linked_decision_id = d2.id
+      WHERE d2.status = 'active'
+      ORDER BY dl.strength DESC;
+
+      -- ========================================================================
+      -- INTENT PRESERVATION (INVARIANTS)
+      -- Store the deeper WHY - the constraint that must hold
+      -- ========================================================================
+      ALTER TABLE decisions ADD COLUMN invariant TEXT;
+      -- e.g., "API calls must not exceed 100/min" explains why caching exists
+
+      ALTER TABLE decisions ADD COLUMN constraint_type TEXT DEFAULT 'should_hold';
+      -- 'must_hold' = breaking this breaks the system
+      -- 'should_hold' = important but survivable
+      -- 'nice_to_have' = preference, not requirement
+
+      -- ========================================================================
+      -- PROJECT MODE AWARENESS
+      -- Track what phase a project is in for behavior adjustment
+      -- ========================================================================
+      ALTER TABLE projects ADD COLUMN mode TEXT DEFAULT 'exploring';
+      -- 'exploring' = tolerate mess, try things
+      -- 'building' = making progress, some structure
+      -- 'hardening' = pre-launch rigor, tests required
+      -- 'shipping' = deploy focus, minimal changes
+      -- 'maintaining' = stability over features
+
+      -- Track mode transitions for history
+      CREATE TABLE IF NOT EXISTS mode_transitions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        from_mode TEXT,
+        to_mode TEXT NOT NULL,
+        reason TEXT,                          -- why the transition happened
+        transitioned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_mode_transitions_project ON mode_transitions(project_id);
+      CREATE INDEX IF NOT EXISTS idx_mode_transitions_time ON mode_transitions(transitioned_at DESC);
+
+      -- Record migration
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('intelligence_v2_enabled', 'true'),
+        ('decision_entanglement', 'true'),
+        ('intent_preservation', 'true'),
+        ('project_modes', 'true');
+    `,
+    validate: (db) => {
+      // Check decision_links table exists
+      const linksExist = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='decision_links'`
+      ).get();
+
+      // Check mode_transitions table exists
+      const modesExist = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='mode_transitions'`
+      ).get();
+
+      // Check invariant column exists on decisions
+      const invariantExists = db.query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('decisions') WHERE name='invariant'`
+      ).get();
+
+      // Check mode column exists on projects
+      const modeExists = db.query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('projects') WHERE name='mode'`
+      ).get();
+
+      return !!linksExist && !!modesExist && !!invariantExists && !!modeExists;
+    }
+  },
+
+  // Version 8: Blast Radius Engine - Precomputed transitive dependency impact
+  {
+    version: 8,
+    name: "blast_radius_engine",
+    description: "Precompute transitive dependency impact for safer editing",
+    up: `
+      -- ========================================================================
+      -- BLAST RADIUS ENGINE
+      -- Precompute what files are affected when you change a file
+      -- ========================================================================
+
+      -- Individual dependency edges with distance (hops)
+      CREATE TABLE IF NOT EXISTS blast_radius (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        source_file TEXT NOT NULL,            -- File being changed
+        affected_file TEXT NOT NULL,          -- File that would be affected
+        distance INTEGER NOT NULL DEFAULT 1,  -- Hops: 1=direct, 2+=transitive
+        dependency_path TEXT,                 -- JSON array: path from source to affected
+        is_test INTEGER DEFAULT 0,            -- 1 if affected_file is a test
+        is_route INTEGER DEFAULT 0,           -- 1 if affected_file is a route/page
+        computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, source_file, affected_file)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_blast_radius_project ON blast_radius(project_id);
+      CREATE INDEX IF NOT EXISTS idx_blast_radius_source ON blast_radius(source_file);
+      CREATE INDEX IF NOT EXISTS idx_blast_radius_affected ON blast_radius(affected_file);
+      CREATE INDEX IF NOT EXISTS idx_blast_radius_distance ON blast_radius(distance);
+      CREATE INDEX IF NOT EXISTS idx_blast_radius_tests ON blast_radius(project_id, is_test) WHERE is_test = 1;
+      CREATE INDEX IF NOT EXISTS idx_blast_radius_routes ON blast_radius(project_id, is_route) WHERE is_route = 1;
+
+      -- Aggregated summary per file for quick lookup
+      CREATE TABLE IF NOT EXISTS blast_summary (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,              -- The file being summarized
+        direct_dependents INTEGER DEFAULT 0,  -- Count of distance=1
+        transitive_dependents INTEGER DEFAULT 0, -- Count of distance>1
+        total_affected INTEGER DEFAULT 0,     -- Total unique affected files
+        max_depth INTEGER DEFAULT 0,          -- Deepest transitive chain
+        affected_tests INTEGER DEFAULT 0,     -- Count of affected test files
+        affected_routes INTEGER DEFAULT 0,    -- Count of affected route files
+        blast_score REAL DEFAULT 0.0,         -- Computed risk score (0-100)
+        computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, file_path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_blast_summary_project ON blast_summary(project_id);
+      CREATE INDEX IF NOT EXISTS idx_blast_summary_file ON blast_summary(file_path);
+      CREATE INDEX IF NOT EXISTS idx_blast_summary_score ON blast_summary(blast_score DESC);
+
+      -- View: High-impact files (blast score > 50)
+      CREATE VIEW IF NOT EXISTS v_high_impact_files AS
+      SELECT
+        bs.file_path,
+        bs.blast_score,
+        bs.total_affected,
+        bs.affected_tests,
+        bs.affected_routes,
+        bs.max_depth,
+        f.fragility,
+        f.purpose,
+        p.name as project_name
+      FROM blast_summary bs
+      JOIN projects p ON bs.project_id = p.id
+      LEFT JOIN files f ON bs.project_id = f.project_id AND bs.file_path = f.path
+      WHERE bs.blast_score >= 50
+      ORDER BY bs.blast_score DESC;
+
+      -- View: Affected tests for a given file
+      CREATE VIEW IF NOT EXISTS v_blast_tests AS
+      SELECT
+        br.source_file,
+        br.affected_file as test_file,
+        br.distance,
+        br.dependency_path,
+        p.name as project_name
+      FROM blast_radius br
+      JOIN projects p ON br.project_id = p.id
+      WHERE br.is_test = 1
+      ORDER BY br.distance ASC;
+
+      -- Record migration
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('blast_radius_enabled', 'true'),
+        ('blast_radius_version', '1');
+    `,
+    validate: (db) => {
+      // Check blast_radius table exists
+      const radiusExists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='blast_radius'`
+      ).get();
+
+      // Check blast_summary table exists
+      const summaryExists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='blast_summary'`
+      ).get();
+
+      return !!radiusExists && !!summaryExists;
+    }
   }
 ];
 
@@ -439,7 +653,8 @@ export function runMigrations(
 const REQUIRED_PROJECT_TABLES = [
   'projects', 'files', 'symbols', 'decisions', 'issues',
   'sessions', 'learnings', 'relationships',
-  'bookmarks', 'focus', 'file_correlations', 'session_learnings'
+  'bookmarks', 'focus', 'file_correlations', 'session_learnings',
+  'blast_radius', 'blast_summary'
 ];
 
 // Tables that exist in global database only
