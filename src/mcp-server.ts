@@ -484,6 +484,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "context_session_start",
+        description:
+          "Start a new work session with a goal. Call this after context_resume when you understand what the user wants to accomplish. The session tracks files modified, queries made, and learnings.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            goal: {
+              type: "string",
+              description: "The goal for this session (e.g., 'Add user authentication', 'Fix payment bug')",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["goal"],
+        },
+      },
+      {
+        name: "context_session_end",
+        description:
+          "End the current work session with an outcome summary. Call this when the task is complete or the user is done working. Captures what was accomplished for future sessions.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            outcome: {
+              type: "string",
+              description: "What was accomplished (e.g., 'Added JWT auth with refresh tokens')",
+            },
+            next_steps: {
+              type: "string",
+              description: "What should be done next (optional)",
+            },
+            success: {
+              type: "number",
+              description: "Success level: 0=failed, 1=partial, 2=success (default: 2)",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
         name: "context_deps",
         description:
           "Query file dependencies. Shows what a file imports and what depends on it. Useful for understanding code relationships before refactoring.",
@@ -873,6 +919,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "context_resume":
         result = runContext("resume", cwd);
         break;
+
+      case "context_session_start": {
+        const goal = typedArgs.goal as string;
+        if (!goal) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Goal is required" }) }] };
+        }
+        result = runContext(`session start "${goal.replace(/"/g, '\\"')}"`, cwd);
+        break;
+      }
+
+      case "context_session_end": {
+        const outcome = typedArgs.outcome as string;
+        const nextSteps = typedArgs.next_steps as string;
+        const success = typedArgs.success as number;
+
+        // Get active session ID first
+        const lastSession = runContext("session last --json", cwd);
+        let sessionId: number | null = null;
+        try {
+          const parsed = JSON.parse(lastSession);
+          if (parsed && !parsed.ended_at) {
+            sessionId = parsed.id;
+          }
+        } catch {
+          // No active session
+        }
+
+        if (!sessionId) {
+          return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "No active session to end" }) }] };
+        }
+
+        let cmd = `session end ${sessionId}`;
+        if (outcome) cmd += ` --outcome "${outcome.replace(/"/g, '\\"')}"`;
+        if (nextSteps) cmd += ` --next "${nextSteps.replace(/"/g, '\\"')}"`;
+        if (success !== undefined) cmd += ` --success ${success}`;
+
+        result = runContext(cmd, cwd);
+        break;
+      }
 
       case "context_deps": {
         const file = typedArgs.file as string;
