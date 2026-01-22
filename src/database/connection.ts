@@ -1,11 +1,27 @@
 /**
  * Database connection management
  * Singleton pattern for global and project databases
+ *
+ * Features:
+ * - Automatic schema migrations on connection
+ * - Reliability pragmas (busy_timeout, WAL, etc.)
+ * - Connection caching with proper cleanup
+ * - Integrity checking
  */
 
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "fs";
 import { join, resolve } from "path";
+import {
+  runMigrations,
+  applyReliabilityPragmas,
+  getSchemaVersion,
+  getLatestVersion,
+  checkIntegrity,
+  logDbError,
+  type MigrationState,
+  type IntegrityCheck,
+} from "./migrations";
 
 // ============================================================================
 // Configuration
@@ -15,6 +31,10 @@ export const GLOBAL_DB_PATH = join(process.env.HOME || "~", ".claude", "memory.d
 export const LOCAL_DB_DIR = ".claude";
 export const LOCAL_DB_NAME = "memory.db";
 export const SCHEMA_PATH = join(process.env.HOME || "~", ".claude", "schema.sql");
+
+// Re-export migration utilities for external use
+export { getSchemaVersion, getLatestVersion, checkIntegrity, logDbError };
+export type { MigrationState, IntegrityCheck };
 
 // ============================================================================
 // Connection State
@@ -39,8 +59,9 @@ export function getGlobalDb(): Database {
   }
 
   globalDbInstance = new Database(GLOBAL_DB_PATH);
-  globalDbInstance.exec("PRAGMA foreign_keys = ON");
-  globalDbInstance.exec("PRAGMA journal_mode = WAL");
+
+  // Apply reliability pragmas (busy_timeout, WAL, etc.)
+  applyReliabilityPragmas(globalDbInstance);
 
   // Ensure global tables exist
   initGlobalTables(globalDbInstance);
@@ -255,10 +276,19 @@ export function getProjectDb(): Database {
   }
 
   projectDbInstance = new Database(dbPath);
-  projectDbInstance.exec("PRAGMA foreign_keys = ON");
-  projectDbInstance.exec("PRAGMA journal_mode = WAL");
   currentProjectDbPath = dbPath;
 
+  // Apply reliability pragmas (busy_timeout, WAL, etc.)
+  applyReliabilityPragmas(projectDbInstance);
+
+  // Run any pending migrations
+  const migrationResult = runMigrations(projectDbInstance, dbPath);
+  if (!migrationResult.ok) {
+    // Log but don't fail - legacy DB might still work
+    console.error(`⚠️  Migration warning: ${migrationResult.error.message}`);
+  }
+
+  // Also run legacy migrations for backwards compatibility
   migrateProjectDb(projectDbInstance);
 
   return projectDbInstance;
@@ -272,13 +302,20 @@ export function initProjectDb(path: string): Database {
 
   const dbPath = join(dir, LOCAL_DB_NAME);
   const db = new Database(dbPath);
-  db.exec("PRAGMA foreign_keys = ON");
-  db.exec("PRAGMA journal_mode = WAL");
+
+  // Apply reliability pragmas first
+  applyReliabilityPragmas(db);
 
   // Load and execute schema
   if (existsSync(SCHEMA_PATH)) {
     const schema = readFileSync(SCHEMA_PATH, "utf-8");
     db.exec(schema);
+  }
+
+  // Run migrations to bring to current version
+  const migrationResult = runMigrations(db, dbPath);
+  if (!migrationResult.ok) {
+    console.error(`⚠️  Migration warning: ${migrationResult.error.message}`);
   }
 
   // Update cached instance

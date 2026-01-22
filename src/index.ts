@@ -4,7 +4,8 @@
  * Main CLI entry point
  */
 
-import { getGlobalDb, getProjectDb, initProjectDb, ensureProject, closeAll, getProjectDbPath, LOCAL_DB_DIR, LOCAL_DB_NAME } from "./database/connection";
+import { getGlobalDb, getProjectDb, initProjectDb, ensureProject, closeAll, getProjectDbPath, LOCAL_DB_DIR, LOCAL_DB_NAME, getSchemaVersion, getLatestVersion, checkIntegrity } from "./database/connection";
+import { getRecentErrors, optimizeDatabase, getPendingMigrations, runMigrations } from "./database/migrations";
 import { handleInfraCommand } from "./commands/infra";
 import { handleQueryCommand } from "./commands/query";
 import { runAnalysis, showStatus, showFragile, generateBrief, showStack } from "./commands/analysis";
@@ -113,6 +114,13 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   infra route add/list/remove/check
   infra dep add/list
   infra status/map/events/check
+
+🔧 Database Commands:
+  db check                    Verify schema integrity
+  db version                  Show current schema version
+  db migrate                  Apply pending migrations
+  db errors [N]               Show recent errors (default 20)
+  db optimize                 Run WAL checkpoint and optimize
 
 Run 'context <command> --help' for more information on a command.
 `;
@@ -418,6 +426,101 @@ async function main(): Promise<void> {
       // Focus commands
       case "focus":
         handleFocusCommand(db, projectId, subArgs);
+        break;
+
+      // Database commands
+      case "db":
+        const dbCmd = subArgs[0];
+        switch (dbCmd) {
+          case "check": {
+            const integrity = checkIntegrity(db);
+            console.error(`\n🔍 Database Integrity Check\n`);
+            console.error(`Version: ${integrity.version}/${getLatestVersion()}`);
+            console.error(`Status: ${integrity.valid ? '✅ Valid' : '❌ Issues Found'}\n`);
+
+            if (integrity.issues.length > 0) {
+              console.error('Issues:');
+              for (const issue of integrity.issues) {
+                console.error(`  ⚠️  ${issue}`);
+              }
+              console.error('');
+            }
+
+            const missingTables = integrity.tables.filter(t => !t.exists);
+            if (missingTables.length > 0) {
+              console.error(`Missing tables: ${missingTables.map(t => t.name).join(', ')}`);
+            }
+
+            const missingIndexes = integrity.indexes.filter(i => !i.exists);
+            if (missingIndexes.length > 0) {
+              console.error(`Missing indexes: ${missingIndexes.map(i => i.name).join(', ')}`);
+            }
+
+            outputSuccess(integrity);
+            break;
+          }
+
+          case "version": {
+            const current = getSchemaVersion(db);
+            const latest = getLatestVersion();
+            const pending = getPendingMigrations(db);
+            console.error(`Schema version: ${current}/${latest}`);
+            if (pending.length > 0) {
+              console.error(`Pending migrations: ${pending.length}`);
+              for (const m of pending) {
+                console.error(`  - v${m.version}: ${m.name}`);
+              }
+            }
+            outputSuccess({ current, latest, pending: pending.length });
+            break;
+          }
+
+          case "migrate": {
+            console.error('Running migrations...');
+            const result = runMigrations(db, getProjectDbPath());
+            if (result.ok) {
+              if (result.value.applied.length === 0) {
+                console.error('✅ Already up to date');
+              } else {
+                console.error(`✅ Applied ${result.value.applied.length} migration(s)`);
+                for (const m of result.value.applied) {
+                  console.error(`  - v${m.version}: ${m.name} (${m.duration_ms}ms)`);
+                }
+              }
+              outputSuccess(result.value);
+            } else {
+              console.error(`❌ Migration failed: ${result.error.message}`);
+              process.exit(1);
+            }
+            break;
+          }
+
+          case "errors": {
+            const limit = parseInt(subArgs[1]) || 20;
+            const errors = getRecentErrors(db, limit);
+            if (errors.length === 0) {
+              console.error('No recent errors');
+            } else {
+              console.error(`\n📋 Recent Errors (${errors.length})\n`);
+              for (const err of errors) {
+                console.error(`[${err.timestamp}] [${err.source}] ${err.message}`);
+              }
+            }
+            outputSuccess({ count: errors.length, errors });
+            break;
+          }
+
+          case "optimize": {
+            console.error('Optimizing database...');
+            optimizeDatabase(db);
+            console.error('✅ Database optimized');
+            outputSuccess({ optimized: true });
+            break;
+          }
+
+          default:
+            console.error("Usage: context db <check|version|migrate|errors|optimize>");
+        }
         break;
 
       // Hook commands (for automation)
