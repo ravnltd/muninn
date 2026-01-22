@@ -11,6 +11,7 @@ import { outputJson, computeContentHash, getFileMtime, formatBrief } from "../ut
 import { logError, safeJsonParse } from "../utils/errors";
 import { getGlobalDb, closeGlobalDb } from "../database/connection";
 import { ELITE_STACK } from "../types";
+import { getApiKey, redactApiKeys, isApiKeyAvailable } from "../utils/api-keys";
 
 // ============================================================================
 // Constants
@@ -171,10 +172,11 @@ async function analyzeWithClaude(
   projectInfo: { type: string; stack: string[] },
   fileContents: string[]
 ): Promise<AnalysisResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Check API key availability using secure utility
+  const keyResult = getApiKey("anthropic");
 
-  if (!apiKey) {
-    console.error("⚠️  ANTHROPIC_API_KEY not set. Using basic analysis.\n");
+  if (!keyResult.ok) {
+    console.error(`⚠️  ${keyResult.error.message}. Using basic analysis.\n`);
     return {
       project: {
         type: projectInfo.type,
@@ -226,7 +228,7 @@ Focus on:
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
+        "x-api-key": keyResult.value,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -237,7 +239,8 @@ Focus on:
     });
 
     if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
+      const errorText = await response.text();
+      throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
     }
 
     const data = await response.json() as { content: Array<{ text: string }> };
@@ -251,7 +254,11 @@ Focus on:
 
     throw new Error("No JSON in response");
   } catch (error) {
-    logError('analyzeWithClaude', error);
+    // Ensure no key exposure in logs
+    const safeError = error instanceof Error
+      ? new Error(redactApiKeys(error.message))
+      : error;
+    logError('analyzeWithClaude', safeError);
     return {
       project: {
         type: projectInfo.type,

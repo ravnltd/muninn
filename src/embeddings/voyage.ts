@@ -5,6 +5,7 @@
  */
 
 import { logError } from "../utils/errors";
+import { isApiKeyAvailable, getApiKey, redactApiKeys } from "../utils/api-keys";
 
 // ============================================================================
 // Configuration
@@ -48,7 +49,7 @@ interface VoyageError {
  * Check if Voyage API is available (key is set)
  */
 export function isAvailable(): boolean {
-  return !!process.env.VOYAGE_API_KEY;
+  return isApiKeyAvailable("voyage");
 }
 
 /**
@@ -120,8 +121,8 @@ export async function embedBatch(texts: string[]): Promise<number[][] | null> {
  * Internal batch embedding (assumes texts.length <= MAX_BATCH_SIZE)
  */
 async function embedBatchInternal(texts: string[]): Promise<number[][] | null> {
-  const apiKey = process.env.VOYAGE_API_KEY;
-  if (!apiKey) {
+  const keyResult = getApiKey("voyage");
+  if (!keyResult.ok) {
     return null;
   }
 
@@ -133,7 +134,7 @@ async function embedBatchInternal(texts: string[]): Promise<number[][] | null> {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${keyResult.value}`,
       },
       body: JSON.stringify({
         model: VOYAGE_MODEL,
@@ -144,8 +145,10 @@ async function embedBatchInternal(texts: string[]): Promise<number[][] | null> {
 
     if (!response.ok) {
       const errorData = (await response.json()) as VoyageError;
+      // Redact any potential key exposure in error message
+      const safeMessage = redactApiKeys(errorData.error?.message || response.statusText);
       logError("voyage:embedBatch", new Error(
-        `Voyage API error ${response.status}: ${errorData.error?.message || response.statusText}`
+        `Voyage API error ${response.status}: ${safeMessage}`
       ));
       return null;
     }
@@ -156,7 +159,9 @@ async function embedBatchInternal(texts: string[]): Promise<number[][] | null> {
     const sorted = data.data.sort((a, b) => a.index - b.index);
     return sorted.map((item) => item.embedding);
   } catch (error) {
-    logError("voyage:embedBatch", error);
+    // Ensure no key exposure in logs
+    const message = error instanceof Error ? error.message : String(error);
+    logError("voyage:embedBatch", new Error(redactApiKeys(message)));
     return null;
   }
 }

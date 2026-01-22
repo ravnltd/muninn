@@ -9,6 +9,7 @@ import { semanticQuery, searchGlobalLearnings } from "../database/queries/search
 import { getGlobalDb, closeGlobalDb } from "../database/connection";
 import { outputJson } from "../utils/format";
 import { logError } from "../utils/errors";
+import { getApiKey, redactApiKeys } from "../utils/api-keys";
 
 // ============================================================================
 // Semantic Query with Global Learning Integration
@@ -244,31 +245,38 @@ Example: [3, 0, 2, 1, 4]`;
 // ============================================================================
 
 async function callClaude(prompt: string, maxTokens: number = 2000): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY not set");
+  const keyResult = getApiKey("anthropic");
+  if (!keyResult.ok) {
+    throw new Error(keyResult.error.message);
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-3-haiku-20240307",
-      max_tokens: maxTokens,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": keyResult.value,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-3-haiku-20240307",
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Claude API error: ${response.status}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Claude API error ${response.status}: ${redactApiKeys(errorText)}`);
+    }
+
+    const data = await response.json() as { content: Array<{ type: string; text: string }> };
+    return data.content[0]?.text || "";
+  } catch (error) {
+    // Ensure no key exposure in error messages
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(redactApiKeys(message));
   }
-
-  const data = await response.json() as { content: Array<{ type: string; text: string }> };
-  return data.content[0]?.text || "";
 }
 
 function parseJsonResponse(text: string): unknown {
