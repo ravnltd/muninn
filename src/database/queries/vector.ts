@@ -10,6 +10,7 @@ import {
   deserializeEmbedding,
   serializeEmbedding,
   generateEmbedding,
+  generateEmbeddings,
   isVoyageAvailable,
 } from "../../embeddings";
 import { logError } from "../../utils/errors";
@@ -339,8 +340,6 @@ export async function backfillTable(
     const texts = batch.map((r) => r.text);
 
     try {
-      // Import dynamically to avoid circular deps
-      const { generateEmbeddings } = await import("../../embeddings");
       const embeddings = await generateEmbeddings(texts);
 
       if (embeddings) {

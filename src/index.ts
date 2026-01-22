@@ -17,6 +17,7 @@ import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { showDependencies, refreshDependencies, generateDependencyGraph, findCircularDependencies } from "./commands/deps";
 import { handleBookmarkCommand } from "./commands/bookmark";
 import { handleFocusCommand } from "./commands/focus";
+import { hookCheck, hookInit, hookPostEdit, hookBrain } from "./commands/hooks";
 import { outputSuccess } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -48,6 +49,12 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   focus get                   Show current focus
   focus clear                 Clear current focus
   focus list                  Show focus history
+
+🪝 Hook Commands (for automation):
+  hook check <files...>       Pre-edit check (exits 1 if fragility >= threshold)
+  hook init                   Session initialization context
+  hook post-edit <file>       Post-edit memory update reminder
+  hook brain                  Full brain dump for session start
 
 📦 Dependency Commands:
   deps <file>                 Show imports and dependents for a file
@@ -411,6 +418,40 @@ async function main(): Promise<void> {
       // Focus commands
       case "focus":
         handleFocusCommand(db, projectId, subArgs);
+        break;
+
+      // Hook commands (for automation)
+      case "hook":
+        const hookCmd = subArgs[0];
+        switch (hookCmd) {
+          case "check": {
+            const hookFiles = subArgs.slice(1).filter(a => !a.startsWith("--"));
+            const thresholdIdx = subArgs.indexOf("--threshold");
+            const threshold = thresholdIdx !== -1 ? parseInt(subArgs[thresholdIdx + 1]) : 7;
+            if (hookFiles.length === 0) {
+              console.error("Usage: context hook check <file1> [file2] [--threshold N]");
+              process.exit(1);
+            }
+            hookCheck(db, projectId, process.cwd(), hookFiles, threshold);
+            break;
+          }
+          case "init":
+            hookInit(db, projectId, process.cwd());
+            break;
+          case "post-edit":
+            if (!subArgs[1]) {
+              console.error("Usage: context hook post-edit <file>");
+              process.exit(1);
+            }
+            hookPostEdit(db, projectId, subArgs[1]);
+            break;
+          case "brain":
+            hookBrain(db, projectId, process.cwd());
+            break;
+          default:
+            console.error("Usage: context hook <check|init|post-edit|brain>");
+            process.exit(1);
+        }
         break;
 
       default:

@@ -10,13 +10,12 @@ import { execSync } from "child_process";
 import type {
   FileCheck,
   ImpactResult,
-  DriftResult,
   SmartStatus,
   ProjectHealth,
   StaleFile,
 } from "../types";
 import { outputJson, computeContentHash } from "../utils/format";
-import { logError, safeJsonParse } from "../utils/errors";
+import { safeJsonParse } from "../utils/errors";
 
 // ============================================================================
 // Pre-Edit Check Command
@@ -113,7 +112,7 @@ function checkSingleFile(
   }
 
   // Get related issues
-  const relatedIssues = db.query<{ id: number; title: string }, [number, string]>(`
+  const relatedIssues = db.query<{ id: number; title: string }, [number, string, string]>(`
     SELECT id, title FROM issues
     WHERE project_id = ? AND status = 'open'
     AND (affected_files LIKE ? OR related_symbols LIKE ?)
@@ -184,7 +183,7 @@ function displayCheckResults(results: FileCheck[]): void {
 export function analyzeImpact(
   db: Database,
   projectId: number,
-  projectPath: string,
+  _projectPath: string,
   filePath: string
 ): ImpactResult {
   // Get file info
@@ -230,7 +229,7 @@ export function analyzeImpact(
   `).all(projectId, `%${filePath}%`);
 
   // Get related issues
-  const relatedIssues = db.query<{ id: number; title: string }, [number, string]>(`
+  const relatedIssues = db.query<{ id: number; title: string }, [number, string, string]>(`
     SELECT id, title FROM issues
     WHERE project_id = ? AND status = 'open'
     AND (affected_files LIKE ? OR related_symbols LIKE ?)

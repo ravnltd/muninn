@@ -45,18 +45,7 @@ function getGitStatus(path: string): string[] {
   }
 }
 
-function getGitDiff(path: string, since: string = "HEAD~10"): string[] {
-  try {
-    const output = execSync(`git diff --name-only ${since} 2>/dev/null || echo ""`, {
-      cwd: path,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return output.trim().split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
+// Note: getGitDiff function removed as unused, but available in git log if needed
 
 function getUntrackedFiles(path: string): string[] {
   try {
@@ -113,7 +102,6 @@ export function detectDrift(
 
   if (hasGit) {
     // Get git changes
-    const changedFiles = getGitDiff(projectPath);
     const statusFiles = getGitStatus(projectPath);
     const untracked = getUntrackedFiles(projectPath);
 
