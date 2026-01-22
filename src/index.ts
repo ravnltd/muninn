@@ -19,6 +19,7 @@ import { showDependencies, refreshDependencies, generateDependencyGraph, findCir
 import { handleBookmarkCommand } from "./commands/bookmark";
 import { handleFocusCommand } from "./commands/focus";
 import { hookCheck, hookInit, hookPostEdit, hookBrain } from "./commands/hooks";
+import { handleChunkCommand } from "./commands/chunk";
 import { outputSuccess } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -75,6 +76,12 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   embed status                Show embedding coverage statistics
   embed backfill [table]      Generate missing embeddings
   embed test "text"           Test embedding generation
+
+🧩 Code Chunking Commands:
+  chunk run [-v]              Extract symbols from all code files
+  chunk status                Show symbol statistics
+  chunk search <query>        Search functions/classes/types
+  chunk file <path>           Preview chunks for a single file
 
 📝 Memory Commands:
   file add <path> [options]   Add/update file knowledge
@@ -236,6 +243,10 @@ async function main(): Promise<void> {
 
       case "embed":
         await handleEmbedCommand(db, projectId, subArgs);
+        break;
+
+      case "chunk":
+        await handleChunkCommand(db, projectId, process.cwd(), subArgs);
         break;
 
       case "file":

@@ -346,7 +346,7 @@ export interface TechDebt {
 // Query & Search Types
 // ============================================================================
 
-export type QueryResultType = 'file' | 'decision' | 'issue' | 'learning' | 'global-learning';
+export type QueryResultType = 'file' | 'decision' | 'issue' | 'learning' | 'global-learning' | 'symbol';
 
 export interface QueryResult {
   type: QueryResultType;

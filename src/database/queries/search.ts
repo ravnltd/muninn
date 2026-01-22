@@ -241,6 +241,69 @@ function ftsOnlyQuery(
     logError('semanticQuery:learnings', error);
   }
 
+  // Search symbols (code chunks)
+  try {
+    const symbolQuery = projectId
+      ? db.query<{
+          id: number;
+          name: string;
+          type: string;
+          signature: string;
+          purpose: string | null;
+          file_path: string;
+          relevance: number;
+        }, [string, number]>(`
+          SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
+                 bm25(fts_symbols) as relevance
+          FROM fts_symbols
+          JOIN symbols s ON fts_symbols.rowid = s.id
+          JOIN files f ON s.file_id = f.id
+          WHERE fts_symbols MATCH ?1 AND f.project_id = ?2
+          ORDER BY relevance
+          LIMIT 10
+        `)
+      : db.query<{
+          id: number;
+          name: string;
+          type: string;
+          signature: string;
+          purpose: string | null;
+          file_path: string;
+          relevance: number;
+        }, [string]>(`
+          SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
+                 bm25(fts_symbols) as relevance
+          FROM fts_symbols
+          JOIN symbols s ON fts_symbols.rowid = s.id
+          JOIN files f ON s.file_id = f.id
+          WHERE fts_symbols MATCH ?1
+          ORDER BY relevance
+          LIMIT 10
+        `);
+
+    const symbols = projectId
+      ? symbolQuery.all(query, projectId)
+      : (symbolQuery as ReturnType<typeof db.query<{
+          id: number;
+          name: string;
+          type: string;
+          signature: string;
+          purpose: string | null;
+          file_path: string;
+          relevance: number;
+        }, [string]>>).all(query);
+
+    results.push(...symbols.map(s => ({
+      type: 'symbol' as const,
+      id: s.id,
+      title: `${s.name} (${s.type}) in ${s.file_path}`,
+      content: s.purpose || s.signature,
+      relevance: s.relevance,
+    })));
+  } catch (error) {
+    logError('semanticQuery:symbols', error);
+  }
+
   // Sort by relevance and limit
   return results
     .sort((a, b) => a.relevance - b.relevance)

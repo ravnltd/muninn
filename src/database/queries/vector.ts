@@ -56,18 +56,30 @@ interface EmbeddingStats {
  * Get embedding coverage stats for all tables
  */
 export function getEmbeddingStats(db: Database, projectId: number): EmbeddingStats[] {
-  const tables = ["files", "decisions", "issues", "learnings"];
+  const tables = ["files", "decisions", "issues", "learnings", "symbols"];
   const stats: EmbeddingStats[] = [];
 
   for (const table of tables) {
     try {
-      const totalResult = db.query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`
-      ).get(projectId);
+      let totalResult: { count: number } | undefined;
+      let withEmbResult: { count: number } | undefined;
 
-      const withEmbResult = db.query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ? AND embedding IS NOT NULL`
-      ).get(projectId);
+      // Symbols need special handling - they're linked through files
+      if (table === "symbols") {
+        totalResult = db.query<{ count: number }, [number]>(
+          `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ?`
+        ).get(projectId);
+        withEmbResult = db.query<{ count: number }, [number]>(
+          `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ? AND s.embedding IS NOT NULL`
+        ).get(projectId);
+      } else {
+        totalResult = db.query<{ count: number }, [number]>(
+          `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`
+        ).get(projectId);
+        withEmbResult = db.query<{ count: number }, [number]>(
+          `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ? AND embedding IS NOT NULL`
+        ).get(projectId);
+      }
 
       const total = totalResult?.count ?? 0;
       const withEmbedding = withEmbResult?.count ?? 0;
@@ -124,7 +136,7 @@ export async function vectorSearch(
   projectId: number,
   options: { limit?: number; minSimilarity?: number; tables?: string[] } = {}
 ): Promise<VectorSearchResult[]> {
-  const { limit = 10, minSimilarity = 0.3, tables = ["files", "decisions", "issues", "learnings"] } = options;
+  const { limit = 10, minSimilarity = 0.3, tables = ["files", "decisions", "issues", "learnings", "symbols"] } = options;
 
   // Generate query embedding
   const queryEmbedding = await generateEmbedding(query);
@@ -160,11 +172,22 @@ async function searchTable(
     // Get table-specific columns
     const { titleCol, contentCol, type } = getTableMapping(table);
 
-    const records = db.query<RecordWithEmbedding, [number]>(`
-      SELECT id, ${titleCol} as title, ${contentCol} as content, embedding
-      FROM ${table}
-      WHERE project_id = ? AND embedding IS NOT NULL
-    `).all(projectId);
+    // Symbols need special handling - they're linked through files
+    let records: RecordWithEmbedding[];
+    if (table === "symbols") {
+      records = db.query<RecordWithEmbedding, [number]>(`
+        SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding
+        FROM symbols s
+        JOIN files f ON s.file_id = f.id
+        WHERE f.project_id = ? AND s.embedding IS NOT NULL
+      `).all(projectId);
+    } else {
+      records = db.query<RecordWithEmbedding, [number]>(`
+        SELECT id, ${titleCol} as title, ${contentCol} as content, embedding
+        FROM ${table}
+        WHERE project_id = ? AND embedding IS NOT NULL
+      `).all(projectId);
+    }
 
     const results: VectorSearchResult[] = [];
 
@@ -213,6 +236,8 @@ function getTableMapping(table: string): {
       return { titleCol: "title", contentCol: "description", type: "issue" };
     case "learnings":
       return { titleCol: "title", contentCol: "content", type: "learning" };
+    case "symbols":
+      return { titleCol: "name", contentCol: "signature", type: "symbol" };
     default:
       return { titleCol: "title", contentCol: "content", type: "file" };
   }
