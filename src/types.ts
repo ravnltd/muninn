@@ -382,7 +382,7 @@ export interface TechDebt {
 // Query & Search Types
 // ============================================================================
 
-export type QueryResultType = 'file' | 'decision' | 'issue' | 'learning' | 'global-learning' | 'symbol';
+export type QueryResultType = 'file' | 'decision' | 'issue' | 'learning' | 'global-learning' | 'symbol' | 'observation' | 'question';
 
 export interface QueryResult {
   type: QueryResultType;
@@ -666,6 +666,103 @@ export interface CodeReviewResult {
   }>;
   positives: string[];
   refactor_suggestions: string[];
+}
+
+// ============================================================================
+// Continuity & Self-Improvement Types
+// ============================================================================
+
+export type Temperature = 'hot' | 'warm' | 'cold';
+
+export type ObservationType = 'pattern' | 'frustration' | 'insight' | 'dropped_thread' | 'preference' | 'behavior';
+
+export interface Observation {
+  id: number;
+  project_id: number | null;
+  type: ObservationType;
+  content: string;
+  frequency: number;
+  session_id: number | null;
+  last_seen_at: string;
+  created_at: string;
+}
+
+export type QuestionStatus = 'open' | 'resolved' | 'dropped';
+
+export interface OpenQuestion {
+  id: number;
+  project_id: number | null;
+  question: string;
+  context: string | null;
+  priority: number;
+  status: QuestionStatus;
+  resolution: string | null;
+  session_id: number | null;
+  resolved_at: string | null;
+  created_at: string;
+}
+
+export type TaskType = 'code_review' | 'debugging' | 'feature_build' | 'creative' | 'research' | 'refactor';
+
+// ============================================================================
+// Profile Types
+// ============================================================================
+
+export type ProfileCategory = 'coding_style' | 'architecture' | 'tooling' | 'workflow' | 'communication';
+export type ProfileSource = 'inferred' | 'declared' | 'observed';
+
+export interface DeveloperProfileEntry {
+  id: number;
+  project_id: number;
+  key: string;
+  value: string;
+  evidence: string | null;
+  confidence: number;
+  category: ProfileCategory;
+  source: ProfileSource;
+  times_confirmed: number;
+  last_updated_at: string;
+  created_at: string;
+}
+
+// ============================================================================
+// Outcome Types
+// ============================================================================
+
+export type OutcomeStatus = 'pending' | 'succeeded' | 'failed' | 'revised' | 'unknown';
+
+// ============================================================================
+// Prediction Types
+// ============================================================================
+
+export interface PredictionBundle {
+  relatedFiles: Array<{ path: string; reason: string; confidence: number }>;
+  cochangingFiles: Array<{ path: string; cochange_count: number }>;
+  relevantDecisions: Array<{ id: number; title: string }>;
+  openIssues: Array<{ id: number; title: string; severity: number }>;
+  applicableLearnings: Array<{ id: number; title: string; content: string }>;
+  workflowPattern: { task_type: string; approach: string } | null;
+  profileEntries: Array<{ key: string; value: string; confidence: number; category: string }>;
+}
+
+// ============================================================================
+// Insight Types
+// ============================================================================
+
+export type InsightType = 'correlation' | 'anomaly' | 'recommendation' | 'pattern';
+export type InsightStatus = 'new' | 'acknowledged' | 'dismissed' | 'applied';
+
+export interface WorkflowPattern {
+  id: number;
+  project_id: number | null;
+  task_type: TaskType;
+  approach: string;
+  preferences: string | null; // JSON object
+  examples: string | null; // JSON array
+  times_used: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // ============================================================================

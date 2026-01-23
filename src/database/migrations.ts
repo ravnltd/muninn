@@ -493,6 +493,258 @@ export const MIGRATIONS: Migration[] = [
 
       return !!radiusExists && !!summaryExists;
     }
+  },
+
+  // Version 9: Continuity & Self-Improvement System
+  {
+    version: 9,
+    name: "continuity_system",
+    description: "Observations, open questions, workflow patterns, and temperature system for cross-session learning",
+    up: `
+      -- ========================================================================
+      -- OBSERVATIONS — Lightweight notes-to-self
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        type TEXT NOT NULL DEFAULT 'insight',  -- pattern, frustration, insight, dropped_thread, preference, behavior
+        content TEXT NOT NULL,
+        frequency INTEGER DEFAULT 1,           -- Auto-incremented on dedup
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        embedding BLOB,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_observations_project ON observations(project_id);
+      CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(type);
+      CREATE INDEX IF NOT EXISTS idx_observations_frequency ON observations(frequency DESC);
+      CREATE INDEX IF NOT EXISTS idx_observations_last_seen ON observations(last_seen_at DESC);
+
+      -- FTS for observations
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_observations USING fts5(
+        content, type
+      );
+
+      -- ========================================================================
+      -- OPEN QUESTIONS — Deferred question parking lot
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS open_questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        context TEXT,
+        priority INTEGER DEFAULT 3,            -- 1-5 (1=highest)
+        status TEXT DEFAULT 'open',            -- open, resolved, dropped
+        resolution TEXT,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        embedding BLOB,
+        resolved_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_questions_project ON open_questions(project_id);
+      CREATE INDEX IF NOT EXISTS idx_questions_status ON open_questions(status);
+      CREATE INDEX IF NOT EXISTS idx_questions_priority ON open_questions(priority);
+
+      -- FTS for questions
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_questions USING fts5(
+        question, context
+      );
+
+      -- ========================================================================
+      -- WORKFLOW PATTERNS — How the user works on different task types
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS workflow_patterns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        task_type TEXT NOT NULL,               -- code_review, debugging, feature_build, creative, research, refactor
+        approach TEXT NOT NULL,
+        preferences TEXT,                      -- JSON object
+        examples TEXT,                         -- JSON array
+        times_used INTEGER DEFAULT 1,
+        last_used_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, task_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workflow_project ON workflow_patterns(project_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_task_type ON workflow_patterns(task_type);
+
+      -- ========================================================================
+      -- TEMPERATURE SYSTEM — Hot/warm/cold tracking
+      -- Add temperature columns to existing tables
+      -- ========================================================================
+      ALTER TABLE files ADD COLUMN temperature TEXT DEFAULT 'cold';
+      ALTER TABLE files ADD COLUMN last_referenced_at DATETIME;
+
+      ALTER TABLE decisions ADD COLUMN temperature TEXT DEFAULT 'cold';
+      ALTER TABLE decisions ADD COLUMN last_referenced_at DATETIME;
+
+      ALTER TABLE issues ADD COLUMN temperature TEXT DEFAULT 'cold';
+      ALTER TABLE issues ADD COLUMN last_referenced_at DATETIME;
+
+      ALTER TABLE learnings ADD COLUMN temperature TEXT DEFAULT 'cold';
+      ALTER TABLE learnings ADD COLUMN last_referenced_at DATETIME;
+
+      -- Record migration
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('continuity_system_enabled', 'true'),
+        ('observations_enabled', 'true'),
+        ('open_questions_enabled', 'true'),
+        ('workflow_patterns_enabled', 'true'),
+        ('temperature_system_enabled', 'true');
+    `,
+    validate: (db) => {
+      const obsExists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='observations'`
+      ).get();
+
+      const qExists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='open_questions'`
+      ).get();
+
+      const wfExists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_patterns'`
+      ).get();
+
+      return !!obsExists && !!qExists && !!wfExists;
+    }
+  },
+
+  // Version 10: Developer Profile Engine
+  {
+    version: 10,
+    name: "developer_profile",
+    description: "Track developer preferences, coding style, and patterns with confidence scoring",
+    up: `
+      CREATE TABLE IF NOT EXISTS developer_profile (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        evidence TEXT,
+        confidence REAL DEFAULT 0.5,
+        category TEXT NOT NULL,
+        source TEXT DEFAULT 'inferred',
+        times_confirmed INTEGER DEFAULT 1,
+        embedding BLOB,
+        last_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, key)
+      );
+
+      CREATE TABLE IF NOT EXISTS global_developer_profile (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT NOT NULL UNIQUE,
+        value TEXT NOT NULL,
+        evidence TEXT,
+        confidence REAL DEFAULT 0.5,
+        category TEXT NOT NULL,
+        source TEXT DEFAULT 'inferred',
+        times_confirmed INTEGER DEFAULT 1,
+        last_updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_profile_project ON developer_profile(project_id);
+      CREATE INDEX IF NOT EXISTS idx_profile_confidence ON developer_profile(confidence DESC);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('developer_profile_enabled', 'true');
+    `,
+    validate: (db) => {
+      const exists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='developer_profile'`
+      ).get();
+      return !!exists;
+    }
+  },
+
+  // Version 11: Outcome Tracking for Decisions
+  {
+    version: 11,
+    name: "outcome_tracking",
+    description: "Track whether decisions worked out over time",
+    up: `
+      ALTER TABLE decisions ADD COLUMN outcome_status TEXT DEFAULT 'pending';
+      ALTER TABLE decisions ADD COLUMN outcome_notes TEXT;
+      ALTER TABLE decisions ADD COLUMN outcome_at DATETIME;
+      ALTER TABLE decisions ADD COLUMN check_after_sessions INTEGER DEFAULT 5;
+      ALTER TABLE decisions ADD COLUMN sessions_since INTEGER DEFAULT 0;
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('outcome_tracking_enabled', 'true');
+    `,
+    validate: (db) => {
+      const exists = db.query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('decisions') WHERE name='outcome_status'`
+      ).get();
+      return !!exists;
+    }
+  },
+
+  // Version 12: Temporal Intelligence
+  {
+    version: 12,
+    name: "temporal_intelligence",
+    description: "File velocity scoring and session numbering for time-aware search",
+    up: `
+      ALTER TABLE files ADD COLUMN velocity_score REAL DEFAULT 0.0;
+      ALTER TABLE files ADD COLUMN change_count INTEGER DEFAULT 0;
+      ALTER TABLE files ADD COLUMN first_changed_at DATETIME;
+      ALTER TABLE sessions ADD COLUMN session_number INTEGER;
+
+      CREATE INDEX IF NOT EXISTS idx_files_velocity ON files(velocity_score DESC);
+      CREATE INDEX IF NOT EXISTS idx_sessions_number ON sessions(project_id, session_number);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('temporal_intelligence_enabled', 'true');
+    `,
+    validate: (db) => {
+      const exists = db.query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('files') WHERE name='velocity_score'`
+      ).get();
+      return !!exists;
+    }
+  },
+
+  // Version 13: Active Inference Engine (Insights)
+  {
+    version: 13,
+    name: "active_inference",
+    description: "Cross-session insights generated from pattern analysis",
+    up: `
+      CREATE TABLE IF NOT EXISTS insights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        evidence TEXT,
+        confidence REAL DEFAULT 0.5,
+        status TEXT DEFAULT 'new',
+        generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        acknowledged_at DATETIME,
+        embedding BLOB,
+        UNIQUE(project_id, title)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_insights_status ON insights(status);
+      CREATE INDEX IF NOT EXISTS idx_insights_confidence ON insights(confidence DESC);
+      CREATE INDEX IF NOT EXISTS idx_insights_project ON insights(project_id);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('active_inference_enabled', 'true');
+    `,
+    validate: (db) => {
+      const exists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='insights'`
+      ).get();
+      return !!exists;
+    }
   }
 ];
 
@@ -654,7 +906,9 @@ const REQUIRED_PROJECT_TABLES = [
   'projects', 'files', 'symbols', 'decisions', 'issues',
   'sessions', 'learnings', 'relationships',
   'bookmarks', 'focus', 'file_correlations', 'session_learnings',
-  'blast_radius', 'blast_summary'
+  'blast_radius', 'blast_summary',
+  'observations', 'open_questions', 'workflow_patterns',
+  'developer_profile', 'insights'
 ];
 
 // Tables that exist in global database only

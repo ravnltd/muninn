@@ -21,6 +21,14 @@ import { handleBookmarkCommand } from "./commands/bookmark";
 import { handleFocusCommand } from "./commands/focus";
 import { hookCheck, hookInit, hookPostEdit, hookBrain } from "./commands/hooks";
 import { handleChunkCommand } from "./commands/chunk";
+import { handleObserveCommand } from "./commands/observe";
+import { handleQuestionsCommand } from "./commands/questions";
+import { handleWorkflowCommand } from "./commands/workflow";
+import { handleProfileCommand } from "./commands/profile";
+import { handleOutcomeCommand, incrementSessionsSince } from "./commands/outcomes";
+import { handleTemporalCommand, updateFileVelocity, assignSessionNumber } from "./commands/temporal";
+import { handlePredictCommand } from "./commands/predict";
+import { handleInsightsCommand, generateInsights } from "./commands/insights";
 import { outputSuccess } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -103,6 +111,29 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
 
   learn add [options]         Record a learning (--global for cross-project)
   learn list                  List learnings
+
+📝 Continuity Commands:
+  observe <content> [options] Record an observation (--type, --global)
+  observe list                List observations
+  questions add <text>        Park a question for later (--priority, --context)
+  questions list              Show open questions
+  questions resolve <id> <text> Answer/drop a question
+  workflow set <type> <approach> Record task workflow (--preferences, --global)
+  workflow get <type>         Get workflow for task type
+  workflow list               List all workflows
+
+🧠 Intelligence Commands (v2):
+  profile show [category]     View developer profile
+  profile add <key> <value>   Declare a preference (--category, --global)
+  profile infer               Auto-infer preferences from data
+  predict <task> [--files f]  Bundle all relevant context for a task
+  outcome due                 List decisions needing review
+  outcome record <id> <status> Record decision outcome
+  temporal velocity [file]    Show file velocity scores
+  temporal anomalies          Detect unusual change patterns
+  insights list [status]      List cross-session insights
+  insights generate           Generate new insights from patterns
+  insights ack|dismiss <id>   Acknowledge or dismiss an insight
 
 📋 Session Commands:
   session start <goal>        Start a work session
@@ -321,17 +352,69 @@ async function main(): Promise<void> {
         }
         break;
 
+      // Continuity commands
+      case "observe":
+      case "obs":
+        await handleObserveCommand(db, projectId, subArgs);
+        break;
+
+      case "questions":
+      case "q?":
+        await handleQuestionsCommand(db, projectId, subArgs);
+        break;
+
+      case "workflow":
+      case "wf":
+        handleWorkflowCommand(db, projectId, subArgs);
+        break;
+
+      case "profile":
+        handleProfileCommand(db, projectId, subArgs);
+        break;
+
+      case "outcome":
+        handleOutcomeCommand(db, projectId, subArgs);
+        break;
+
+      case "temporal":
+        handleTemporalCommand(db, projectId, subArgs);
+        break;
+
+      case "predict":
+        handlePredictCommand(db, projectId, subArgs);
+        break;
+
+      case "insights":
+        handleInsightsCommand(db, projectId, subArgs);
+        break;
+
       case "session":
       case "s":
         const sessCmd = subArgs[0];
         switch (sessCmd) {
-          case "start":
-            sessionStart(db, projectId, subArgs.slice(1).join(" "));
+          case "start": {
+            const newSessionId = sessionStart(db, projectId, subArgs.slice(1).join(" "));
+            incrementSessionsSince(db, projectId);
+            assignSessionNumber(db, projectId, newSessionId);
             break;
-          case "end":
+          }
+          case "end": {
             // Use enhanced session end with auto-learning extraction
             await sessionEndEnhanced(db, projectId, parseInt(subArgs[1]), subArgs.slice(2));
+            // Update file velocities from session
+            const endedSession = db.query<{ files_touched: string | null }, [number]>(
+              "SELECT files_touched FROM sessions WHERE id = ?"
+            ).get(parseInt(subArgs[1]));
+            if (endedSession?.files_touched) {
+              try {
+                const touchedFiles = JSON.parse(endedSession.files_touched);
+                updateFileVelocity(db, projectId, touchedFiles);
+              } catch { /* invalid JSON */ }
+            }
+            // Generate insights non-blocking (best effort)
+            try { generateInsights(db, projectId); } catch { /* optional */ }
             break;
+          }
           case "last":
             sessionLast(db, projectId);
             break;

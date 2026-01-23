@@ -42,6 +42,11 @@ export const files = sqliteTable("files", {
   contentHash: text("content_hash"),
   fsModifiedAt: text("fs_modified_at"),
   lastQueriedAt: text("last_queried_at"),
+  temperature: text("temperature").default("cold"),
+  lastReferencedAt: text("last_referenced_at"),
+  velocityScore: real("velocity_score").default(0.0),
+  changeCount: integer("change_count").default(0),
+  firstChangedAt: text("first_changed_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -90,6 +95,13 @@ export const decisions = sqliteTable("decisions", {
   constraintType: text("constraint_type", { enum: ["must_hold", "should_hold", "nice_to_have"] }).default("should_hold"),
   decidedAt: text("decided_at").default(sql`CURRENT_TIMESTAMP`),
   embedding: blob("embedding"),
+  temperature: text("temperature").default("cold"),
+  lastReferencedAt: text("last_referenced_at"),
+  outcomeStatus: text("outcome_status").default("pending"),
+  outcomeNotes: text("outcome_notes"),
+  outcomeAt: text("outcome_at"),
+  checkAfterSessions: integer("check_after_sessions").default(5),
+  sessionsSince: integer("sessions_since").default(0),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_decisions_project").on(table.projectId),
@@ -111,6 +123,8 @@ export const issues = sqliteTable("issues", {
   resolution: text("resolution"),
   resolvedAt: text("resolved_at"),
   embedding: blob("embedding"),
+  temperature: text("temperature").default("cold"),
+  lastReferencedAt: text("last_referenced_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -138,6 +152,7 @@ export const sessions = sqliteTable("sessions", {
   learnings: text("learnings"),
   nextSteps: text("next_steps"),
   success: integer("success"),
+  sessionNumber: integer("session_number"),
 }, (table) => [
   index("idx_sessions_project").on(table.projectId),
   index("idx_sessions_started").on(table.startedAt),
@@ -156,6 +171,8 @@ export const learnings = sqliteTable("learnings", {
   timesApplied: integer("times_applied").default(0),
   lastApplied: text("last_applied"),
   embedding: blob("embedding"),
+  temperature: text("temperature").default("cold"),
+  lastReferencedAt: text("last_referenced_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -467,6 +484,62 @@ export const focus = sqliteTable("focus", {
 ]);
 
 // ============================================================================
+// CONTINUITY & SELF-IMPROVEMENT TABLES
+// ============================================================================
+
+export const observations = sqliteTable("observations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  type: text("type", { enum: ["pattern", "frustration", "insight", "dropped_thread", "preference", "behavior"] }).default("insight"),
+  content: text("content").notNull(),
+  frequency: integer("frequency").default(1),
+  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
+  embedding: blob("embedding"),
+  lastSeenAt: text("last_seen_at").default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_observations_project").on(table.projectId),
+  index("idx_observations_type").on(table.type),
+  index("idx_observations_frequency").on(table.frequency),
+  index("idx_observations_last_seen").on(table.lastSeenAt),
+]);
+
+export const openQuestions = sqliteTable("open_questions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  question: text("question").notNull(),
+  context: text("context"),
+  priority: integer("priority").default(3),
+  status: text("status", { enum: ["open", "resolved", "dropped"] }).default("open"),
+  resolution: text("resolution"),
+  sessionId: integer("session_id").references(() => sessions.id, { onDelete: "set null" }),
+  embedding: blob("embedding"),
+  resolvedAt: text("resolved_at"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_questions_project").on(table.projectId),
+  index("idx_questions_status").on(table.status),
+  index("idx_questions_priority").on(table.priority),
+]);
+
+export const workflowPatterns = sqliteTable("workflow_patterns", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  taskType: text("task_type").notNull(),
+  approach: text("approach").notNull(),
+  preferences: text("preferences"), // JSON object
+  examples: text("examples"), // JSON array
+  timesUsed: integer("times_used").default(1),
+  lastUsedAt: text("last_used_at"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_workflow_project").on(table.projectId),
+  index("idx_workflow_task_type").on(table.taskType),
+  uniqueIndex("idx_workflow_unique").on(table.projectId, table.taskType),
+]);
+
+// ============================================================================
 // BLAST RADIUS TABLES
 // ============================================================================
 
@@ -510,8 +583,63 @@ export const blastSummary = sqliteTable("blast_summary", {
 ]);
 
 // ============================================================================
+// INTELLIGENCE TABLES
+// ============================================================================
+
+export const developerProfile = sqliteTable("developer_profile", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  key: text("key").notNull(),
+  value: text("value").notNull(),
+  evidence: text("evidence"),
+  confidence: real("confidence").default(0.5),
+  category: text("category").notNull(),
+  source: text("source").default("inferred"),
+  timesConfirmed: integer("times_confirmed").default(1),
+  embedding: blob("embedding"),
+  lastUpdatedAt: text("last_updated_at").default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_profile_project").on(table.projectId),
+  index("idx_profile_confidence").on(table.confidence),
+  uniqueIndex("idx_profile_unique").on(table.projectId, table.key),
+]);
+
+export const insights = sqliteTable("insights", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  evidence: text("evidence"),
+  confidence: real("confidence").default(0.5),
+  status: text("status").default("new"),
+  generatedAt: text("generated_at").default(sql`CURRENT_TIMESTAMP`),
+  acknowledgedAt: text("acknowledged_at"),
+  embedding: blob("embedding"),
+}, (table) => [
+  index("idx_insights_project").on(table.projectId),
+  index("idx_insights_status").on(table.status),
+  index("idx_insights_confidence").on(table.confidence),
+  uniqueIndex("idx_insights_unique").on(table.projectId, table.title),
+]);
+
+// ============================================================================
 // GLOBAL TABLES (for global DB)
 // ============================================================================
+
+export const globalDeveloperProfile = sqliteTable("global_developer_profile", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  key: text("key").unique().notNull(),
+  value: text("value").notNull(),
+  evidence: text("evidence"),
+  confidence: real("confidence").default(0.5),
+  category: text("category").notNull(),
+  source: text("source").default("inferred"),
+  timesConfirmed: integer("times_confirmed").default(1),
+  lastUpdatedAt: text("last_updated_at").default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
 
 export const globalLearnings = sqliteTable("global_learnings", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -615,3 +743,18 @@ export type NewFocus = typeof focus.$inferInsert;
 
 export type BlastRadiusRecord = typeof blastRadius.$inferSelect;
 export type BlastSummaryRecord = typeof blastSummary.$inferSelect;
+
+export type ObservationRecord = typeof observations.$inferSelect;
+export type NewObservation = typeof observations.$inferInsert;
+
+export type OpenQuestionRecord = typeof openQuestions.$inferSelect;
+export type NewOpenQuestion = typeof openQuestions.$inferInsert;
+
+export type WorkflowPatternRecord = typeof workflowPatterns.$inferSelect;
+export type NewWorkflowPattern = typeof workflowPatterns.$inferInsert;
+
+export type DeveloperProfileRecord = typeof developerProfile.$inferSelect;
+export type NewDeveloperProfile = typeof developerProfile.$inferInsert;
+
+export type InsightRecord = typeof insights.$inferSelect;
+export type NewInsight = typeof insights.$inferInsert;

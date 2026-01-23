@@ -8,6 +8,10 @@ import { outputJson, outputSuccess, getTimeAgo } from "../utils/format";
 import { exitWithUsage, safeJsonParse, logError } from "../utils/errors";
 import { parseSessionEndArgs } from "../utils/validation";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
+import { getOpenQuestionsForResume } from "./questions";
+import { getTopProfileEntries } from "./profile";
+import { getDecisionsDue } from "./outcomes";
+import { listInsights } from "./insights";
 
 // ============================================================================
 // Types
@@ -35,6 +39,9 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
   if (!goal) {
     exitWithUsage("Usage: context session start <goal>");
   }
+
+  // Decay temperatures on session start
+  decayTemperatures(db, projectId);
 
   const result = db.run(`
     INSERT INTO sessions (project_id, goal)
@@ -194,10 +201,13 @@ export function generateResume(db: Database, projectId: number): string {
     return "No previous sessions found. Start fresh with `context session start \"Your goal\"`";
   }
 
+  // Build system primer section
+  let md = buildSystemPrimer(db, projectId);
+
   const timeAgo = getTimeAgo((lastSession.ended_at || lastSession.started_at) as string);
   const isOngoing = !lastSession.ended_at;
 
-  let md = `# Resume Point\n\n`;
+  md += `# Resume Point\n\n`;
   md += `**Last session:** ${timeAgo}${isOngoing ? " (still ongoing)" : ""}\n`;
   md += `**Goal:** ${lastSession.goal || "Not specified"}\n`;
 
@@ -295,6 +305,46 @@ export function generateResume(db: Database, projectId: number): string {
     }
   }
 
+  // Hot entities (actively in-flight context)
+  const hotEntities = getHotEntities(db, projectId);
+  const hasHot = hotEntities.files.length > 0 || hotEntities.decisions.length > 0 || hotEntities.learnings.length > 0;
+
+  if (hasHot) {
+    md += `## Hot Context\n`;
+    if (hotEntities.files.length > 0) {
+      md += `**Files:** ${hotEntities.files.map(f => f.path).join(', ')}\n`;
+    }
+    if (hotEntities.decisions.length > 0) {
+      md += `**Decisions:** ${hotEntities.decisions.map(d => d.title).join(', ')}\n`;
+    }
+    if (hotEntities.learnings.length > 0) {
+      md += `**Learnings:** ${hotEntities.learnings.map(l => l.title).join(', ')}\n`;
+    }
+    md += "\n";
+  }
+
+  // Open questions
+  const openQuestions = getOpenQuestionsForResume(db, projectId);
+  if (openQuestions.length > 0) {
+    md += `## Open Questions\n`;
+    for (const q of openQuestions) {
+      const pri = ['', 'P1', 'P2', 'P3', 'P4', 'P5'][q.priority];
+      md += `- [${pri}] ${q.question}\n`;
+    }
+    md += "\n";
+  }
+
+  // Recent observations
+  const recentObs = getRecentObservations(db, projectId);
+  if (recentObs.length > 0) {
+    md += `## Recent Observations\n`;
+    for (const obs of recentObs) {
+      const freq = obs.frequency > 1 ? ` (${obs.frequency}x)` : '';
+      md += `- [${obs.type}] ${obs.content.slice(0, 60)}${freq}\n`;
+    }
+    md += "\n";
+  }
+
   if (isOngoing) {
     md += `---\n`;
     md += `Session still in progress. Use \`context session end ${lastSession.id}\` to close it.\n`;
@@ -305,6 +355,117 @@ export function generateResume(db: Database, projectId: number): string {
   }
 
   return md;
+}
+
+// ============================================================================
+// Temperature System
+// ============================================================================
+
+/**
+ * Decay temperature based on session count since last reference.
+ * Called on session start.
+ * Hot = referenced in last 3 sessions, Warm = 3-10, Cold = 10+
+ */
+export function decayTemperatures(db: Database, projectId: number): void {
+  const tables = ['files', 'decisions', 'issues', 'learnings'];
+
+  for (const table of tables) {
+    try {
+      // Set cold: last_referenced_at more than 10 sessions ago or null
+      db.run(`
+        UPDATE ${table}
+        SET temperature = 'cold'
+        WHERE project_id = ? AND temperature != 'cold'
+        AND (last_referenced_at IS NULL OR
+             (SELECT COUNT(*) FROM sessions WHERE project_id = ? AND started_at > last_referenced_at) > 10)
+      `, [projectId, projectId]);
+
+      // Set warm: last_referenced between 3-10 sessions ago
+      db.run(`
+        UPDATE ${table}
+        SET temperature = 'warm'
+        WHERE project_id = ? AND temperature = 'hot'
+        AND last_referenced_at IS NOT NULL
+        AND (SELECT COUNT(*) FROM sessions WHERE project_id = ? AND started_at > last_referenced_at) BETWEEN 3 AND 10
+      `, [projectId, projectId]);
+    } catch {
+      // Temperature columns might not exist yet
+    }
+  }
+}
+
+/**
+ * Heat an entity when it's queried/referenced
+ */
+export function heatEntity(db: Database, table: string, id: number): void {
+  try {
+    db.run(`
+      UPDATE ${table}
+      SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [id]);
+  } catch {
+    // Temperature columns might not exist
+  }
+}
+
+/**
+ * Get hot entities for resume display
+ */
+export function getHotEntities(db: Database, projectId: number): {
+  files: Array<{ path: string; purpose: string | null }>;
+  decisions: Array<{ id: number; title: string }>;
+  learnings: Array<{ id: number; title: string }>;
+} {
+  const result = {
+    files: [] as Array<{ path: string; purpose: string | null }>,
+    decisions: [] as Array<{ id: number; title: string }>,
+    learnings: [] as Array<{ id: number; title: string }>,
+  };
+
+  try {
+    result.files = db.query<{ path: string; purpose: string | null }, [number]>(`
+      SELECT path, purpose FROM files
+      WHERE project_id = ? AND temperature = 'hot'
+      ORDER BY last_referenced_at DESC LIMIT 5
+    `).all(projectId);
+  } catch { /* temperature column may not exist */ }
+
+  try {
+    result.decisions = db.query<{ id: number; title: string }, [number]>(`
+      SELECT id, title FROM decisions
+      WHERE project_id = ? AND temperature = 'hot' AND status = 'active'
+      ORDER BY last_referenced_at DESC LIMIT 5
+    `).all(projectId);
+  } catch { /* temperature column may not exist */ }
+
+  try {
+    result.learnings = db.query<{ id: number; title: string }, [number]>(`
+      SELECT id, title FROM learnings
+      WHERE (project_id = ? OR project_id IS NULL) AND temperature = 'hot'
+      ORDER BY last_referenced_at DESC LIMIT 5
+    `).all(projectId);
+  } catch { /* temperature column may not exist */ }
+
+  return result;
+}
+
+/**
+ * Get recent observations for resume
+ */
+export function getRecentObservations(db: Database, projectId: number, limit: number = 3): Array<{
+  type: string; content: string; frequency: number;
+}> {
+  try {
+    return db.query<{ type: string; content: string; frequency: number }, [number, number]>(`
+      SELECT type, content, frequency FROM observations
+      WHERE (project_id = ? OR project_id IS NULL)
+      ORDER BY last_seen_at DESC
+      LIMIT ?
+    `).all(projectId, limit);
+  } catch {
+    return [];
+  }
 }
 
 // ============================================================================
@@ -935,4 +1096,86 @@ export function handleCorrelationCommand(
     }
     outputJson(top);
   }
+}
+
+// ============================================================================
+// System Primer (Phase 0)
+// ============================================================================
+
+/**
+ * Build the system primer section that teaches Claude the available tools
+ * and surfaces the developer profile + active state.
+ */
+function buildSystemPrimer(db: Database, projectId: number): string {
+  let md = `# Context Intelligence System\n\n`;
+
+  md += `## Your Tools (use proactively)\n`;
+  md += `- \`context_predict "task"\` — Bundle all relevant context for a task in one call\n`;
+  md += `- \`context_profile\` — Your developer preferences (coding style, patterns, anti-patterns)\n`;
+  md += `- \`context_check [files]\` — Pre-edit safety check (MANDATORY before editing)\n`;
+  md += `- \`context_query "topic"\` — Search all knowledge (decisions, learnings, issues, files)\n`;
+  md += `- \`context_insights\` — Cross-session pattern insights\n`;
+  md += `- \`context_decisions_due\` — Decisions needing outcome review\n`;
+  md += `- \`context_outcome <id> <status>\` — Record whether a decision worked out\n`;
+  md += `- \`context_observe "note"\` — Record a quick observation (auto-dedupes)\n`;
+  md += `- \`context_focus_set "area"\` — Boost queries toward your current work\n`;
+  md += `\n`;
+
+  // Developer profile top entries
+  const profileEntries = getTopProfileEntries(db, projectId, 5);
+  if (profileEntries.length > 0) {
+    md += `## Developer Profile (top preferences)\n`;
+    for (const entry of profileEntries) {
+      const pct = Math.round(entry.confidence * 100);
+      md += `- ${entry.key} (${pct}%): ${entry.value.slice(0, 60)}\n`;
+    }
+    md += `\n`;
+  }
+
+  // Active state
+  md += `## Active State\n`;
+
+  // Focus
+  try {
+    const focus = db.query<{ area: string }, [number]>(`
+      SELECT area FROM focus
+      WHERE project_id = ? AND cleared_at IS NULL
+      ORDER BY created_at DESC LIMIT 1
+    `).get(projectId);
+    md += `- Focus: ${focus?.area || 'none'}\n`;
+  } catch {
+    md += `- Focus: none\n`;
+  }
+
+  // Hot files
+  try {
+    const hotFiles = db.query<{ path: string }, [number]>(`
+      SELECT path FROM files
+      WHERE project_id = ? AND temperature = 'hot'
+      ORDER BY last_referenced_at DESC LIMIT 3
+    `).all(projectId);
+    if (hotFiles.length > 0) {
+      md += `- Hot files: ${hotFiles.map(f => f.path).join(', ')}\n`;
+    }
+  } catch { /* temperature column might not exist */ }
+
+  // Decisions due
+  const decisionsDue = getDecisionsDue(db, projectId);
+  if (decisionsDue.length > 0) {
+    md += `- Decisions due: ${decisionsDue.length}\n`;
+  }
+
+  // Pending insights
+  const newInsights = listInsights(db, projectId, { status: 'new' });
+  if (newInsights.length > 0) {
+    md += `- Pending insights: ${newInsights.length}\n`;
+  }
+
+  // Open questions count
+  const openQuestions = getOpenQuestionsForResume(db, projectId);
+  md += `- Open questions: ${openQuestions.length}\n`;
+
+  md += `\n`;
+
+  return md;
 }

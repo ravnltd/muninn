@@ -11,6 +11,100 @@ import { isVoyageAvailable } from "../../embeddings";
 import { hasEmbeddings, hybridSearch as vectorHybridSearch } from "./vector";
 
 // ============================================================================
+// Focus & Temperature Integration
+// ============================================================================
+
+interface FocusContext {
+  area: string;
+  files: string[];
+  keywords: string[];
+}
+
+/**
+ * Get active focus for a project (if any)
+ */
+function getActiveFocus(db: Database, projectId: number): FocusContext | null {
+  try {
+    const focus = db.query<{
+      area: string; files: string | null; keywords: string | null;
+    }, [number]>(`
+      SELECT area, files, keywords FROM focus
+      WHERE project_id = ? AND cleared_at IS NULL
+      ORDER BY created_at DESC LIMIT 1
+    `).get(projectId);
+
+    if (!focus) return null;
+
+    return {
+      area: focus.area,
+      files: focus.files ? JSON.parse(focus.files) : [],
+      keywords: focus.keywords ? JSON.parse(focus.keywords) : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Apply focus boost to search results
+ * Additive: nudges ranking without completely overriding relevance
+ */
+function applyFocusBoost(results: QueryResult[], focus: FocusContext): QueryResult[] {
+  if (!focus || (focus.keywords.length === 0 && focus.files.length === 0)) {
+    return results;
+  }
+
+  return results.map(r => {
+    let boost = 0;
+
+    // Keyword matching in title/content
+    for (const keyword of focus.keywords) {
+      const kw = keyword.toLowerCase();
+      if (r.title.toLowerCase().includes(kw)) boost += 0.3;
+      if (r.content?.toLowerCase().includes(kw)) boost += 0.2;
+    }
+
+    // File pattern matching for file results
+    if (r.type === 'file') {
+      for (const pattern of focus.files) {
+        const pat = pattern.replace(/\*/g, '');
+        if (r.title.includes(pat)) boost += 0.4;
+      }
+    }
+
+    // Cap boost at 1.0
+    return { ...r, relevance: r.relevance - Math.min(boost, 1.0) }; // Lower = better for bm25
+  }).sort((a, b) => a.relevance - b.relevance);
+}
+
+/**
+ * Heat entities that appear in query results
+ */
+function heatQueryResults(db: Database, results: QueryResult[]): void {
+  const tableMap: Record<string, string> = {
+    file: 'files',
+    decision: 'decisions',
+    issue: 'issues',
+    learning: 'learnings',
+  };
+
+  for (const result of results.slice(0, 5)) { // Only heat top 5
+    const table = tableMap[result.type];
+    if (table) {
+      try {
+        db.run(`
+          UPDATE ${table}
+          SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [result.id]);
+      } catch {
+        // Temperature columns might not exist
+      }
+    }
+  }
+}
+
+// ============================================================================
 // Semantic Query (Fixed - Parameterized)
 // ============================================================================
 
@@ -80,7 +174,20 @@ export async function semanticQuery(
   }
 
   // Fall back to FTS-only
-  return ftsOnlyQuery(db, query, projectId);
+  let results = ftsOnlyQuery(db, query, projectId);
+
+  // Apply focus boost if project context exists
+  if (projectId) {
+    const focus = getActiveFocus(db, projectId);
+    if (focus) {
+      results = applyFocusBoost(results, focus);
+    }
+
+    // Heat top results
+    heatQueryResults(db, results);
+  }
+
+  return results;
 }
 
 /**
@@ -302,6 +409,56 @@ function ftsOnlyQuery(
     })));
   } catch (error) {
     logError('semanticQuery:symbols', error);
+  }
+
+  // Search observations
+  try {
+    const obsResults = db.query<{
+      id: number; content: string; type: string; relevance: number;
+    }, [string]>(`
+      SELECT o.id, o.content, o.type,
+             bm25(fts_observations) as relevance
+      FROM fts_observations
+      JOIN observations o ON fts_observations.rowid = o.id
+      WHERE fts_observations MATCH ?1
+      ORDER BY relevance
+      LIMIT 3
+    `).all(query);
+
+    results.push(...obsResults.map(o => ({
+      type: 'observation' as const,
+      id: o.id,
+      title: `[${o.type}] ${o.content.slice(0, 50)}`,
+      content: o.content,
+      relevance: o.relevance,
+    })));
+  } catch {
+    // FTS table might not exist yet
+  }
+
+  // Search open questions
+  try {
+    const qResults = db.query<{
+      id: number; question: string; context: string | null; relevance: number;
+    }, [string]>(`
+      SELECT q.id, q.question, q.context,
+             bm25(fts_questions) as relevance
+      FROM fts_questions
+      JOIN open_questions q ON fts_questions.rowid = q.id
+      WHERE fts_questions MATCH ?1 AND q.status = 'open'
+      ORDER BY relevance
+      LIMIT 3
+    `).all(query);
+
+    results.push(...qResults.map(q => ({
+      type: 'question' as const,
+      id: q.id,
+      title: q.question,
+      content: q.context,
+      relevance: q.relevance,
+    })));
+  } catch {
+    // FTS table might not exist yet
   }
 
   // Sort by relevance and limit

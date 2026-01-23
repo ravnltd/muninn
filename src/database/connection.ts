@@ -161,6 +161,43 @@ function initGlobalTables(db: Database): void {
       title, content, context
     );
 
+    -- Global observations
+    CREATE TABLE IF NOT EXISTS global_observations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL DEFAULT 'insight',
+      content TEXT NOT NULL,
+      frequency INTEGER DEFAULT 1,
+      source_project TEXT,
+      last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Global open questions
+    CREATE TABLE IF NOT EXISTS global_open_questions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question TEXT NOT NULL,
+      context TEXT,
+      priority INTEGER DEFAULT 3,
+      status TEXT DEFAULT 'open',
+      resolution TEXT,
+      source_project TEXT,
+      resolved_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Global workflow patterns
+    CREATE TABLE IF NOT EXISTS global_workflow_patterns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_type TEXT NOT NULL UNIQUE,
+      approach TEXT NOT NULL,
+      preferences TEXT,
+      examples TEXT,
+      times_used INTEGER DEFAULT 1,
+      last_used_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Infrastructure tables
     CREATE TABLE IF NOT EXISTS servers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

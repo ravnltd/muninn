@@ -29,7 +29,7 @@ interface DependencyGraph {
 // Import Parsing
 // ============================================================================
 
-const IMPORT_PATTERNS = [
+const JS_IMPORT_PATTERNS = [
   // ES6 imports
   /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g,
   // Dynamic imports
@@ -40,9 +40,17 @@ const IMPORT_PATTERNS = [
   /export\s+(?:\{[^}]*\}|\*)\s+from\s+['"]([^'"]+)['"]/g,
 ];
 
+const PYTHON_IMPORT_PATTERNS = [
+  // from X import Y (relative and absolute)
+  /^from\s+(\.+[\w.]*|[\w.]+)\s+import\s+/gm,
+  // import X (absolute)
+  /^import\s+([\w.]+)(?:\s+as\s+\w+)?$/gm,
+];
+
 const CODE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
   ".vue", ".svelte", ".astro",
+  ".py",
 ]);
 
 const IGNORE_DIRS = new Set([
@@ -55,11 +63,24 @@ function parseImports(content: string, filePath: string, projectPath: string): {
   localImports: string[];
   externalDeps: string[];
 } {
+  const isPython = filePath.endsWith(".py");
+
+  if (isPython) {
+    return parsePythonImports(content, filePath, projectPath);
+  }
+
+  return parseJsImports(content, filePath, projectPath);
+}
+
+function parseJsImports(content: string, filePath: string, projectPath: string): {
+  localImports: string[];
+  externalDeps: string[];
+} {
   const localImports: string[] = [];
   const externalDeps: string[] = [];
   const seen = new Set<string>();
 
-  for (const pattern of IMPORT_PATTERNS) {
+  for (const pattern of JS_IMPORT_PATTERNS) {
     pattern.lastIndex = 0; // Reset regex state
     let match;
     while ((match = pattern.exec(content)) !== null) {
@@ -93,6 +114,97 @@ function parseImports(content: string, filePath: string, projectPath: string): {
   }
 
   return { localImports, externalDeps };
+}
+
+function parsePythonImports(content: string, filePath: string, projectPath: string): {
+  localImports: string[];
+  externalDeps: string[];
+} {
+  const localImports: string[] = [];
+  const externalDeps: string[] = [];
+  const seen = new Set<string>();
+
+  for (const pattern of PYTHON_IMPORT_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      const modulePath = match[1];
+      if (seen.has(modulePath)) continue;
+      seen.add(modulePath);
+
+      if (modulePath.startsWith(".")) {
+        // Relative import — resolve dots to directory traversal
+        const resolved = resolvePythonRelativeImport(filePath, modulePath, projectPath);
+        if (resolved) {
+          localImports.push(resolved);
+        }
+      } else {
+        // Could be local or external — try to resolve as local first
+        const resolved = resolvePythonAbsoluteImport(modulePath, projectPath);
+        if (resolved) {
+          localImports.push(resolved);
+        } else {
+          // Top-level package name as external dep
+          const pkgName = modulePath.split(".")[0];
+          if (!externalDeps.includes(pkgName)) {
+            externalDeps.push(pkgName);
+          }
+        }
+      }
+    }
+  }
+
+  return { localImports, externalDeps };
+}
+
+function resolvePythonRelativeImport(
+  fromFile: string,
+  modulePath: string,
+  projectPath: string
+): string | null {
+  const fromDir = dirname(fromFile);
+
+  // Count leading dots for directory traversal
+  const dots = modulePath.match(/^\.+/)?.[0].length ?? 1;
+  const moduleRest = modulePath.replace(/^\.+/, "");
+
+  // Go up (dots - 1) directories from current file's directory
+  let baseDir = fromDir;
+  for (let i = 1; i < dots; i++) {
+    baseDir = dirname(baseDir);
+  }
+
+  // Convert module.path to module/path
+  const moduleFsPath = moduleRest ? moduleRest.replace(/\./g, "/") : "";
+  const basePath = moduleFsPath ? join(baseDir, moduleFsPath) : baseDir;
+
+  return resolvePythonPath(basePath, projectPath);
+}
+
+function resolvePythonAbsoluteImport(
+  modulePath: string,
+  projectPath: string
+): string | null {
+  // Convert dots to path separators: foo.bar.baz -> foo/bar/baz
+  const fsPath = modulePath.replace(/\./g, "/");
+  return resolvePythonPath(fsPath, projectPath);
+}
+
+function resolvePythonPath(basePath: string, projectPath: string): string | null {
+  // Try as direct .py file, then as package (__init__.py)
+  const candidates = [
+    basePath + ".py",
+    join(basePath, "__init__.py"),
+  ];
+
+  for (const candidate of candidates) {
+    const fullPath = join(projectPath, candidate);
+    if (existsSync(fullPath) && statSync(fullPath).isFile()) {
+      return relative(projectPath, fullPath);
+    }
+  }
+
+  return null;
 }
 
 function resolveRelativeImport(
@@ -289,6 +401,47 @@ export function showDependencies(
 }
 
 // ============================================================================
+// File Type & Fragility Inference
+// ============================================================================
+
+function inferFileType(filePath: string): string {
+  const ext = extname(filePath);
+  const name = filePath.split("/").pop() || "";
+  const dir = filePath.split("/").slice(0, -1).join("/");
+
+  // Config files
+  if (name.includes("config") || name.includes("rc.") || name.endsWith(".json")) return "config";
+  if (name === "index.ts" || name === "index.js" || name === "__init__.py") return "route";
+
+  // Test files
+  if (name.includes(".test.") || name.includes(".spec.") || dir.includes("test")) return "test";
+
+  // By directory convention
+  if (dir.includes("component") || ext === ".vue" || ext === ".svelte") return "component";
+  if (dir.includes("util") || dir.includes("lib") || dir.includes("helper")) return "util";
+  if (dir.includes("model") || dir.includes("schema")) return "model";
+  if (dir.includes("route") || dir.includes("api") || dir.includes("handler")) return "route";
+  if (dir.includes("command") || dir.includes("cmd")) return "command";
+  if (dir.includes("database") || dir.includes("db")) return "database";
+
+  // By extension
+  if (ext === ".css" || ext === ".scss") return "style";
+  if (ext === ".py") return "util";
+
+  return "util";
+}
+
+function computeFragilityFromGraph(dependentCount: number, _importCount: number): number {
+  // Files with many dependents are fragile (changes cascade)
+  // Scale: 0 deps = 0, 1-2 = 2, 3-5 = 4, 6-10 = 6, 11+ = 7
+  if (dependentCount >= 11) return 7;
+  if (dependentCount >= 6) return 6;
+  if (dependentCount >= 3) return 4;
+  if (dependentCount >= 1) return 2;
+  return 0;
+}
+
+// ============================================================================
 // Refresh Dependencies
 // ============================================================================
 
@@ -304,16 +457,23 @@ export function refreshDependencies(
 
   for (const [filePath, info] of graph.files) {
     try {
+      const fileType = inferFileType(filePath);
+      const fragility = computeFragilityFromGraph(info.dependents.length, info.imports.length);
+
       db.run(`
-        INSERT INTO files (project_id, path, dependencies, dependents, updated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO files (project_id, path, type, fragility, dependencies, dependents, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(project_id, path) DO UPDATE SET
+          type = COALESCE(files.type, excluded.type),
+          fragility = MAX(COALESCE(files.fragility, 0), excluded.fragility),
           dependencies = excluded.dependencies,
           dependents = excluded.dependents,
           updated_at = CURRENT_TIMESTAMP
       `, [
         projectId,
         filePath,
+        fileType,
+        fragility,
         JSON.stringify(info.imports),
         JSON.stringify(info.dependents),
       ]);

@@ -741,6 +741,355 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: [],
         },
       },
+      {
+        name: "context_observe",
+        description:
+          "Record a lightweight observation (pattern, frustration, insight, preference, behavior). Auto-deduplicates similar observations by incrementing frequency. Use for quick notes-to-self that are less formal than learnings.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            content: {
+              type: "string",
+              description: "The observation content",
+            },
+            type: {
+              type: "string",
+              enum: ["pattern", "frustration", "insight", "dropped_thread", "preference", "behavior"],
+              description: "Type of observation (default: insight)",
+            },
+            global: {
+              type: "boolean",
+              description: "Store globally across all projects",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["content"],
+        },
+      },
+      {
+        name: "context_questions_add",
+        description:
+          "Park a question for later investigation. Questions are surfaced automatically on session resume. Use when you notice something worth revisiting but don't want to break flow.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            question: {
+              type: "string",
+              description: "The question to park",
+            },
+            context: {
+              type: "string",
+              description: "Context about why this question matters (optional)",
+            },
+            priority: {
+              type: "number",
+              description: "Priority 1-5 (1=critical, 5=someday). Default: 3",
+            },
+            global: {
+              type: "boolean",
+              description: "Store globally across all projects",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["question"],
+        },
+      },
+      {
+        name: "context_questions_list",
+        description:
+          "Show open questions, ordered by priority. Questions are things worth revisiting that were parked during previous sessions.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            status: {
+              type: "string",
+              enum: ["open", "resolved", "dropped"],
+              description: "Filter by status (default: open)",
+            },
+            global: {
+              type: "boolean",
+              description: "Show global questions only",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_questions_resolve",
+        description:
+          "Answer or drop a parked question. Use 'resolved' when answered, 'dropped' when no longer relevant.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "number",
+              description: "Question ID to resolve",
+            },
+            resolution: {
+              type: "string",
+              description: "The answer or reason for dropping",
+            },
+            status: {
+              type: "string",
+              enum: ["resolved", "dropped"],
+              description: "New status (default: resolved)",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["id", "resolution"],
+        },
+      },
+      {
+        name: "context_workflow_set",
+        description:
+          "Record how the user works on a specific task type. Evolves over time with UPSERT semantics. Use to capture preferred approaches for code_review, debugging, feature_build, creative, research, refactor.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_type: {
+              type: "string",
+              enum: ["code_review", "debugging", "feature_build", "creative", "research", "refactor"],
+              description: "The type of task this workflow applies to",
+            },
+            approach: {
+              type: "string",
+              description: "Description of the preferred approach",
+            },
+            preferences: {
+              type: "string",
+              description: "JSON object of specific preferences (optional)",
+            },
+            global: {
+              type: "boolean",
+              description: "Store globally across all projects",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["task_type", "approach"],
+        },
+      },
+      {
+        name: "context_workflow_get",
+        description:
+          "Retrieve workflow preferences for a task type. Falls back to global workflows if no project-specific one exists.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_type: {
+              type: "string",
+              enum: ["code_review", "debugging", "feature_build", "creative", "research", "refactor"],
+              description: "The task type to look up",
+            },
+            global: {
+              type: "boolean",
+              description: "Look up global workflow only",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["task_type"],
+        },
+      },
+      {
+        name: "context_profile",
+        description:
+          "View your developer profile — preferences, coding style, and patterns learned from your usage. Optional category filter.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              enum: ["coding_style", "architecture", "tooling", "workflow", "communication"],
+              description: "Filter by category (optional)",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_profile_add",
+        description:
+          "Declare a developer preference (e.g., 'error_handling', 'Result types over try/catch', 'coding_style'). Builds your profile for personalized assistance.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            key: {
+              type: "string",
+              description: "Preference key (e.g., 'error_handling', 'state_pattern')",
+            },
+            value: {
+              type: "string",
+              description: "Preference value (e.g., 'Result types over try/catch')",
+            },
+            category: {
+              type: "string",
+              enum: ["coding_style", "architecture", "tooling", "workflow", "communication"],
+              description: "Category (default: coding_style)",
+            },
+            global: {
+              type: "boolean",
+              description: "Apply to all projects",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["key", "value"],
+        },
+      },
+      {
+        name: "context_profile_infer",
+        description:
+          "Trigger inference of developer preferences from existing observations, decisions, learnings, and workflows.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_predict",
+        description:
+          "Bundle all relevant context for a task in one call. Returns related files, co-changers, decisions, issues, learnings, applicable workflow, and profile entries.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task: {
+              type: "string",
+              description: "Task description to find relevant context for",
+            },
+            files: {
+              type: "array",
+              items: { type: "string" },
+              description: "Files involved in the task (to find co-changers and dependents)",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_outcome",
+        description:
+          "Record whether an architectural decision worked out. Status: succeeded, failed, revised, unknown.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "number",
+              description: "Decision ID to record outcome for",
+            },
+            status: {
+              type: "string",
+              enum: ["succeeded", "failed", "revised", "unknown"],
+              description: "Outcome status",
+            },
+            notes: {
+              type: "string",
+              description: "Optional notes about the outcome",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["id", "status"],
+        },
+      },
+      {
+        name: "context_decisions_due",
+        description:
+          "List decisions that are due for outcome review (enough sessions have passed since the decision was made).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_insights",
+        description:
+          "List or generate cross-session insights. Detects co-change patterns, fragility trends, decision outcomes, workflow deviations, and scope creep.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            generate: {
+              type: "boolean",
+              description: "Generate new insights (default: list existing)",
+            },
+            status: {
+              type: "string",
+              enum: ["new", "acknowledged", "dismissed", "applied"],
+              description: "Filter by status (optional)",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
+      {
+        name: "context_insight_ack",
+        description:
+          "Acknowledge, dismiss, or apply an insight. Acknowledged insights won't resurface.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "number",
+              description: "Insight ID",
+            },
+            action: {
+              type: "string",
+              enum: ["acknowledge", "dismiss", "apply"],
+              description: "Action to take on the insight",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["id", "action"],
+        },
+      },
     ],
   };
 });
@@ -1045,6 +1394,137 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "context_focus_clear":
         result = runContext("focus clear", cwd);
         break;
+
+      case "context_observe": {
+        const content = typedArgs.content as string;
+        const type = typedArgs.type ? `--type ${typedArgs.type}` : "";
+        const global = typedArgs.global ? "--global" : "";
+        result = runContext(
+          `observe ${content.replace(/"/g, '\\"')} ${type} ${global}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_questions_add": {
+        const question = typedArgs.question as string;
+        const context = typedArgs.context ? `--context "${(typedArgs.context as string).replace(/"/g, '\\"')}"` : "";
+        const priority = typedArgs.priority ? `--priority ${typedArgs.priority}` : "";
+        const global = typedArgs.global ? "--global" : "";
+        result = runContext(
+          `questions add ${question.replace(/"/g, '\\"')} ${context} ${priority} ${global}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_questions_list": {
+        const status = typedArgs.status ? `--status ${typedArgs.status}` : "";
+        const global = typedArgs.global ? "--global" : "";
+        result = runContext(`questions list ${status} ${global}`.trim(), cwd);
+        break;
+      }
+
+      case "context_questions_resolve": {
+        const id = typedArgs.id as number;
+        const resolution = typedArgs.resolution as string;
+        const status = typedArgs.status === "dropped" ? "drop" : "resolve";
+        result = runContext(
+          `questions ${status} ${id} ${resolution.replace(/"/g, '\\"')}`,
+          cwd
+        );
+        break;
+      }
+
+      case "context_workflow_set": {
+        const taskType = typedArgs.task_type as string;
+        const approach = typedArgs.approach as string;
+        const preferences = typedArgs.preferences ? `--preferences '${typedArgs.preferences}'` : "";
+        const global = typedArgs.global ? "--global" : "";
+        result = runContext(
+          `workflow set ${taskType} ${approach.replace(/"/g, '\\"')} ${preferences} ${global}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_workflow_get": {
+        const taskType = typedArgs.task_type as string;
+        const global = typedArgs.global ? "--global" : "";
+        result = runContext(`workflow get ${taskType} ${global}`.trim(), cwd);
+        break;
+      }
+
+      case "context_profile": {
+        const category = typedArgs.category ? `${typedArgs.category}` : "";
+        result = runContext(`profile show ${category}`.trim(), cwd);
+        break;
+      }
+
+      case "context_profile_add": {
+        const key = typedArgs.key as string;
+        const value = typedArgs.value as string;
+        const category = typedArgs.category ? `--category ${typedArgs.category}` : "";
+        const global = typedArgs.global ? "--global" : "";
+        result = runContext(
+          `profile add "${key}" "${value}" ${category} ${global}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_profile_infer":
+        result = runContext("profile infer", cwd);
+        break;
+
+      case "context_predict": {
+        const task = typedArgs.task as string | undefined;
+        const files = typedArgs.files as string[] | undefined;
+        let cmd = "predict";
+        if (task) cmd += ` ${task.replace(/"/g, '\\"')}`;
+        if (files && files.length > 0) cmd += ` --files ${files.join(" ")}`;
+        result = runContext(cmd, cwd);
+        break;
+      }
+
+      case "context_outcome": {
+        const id = typedArgs.id as number;
+        const status = typedArgs.status as string;
+        const notes = typedArgs.notes ? (typedArgs.notes as string).replace(/"/g, '\\"') : "";
+        result = runContext(
+          `outcome record ${id} ${status} ${notes}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "context_decisions_due":
+        result = runContext("outcome due", cwd);
+        break;
+
+      case "context_insights": {
+        const generate = typedArgs.generate as boolean;
+        const status = typedArgs.status as string | undefined;
+        if (generate) {
+          result = runContext("insights generate", cwd);
+        } else {
+          const statusArg = status || "";
+          result = runContext(`insights list ${statusArg}`.trim(), cwd);
+        }
+        break;
+      }
+
+      case "context_insight_ack": {
+        const id = typedArgs.id as number;
+        const action = typedArgs.action as string;
+        const cmdMap: Record<string, string> = {
+          acknowledge: "ack",
+          dismiss: "dismiss",
+          apply: "apply",
+        };
+        result = runContext(`insights ${cmdMap[action] || "ack"} ${id}`, cwd);
+        break;
+      }
 
       default:
         throw new Error(`Unknown tool: ${name}`);

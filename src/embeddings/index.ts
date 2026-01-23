@@ -164,6 +164,26 @@ export function learningToText(
   return `${title} ${content} ${context || ""}`.trim();
 }
 
+/**
+ * Create text representation for observation embedding
+ */
+export function observationToText(
+  content: string,
+  type: string
+): string {
+  return `${type}: ${content}`.trim();
+}
+
+/**
+ * Create text representation for open question embedding
+ */
+export function questionToText(
+  question: string,
+  context: string | null
+): string {
+  return `${question} ${context || ""}`.trim();
+}
+
 // ============================================================================
 // Utility Functions
 // ============================================================================

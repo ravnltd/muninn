@@ -56,7 +56,7 @@ interface EmbeddingStats {
  * Get embedding coverage stats for all tables
  */
 export function getEmbeddingStats(db: Database, projectId: number): EmbeddingStats[] {
-  const tables = ["files", "decisions", "issues", "learnings", "symbols"];
+  const tables = ["files", "decisions", "issues", "learnings", "symbols", "observations", "open_questions"];
   const stats: EmbeddingStats[] = [];
 
   for (const table of tables) {
@@ -238,6 +238,10 @@ function getTableMapping(table: string): {
       return { titleCol: "title", contentCol: "content", type: "learning" };
     case "symbols":
       return { titleCol: "name", contentCol: "signature", type: "symbol" };
+    case "observations":
+      return { titleCol: "type", contentCol: "content", type: "observation" };
+    case "open_questions":
+      return { titleCol: "question", contentCol: "context", type: "question" };
     default:
       return { titleCol: "title", contentCol: "content", type: "file" };
   }
@@ -311,29 +315,41 @@ export function getRecordsNeedingEmbeddings(
 ): BackfillRecord[] {
   const { titleCol, contentCol } = getTableMapping(table);
 
-  // Build text representation based on table
+  // Build text representation matching the *ToText() functions (trimmed, no trailing spaces)
   let textExpr: string;
   switch (table) {
     case "files":
-      textExpr = `path || ' ' || COALESCE(purpose, '')`;
+      textExpr = `TRIM(path || ' ' || COALESCE(purpose, ''))`;
       break;
     case "decisions":
-      textExpr = `title || ' ' || decision || ' ' || COALESCE(reasoning, '')`;
+      textExpr = `TRIM(title || ' ' || decision || ' ' || COALESCE(reasoning, ''))`;
       break;
     case "issues":
-      textExpr = `title || ' ' || COALESCE(description, '') || ' ' || COALESCE(workaround, '')`;
+      textExpr = `TRIM(title || ' ' || COALESCE(description, '') || ' ' || COALESCE(workaround, ''))`;
       break;
     case "learnings":
-      textExpr = `title || ' ' || content || ' ' || COALESCE(context, '')`;
+      textExpr = `TRIM(title || ' ' || content || ' ' || COALESCE(context, ''))`;
+      break;
+    case "observations":
+      textExpr = `TRIM(type || ': ' || content)`;
+      break;
+    case "open_questions":
+      textExpr = `TRIM(question || ' ' || COALESCE(context, ''))`;
       break;
     default:
-      textExpr = `${titleCol} || ' ' || COALESCE(${contentCol}, '')`;
+      textExpr = `TRIM(${titleCol} || ' ' || COALESCE(${contentCol}, ''))`;
   }
+
+  // Learnings, observations, and questions allow NULL project_id (global)
+  const nullableProjectTables = ['learnings', 'observations', 'open_questions'];
+  const whereClause = nullableProjectTables.includes(table)
+    ? `(project_id = ? OR project_id IS NULL) AND embedding IS NULL`
+    : `project_id = ? AND embedding IS NULL`;
 
   return db.query<BackfillRecord, [number]>(`
     SELECT id, (${textExpr}) as text
     FROM ${table}
-    WHERE project_id = ? AND embedding IS NULL
+    WHERE ${whereClause}
   `).all(projectId);
 }
 
@@ -395,7 +411,7 @@ export async function backfillAll(
   projectId: number,
   onProgress?: (table: string, current: number, total: number) => void
 ): Promise<Record<string, number>> {
-  const tables = ["files", "decisions", "issues", "learnings"];
+  const tables = ["files", "decisions", "issues", "learnings", "observations", "open_questions"];
   const results: Record<string, number> = {};
 
   for (const table of tables) {
