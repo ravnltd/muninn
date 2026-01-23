@@ -236,4 +236,4 @@ The goal: Claude operates like a senior engineer who's been on the project for y
 
 ## License
 
-MIT
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free to use, modify, and share for any noncommercial purpose. Commercial use requires a separate license from the author.
