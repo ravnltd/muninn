@@ -5,22 +5,15 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${HOME}/.local/bin"
-CLAUDE_DIR="${HOME}/.claude"
-
 echo "Installing Claude Context CLI..."
 
 # Create directories
 mkdir -p "$INSTALL_DIR"
-mkdir -p "$CLAUDE_DIR"
-
-# Copy schema
-cp "$SCRIPT_DIR/schema.sql" "$CLAUDE_DIR/schema.sql"
-echo "✓ Schema installed to $CLAUDE_DIR/schema.sql"
 
 # Compile to standalone binary
 echo "Compiling CLI..."
 cd "$SCRIPT_DIR"
-bun build context.ts --compile --outfile "$INSTALL_DIR/context"
+bun build ./src/index.ts --compile --outfile "$INSTALL_DIR/context"
 chmod +x "$INSTALL_DIR/context"
 echo "✓ CLI installed to $INSTALL_DIR/context"
 

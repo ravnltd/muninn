@@ -87,7 +87,7 @@ CREATE TABLE services (
     last_health_check DATETIME,
     config TEXT,                         -- JSON: service-specific config
     env_vars TEXT,                       -- JSON: non-secret env var names
-    project_path TEXT,                   -- /home/user/apps/myapi
+    project_path TEXT,                   -- /opt/apps/myapi
     git_repo TEXT,                       -- git@github.com:user/repo
     current_version TEXT,                -- git sha or semver
     deploy_command TEXT,                 -- "cd /app && git pull && bun run build"
@@ -141,7 +141,7 @@ CREATE TABLE deployments (
     service_id INTEGER NOT NULL REFERENCES services(id),
     version TEXT NOT NULL,               -- git sha or semver
     previous_version TEXT,
-    deployed_by TEXT,                    -- deploy, ci, claude
+    deployed_by TEXT,                    -- user, ci, claude
     deploy_method TEXT,                  -- manual, ci, claude
     status TEXT,                         -- pending, in_progress, success, failed, rolled_back
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -208,8 +208,8 @@ context infra service add api \
   --type app \
   --port 3000 \
   --health /health \
-  --project /home/user/apps/api \
-  --deploy "cd /home/user/apps/api && git pull && bun run build && pm2 restart api"
+  --project /opt/apps/api \
+  --deploy "cd /opt/apps/api && git pull && bun run build && pm2 restart api"
 
 context infra service list [--server name]
 context infra service status <name>      # Health check + recent logs
@@ -270,7 +270,7 @@ context infra rollback api               # Quick rollback if broken
 ```
 ┌─────────────────────────────────────────┐
 │  Turso Database (libsql)                │
-│  URL: libsql://context-example.turso.io    │
+│  URL: libsql://context.turso.io          │
 │  Replicas: edge locations worldwide     │
 └─────────────────────────────────────────┘
 ```

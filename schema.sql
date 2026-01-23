@@ -12,7 +12,7 @@ PRAGMA foreign_keys = ON;
 -- Projects Claude has worked on
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    path TEXT UNIQUE NOT NULL,              -- /home/user/projects/myapp
+    path TEXT UNIQUE NOT NULL,              -- /opt/projects/myapp
     name TEXT NOT NULL,                     -- myapp
     type TEXT,                              -- web-app, api, cli, library, monorepo
     stack TEXT,                             -- JSON array: ["sveltekit", "typescript", "drizzle"]
@@ -491,7 +491,7 @@ CREATE TABLE IF NOT EXISTS services (
     response_time_ms INTEGER,                -- last health check response time
     config TEXT,                             -- JSON: service-specific config
     env_file TEXT,                           -- path to .env file on server
-    project_path TEXT,                       -- /home/user/apps/myapi
+    project_path TEXT,                       -- /opt/apps/myapi
     git_repo TEXT,                           -- git@github.com:user/repo
     git_branch TEXT DEFAULT 'main',
     current_version TEXT,                    -- git sha or semver
@@ -542,7 +542,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     version TEXT NOT NULL,                   -- git sha or semver
     previous_version TEXT,
-    deployed_by TEXT,                    -- deploy, ci, claude
+    deployed_by TEXT,                        -- user, ci, claude
     deploy_method TEXT,                      -- manual, git-pull, docker, ci
     status TEXT DEFAULT 'pending',           -- pending, in_progress, success, failed, rolled_back
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
