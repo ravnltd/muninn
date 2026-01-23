@@ -472,7 +472,7 @@ export function parseDebtArgs(args: string[]): ParsedArgs<Partial<DebtAddInput>>
   };
 }
 
-export function parseSessionEndArgs(args: string[]): ParsedArgs<Partial<SessionEndInput>> {
+export function parseSessionEndArgs(args: string[]): ParsedArgs<Partial<SessionEndInput> & { analyze?: boolean }> {
   const { values, positionals } = parseArgs({
     args,
     options: {
@@ -481,6 +481,7 @@ export function parseSessionEndArgs(args: string[]): ParsedArgs<Partial<SessionE
       learnings: { type: "string", short: "l" },
       next: { type: "string", short: "n" },
       success: { type: "string", short: "s" },
+      analyze: { type: "boolean", short: "a" },
     },
     allowPositionals: true,
   });
@@ -493,6 +494,7 @@ export function parseSessionEndArgs(args: string[]): ParsedArgs<Partial<SessionE
       learnings: values.learnings,
       next: values.next,
       success: values.success ? parseInt(values.success) : undefined,
+      analyze: values.analyze,
     },
     positionals,
   };

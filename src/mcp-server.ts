@@ -925,6 +925,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!goal) {
           return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Goal is required" }) }] };
         }
+        // Auto-end any active session before starting a new one
+        const prevSession = runContext("session last --json", cwd);
+        try {
+          const prev = JSON.parse(prevSession);
+          if (prev && !prev.ended_at) {
+            runContext(`session end ${prev.id} --outcome "Replaced by new session"`, cwd);
+          }
+        } catch { /* no previous session */ }
         result = runContext(`session start "${goal.replace(/"/g, '\\"')}"`, cwd);
         break;
       }

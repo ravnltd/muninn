@@ -17,12 +17,14 @@ RIGHT: Query for specific context before each change
 
 ## Session Lifecycle
 
-### Session Start
-```
-1. context_resume        → Continue from last session
-2. context_smart_status  → Get prioritized recommendations
-3. context_drift         → See what changed since last time
-```
+### Session Start (Automatic)
+Session startup is handled by the SessionStart hook. It automatically:
+- Outputs resume context (last session goal, outcome, next steps)
+- Outputs smart status (health, actions, warnings)
+- Starts a new session via CLI
+
+**Do NOT call** `context_resume`, `context_smart_status`, or `context_session_start` at startup.
+They are already provided in your initial context.
 
 ### Before Editing Files (MANDATORY)
 ```
@@ -128,7 +130,7 @@ context_learn_add         → Save insights for future sessions
 ### When to Use What
 | Scenario | Tool |
 |----------|------|
-| Start of session | `context_resume` + `context_smart_status` |
+| Start of session | Automatic (hook provides resume + status) |
 | About to edit a file | `context_check` (MANDATORY) |
 | Need specific context | `context_query` |
 | Found useful pattern | `context_bookmark_add` |

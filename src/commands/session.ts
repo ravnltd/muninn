@@ -660,7 +660,7 @@ async function callClaudeForExtraction(apiKey: string, prompt: string): Promise<
     },
     body: JSON.stringify({
       model: "claude-3-haiku-20240307",
-      max_tokens: 500,
+      max_tokens: 1000,
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -699,11 +699,89 @@ function parseExtractedLearnings(response: string): ExtractedLearning[] {
 }
 
 // ============================================================================
+// Transcript Analysis
+// ============================================================================
+
+interface TranscriptAnalysis {
+  outcome: string;
+  learnings: ExtractedLearning[];
+  nextSteps: string | null;
+}
+
+async function readStdinWithTimeout(timeoutMs: number): Promise<string> {
+  if (process.stdin.isTTY) return "";
+
+  return new Promise<string>((resolve) => {
+    let data = "";
+    const timeout = setTimeout(() => {
+      process.stdin.removeAllListeners();
+      resolve(data);
+    }, timeoutMs);
+
+    process.stdin.setEncoding("utf-8");
+    process.stdin.on("data", (chunk) => { data += chunk; });
+    process.stdin.on("end", () => {
+      clearTimeout(timeout);
+      resolve(data);
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(timeout);
+      resolve(data);
+    });
+    process.stdin.resume();
+  });
+}
+
+async function analyzeTranscript(
+  apiKey: string,
+  transcript: string,
+  goal: string,
+  files: string[]
+): Promise<TranscriptAnalysis> {
+  const prompt = `Analyze this coding session transcript and extract:
+1. A concise outcome summary (1-2 sentences of what was accomplished)
+2. 0-3 reusable learnings (patterns, gotchas, conventions discovered)
+3. Recommended next steps (if any)
+
+SESSION GOAL: ${goal}
+FILES MODIFIED: ${files.slice(0, 20).join(', ')}${files.length > 20 ? ` (+${files.length - 20} more)` : ''}
+
+TRANSCRIPT (last portion):
+${transcript}
+
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "outcome": "What was accomplished (1-2 sentences)",
+  "learnings": [
+    {
+      "title": "Short title (max 50 chars)",
+      "content": "The learning (1-2 sentences)",
+      "category": "pattern|gotcha|preference|convention",
+      "confidence": 0.0-1.0
+    }
+  ],
+  "next_steps": "What to do next (or null)"
+}`;
+
+  const response = await callClaudeForExtraction(apiKey, prompt);
+  const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const jsonStr = jsonMatch ? jsonMatch[1] : response;
+  const parsed = JSON.parse(jsonStr.trim());
+
+  return {
+    outcome: parsed.outcome || "Session completed",
+    learnings: parseExtractedLearnings(JSON.stringify(parsed.learnings || [])),
+    nextSteps: parsed.next_steps || null,
+  };
+}
+
+// ============================================================================
 // Enhanced Session End with Auto-Learning
 // ============================================================================
 
 /**
- * End session with correlation tracking and learning extraction
+ * End session with correlation tracking and learning extraction.
+ * Supports --analyze flag to read transcript from stdin for richer extraction.
  */
 export async function sessionEndEnhanced(
   db: Database,
@@ -722,8 +800,33 @@ export async function sessionEndEnhanced(
     throw new Error(`Session #${sessionId} not found`);
   }
 
-  // Get files touched
   const filesTouched = safeJsonParse<string[]>(session.files_touched || values.files || "[]", []);
+
+  // If --analyze, read stdin transcript and use Claude to extract structured data
+  let analysisResult: TranscriptAnalysis | null = null;
+  if (values.analyze) {
+    const keyResult = getApiKey("anthropic");
+    if (keyResult.ok) {
+      const transcript = await readStdinWithTimeout(5000);
+      if (transcript.length > 0) {
+        const truncated = transcript.slice(-12000);
+        try {
+          analysisResult = await analyzeTranscript(
+            keyResult.value,
+            truncated,
+            session.goal || "Unknown",
+            filesTouched
+          );
+        } catch (error) {
+          logError('analyzeTranscript', error);
+        }
+      }
+    }
+  }
+
+  // Use analysis results, falling back to manual args
+  const outcome = analysisResult?.outcome || values.outcome || null;
+  const nextSteps = analysisResult?.nextSteps || values.next || null;
 
   // Update correlations
   updateFileCorrelations(db, projectId, filesTouched);
@@ -739,25 +842,40 @@ export async function sessionEndEnhanced(
       success = ?
     WHERE id = ?
   `, [
-    values.outcome || null,
+    outcome,
     JSON.stringify(filesTouched),
     values.learnings || null,
-    values.next || null,
+    nextSteps,
     values.success ?? 2,
     sessionId,
   ]);
 
-  // Extract learnings
-  const learnings = await extractSessionLearnings(db, projectId, sessionId, {
-    goal: session.goal || "",
-    outcome: values.outcome || "",
-    files: filesTouched,
-    success: values.success ?? 2
-  });
+  // Save learnings from analysis or fall back to existing extraction
+  let learnings: ExtractedLearning[] = [];
+  if (analysisResult?.learnings && analysisResult.learnings.length > 0) {
+    for (const learning of analysisResult.learnings) {
+      if (learning.confidence >= 0.7) {
+        db.run(
+          `INSERT INTO learnings (project_id, category, title, content, source, confidence)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [projectId, learning.category, learning.title, learning.content,
+           `session:${sessionId}`, Math.round(learning.confidence * 10)]
+        );
+      }
+    }
+    learnings = analysisResult.learnings;
+  } else {
+    learnings = await extractSessionLearnings(db, projectId, sessionId, {
+      goal: session.goal || "",
+      outcome: outcome || "",
+      files: filesTouched,
+      success: values.success ?? 2
+    });
+  }
 
   console.error(`\n✅ Session #${sessionId} ended`);
-  if (values.outcome) {
-    console.error(`   Outcome: ${values.outcome}`);
+  if (outcome) {
+    console.error(`   Outcome: ${outcome}`);
   }
   console.error(`   Files: ${filesTouched.length}`);
 
@@ -769,8 +887,8 @@ export async function sessionEndEnhanced(
     }
   }
 
-  if (values.next) {
-    console.error(`   Next: ${values.next}`);
+  if (nextSteps) {
+    console.error(`   Next: ${nextSteps}`);
   }
   console.error("");
 
