@@ -38,7 +38,7 @@ Run a software business from a phone on a yacht in a fjord. Complete infrastruct
 │  • Service dependencies and communication maps               │
 └─────────────────────────────────────────────────────────────┘
         ↑               ↑               ↑               ↑
-   myserver    node1         hetzner          laptop
+   prod-1    node1         hetzner          laptop
         │               │               │               │
         ▼               ▼               ▼               ▼
 ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
@@ -57,7 +57,7 @@ New tables for `infra.db`:
 ```sql
 CREATE TABLE servers (
     id INTEGER PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,           -- myserver, node1, hetzner
+    name TEXT UNIQUE NOT NULL,           -- prod-1, node1, hetzner
     hostname TEXT,                       -- actual hostname
     ip_addresses TEXT,                   -- JSON array: ["192.168.1.10", "10.0.0.1"]
     role TEXT,                           -- production, staging, development, homelab
@@ -191,7 +191,7 @@ CREATE TABLE secrets_registry (
 
 ### Server Management
 ```bash
-context infra server add myserver \
+context infra server add prod-1 \
   --ip 192.168.1.10 \
   --role homelab \
   --ssh "user=deploy,port=22,key=~/.ssh/id_ed25519"
@@ -204,7 +204,7 @@ context infra server ssh <name>          # Quick SSH connect
 ### Service Management
 ```bash
 context infra service add api \
-  --server myserver \
+  --server prod-1 \
   --type app \
   --port 3000 \
   --health /health \
@@ -305,7 +305,7 @@ function getInfraDb() {
 │  Continuous SQLite replication          │
 └─────────────────────────────────────────┘
         ↑ replicate        ↓ restore
-   myserver       node1 / hetzner
+   prod-1       node1 / hetzner
 ```
 
 **Implementation:**
@@ -362,7 +362,7 @@ context infra costs
 Analyzes:
 - Underutilized servers
 - Services that could be consolidated
-- Suggests: "node1 CPU avg 5%. Consider moving worker service to myserver."
+- Suggests: "node1 CPU avg 5%. Consider moving worker service to prod-1."
 
 ---
 
@@ -372,7 +372,7 @@ Analyzes:
 ```
 You: /status
 Bot:
-✅ myserver: 3 services healthy
+✅ prod-1: 3 services healthy
 ✅ node1: 2 services healthy
 ⚠️ hetzner: api degraded (high latency)
 
@@ -437,7 +437,7 @@ Deploying api to hetzner...
 │  global.db: learnings, patterns, debt (cross-project)       │
 └─────────────────────────────────────────────────────────────┘
         ↑ sync              ↑ sync              ↑ sync
-   myserver         node1              hetzner
+   prod-1         node1              hetzner
         │                   │                   │
         ▼                   ▼                   ▼
 ┌─────────────────────────────────────────────────────────────┐

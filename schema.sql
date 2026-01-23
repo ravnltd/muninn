@@ -458,7 +458,7 @@ CREATE INDEX IF NOT EXISTS idx_perf_findings_project ON performance_findings(pro
 -- Servers in the infrastructure
 CREATE TABLE IF NOT EXISTS servers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,               -- myserver, node1, hetzner
+    name TEXT UNIQUE NOT NULL,               -- prod-1, node1, hetzner
     hostname TEXT,                           -- actual hostname
     ip_addresses TEXT,                       -- JSON array: ["192.168.1.10", "10.0.0.1"]
     role TEXT,                               -- production, staging, development, homelab

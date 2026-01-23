@@ -176,8 +176,8 @@ export function formatInfraStatus(status: InfraStatus): void {
   if (status.servers.length === 0) {
     console.error("No infrastructure registered yet.\n");
     console.error("Get started:");
-    console.error("  context infra server add myserver --ip 192.168.1.10 --role homelab");
-    console.error("  context infra service add myapp --server myserver --port 3000");
+    console.error("  context infra server add prod-1 --ip 192.168.1.10 --role homelab");
+    console.error("  context infra service add myapp --server prod-1 --port 3000");
     return;
   }
 
