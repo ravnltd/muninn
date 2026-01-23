@@ -1,7 +1,9 @@
 node_modules/
+dist/
 context
+context-mcp
 *.db
 *.db-shm
 *.db-wal
 .claude/
-context-mcp
+.context/
