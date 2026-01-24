@@ -304,6 +304,19 @@ function initGlobalTables(db: Database): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      path TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT,
+      stack TEXT,
+      status TEXT DEFAULT 'active',
+      mode TEXT DEFAULT 'exploring',
+      previous_paths TEXT DEFAULT '[]',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_services_server ON services(server_id);
     CREATE INDEX IF NOT EXISTS idx_routes_service ON routes(service_id);
     CREATE INDEX IF NOT EXISTS idx_deployments_service ON deployments(service_id);
@@ -441,6 +454,7 @@ export function ensureProject(db: Database, projectPath?: string): number {
   ).get(path);
 
   if (existing) {
+    syncProjectToGlobal(path, name);
     return existing.id;
   }
 
@@ -469,6 +483,7 @@ export function ensureProject(db: Database, projectPath?: string): number {
       "UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?",
       [path, name, JSON.stringify(history), renamed.id]
     );
+    syncProjectToGlobal(path, name);
     return renamed.id;
   }
 
@@ -477,7 +492,39 @@ export function ensureProject(db: Database, projectPath?: string): number {
     [path, name]
   );
 
+  syncProjectToGlobal(path, name);
   return Number(result.lastInsertRowid);
+}
+
+const syncedProjects = new Set<string>();
+
+function syncProjectToGlobal(projectPath: string, projectName: string): void {
+  if (syncedProjects.has(projectPath)) return;
+
+  const localDbPath = join(projectPath, LOCAL_DB_DIR, LOCAL_DB_NAME);
+  if (!existsSync(localDbPath)) return;
+
+  try {
+    const globalDb = getGlobalDb();
+    const existing = globalDb.query<{ id: number; name: string }, [string]>(
+      "SELECT id, name FROM projects WHERE path = ?"
+    ).get(projectPath);
+
+    if (!existing) {
+      globalDb.run(
+        "INSERT INTO projects (path, name, status) VALUES (?, ?, 'active')",
+        [projectPath, projectName]
+      );
+    } else if (existing.name !== projectName) {
+      globalDb.run(
+        "UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [projectName, existing.id]
+      );
+    }
+    syncedProjects.add(projectPath);
+  } catch {
+    // Non-fatal: global sync failure shouldn't break local operations
+  }
 }
 
 // ============================================================================

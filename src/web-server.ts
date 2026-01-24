@@ -32,6 +32,26 @@ function openDb(path: string): Database {
 }
 
 // ============================================================================
+// Schema-tolerant query helper
+// ============================================================================
+
+function safeQuery<T>(db: Database, query: string, fallbackQuery: string, params: unknown[]): T[] {
+  try {
+    return db.query(query).all(...params) as T[];
+  } catch {
+    return db.query(fallbackQuery).all(...params) as T[];
+  }
+}
+
+function safeQueryGet<T>(db: Database, query: string, fallbackQuery: string, params: unknown[]): T | null {
+  try {
+    return db.query(query).get(...params) as T | null;
+  } catch {
+    return db.query(fallbackQuery).get(...params) as T | null;
+  }
+}
+
+// ============================================================================
 // App Setup
 // ============================================================================
 
@@ -110,17 +130,20 @@ export function createApp(dbPath?: string): Hono {
         `SELECT COUNT(*) as count FROM decisions WHERE project_id = ? AND status = 'active'`
       ).get(localProjectId)?.count ?? 0;
 
-      const fragileFiles = db.query(
-        `SELECT id, path, purpose, fragility, temperature, velocity_score FROM files WHERE project_id = ? AND fragility >= 5 ORDER BY fragility DESC LIMIT 10`
-      ).all(localProjectId);
+      const fragileFiles = safeQuery(db,
+        `SELECT id, path, purpose, fragility, temperature, velocity_score FROM files WHERE project_id = ? AND fragility >= 5 ORDER BY fragility DESC LIMIT 10`,
+        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as velocity_score FROM files WHERE project_id = ? AND fragility >= 5 ORDER BY fragility DESC LIMIT 10`,
+        [localProjectId]);
 
-      const recentSessions = db.query(
-        `SELECT id, goal, outcome, started_at, ended_at, success, session_number FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 10`
-      ).all(localProjectId);
+      const recentSessions = safeQuery(db,
+        `SELECT id, goal, outcome, started_at, ended_at, success, session_number FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 10`,
+        `SELECT id, goal, outcome, started_at, ended_at, success, NULL as session_number FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 10`,
+        [localProjectId]);
 
-      const techDebtScore = db.query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM issues WHERE project_id = ? AND type = 'tech-debt' AND status = 'open'`
-      ).get(localProjectId)?.count ?? 0;
+      const techDebtScore = (safeQueryGet<{ count: number }>(db,
+        `SELECT COUNT(*) as count FROM issues WHERE project_id = ? AND type = 'tech-debt' AND status = 'open'`,
+        `SELECT 0 as count`,
+        [localProjectId]))?.count ?? 0;
 
       return c.json({
         project,
@@ -142,9 +165,10 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const files = db.query(
-        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`
-      ).all(localProjectId);
+      const files = safeQuery(db,
+        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`,
+        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`,
+        [localProjectId]);
       return c.json(files);
     } finally {
       db.close();
@@ -157,9 +181,10 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const decisions = db.query(
-        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`
-      ).all(localProjectId);
+      const decisions = safeQuery(db,
+        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`,
+        `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`,
+        [localProjectId]);
       return c.json(decisions);
     } finally {
       db.close();
@@ -172,9 +197,10 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const issues = db.query(
-        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`
-      ).all(localProjectId);
+      const issues = safeQuery(db,
+        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`,
+        `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`,
+        [localProjectId]);
       return c.json(issues);
     } finally {
       db.close();
@@ -187,9 +213,10 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const learnings = db.query(
-        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`
-      ).all(localProjectId);
+      const learnings = safeQuery(db,
+        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`,
+        `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`,
+        [localProjectId]);
       return c.json(learnings);
     } finally {
       db.close();
@@ -202,9 +229,10 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const sessions = db.query(
-        `SELECT id, goal, outcome, started_at, ended_at, success, session_number, files_touched FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50`
-      ).all(localProjectId);
+      const sessions = safeQuery(db,
+        `SELECT id, goal, outcome, started_at, ended_at, success, session_number, files_touched FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50`,
+        `SELECT id, goal, outcome, started_at, ended_at, success, NULL as session_number, files_touched FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50`,
+        [localProjectId]);
       return c.json(sessions);
     } finally {
       db.close();
