@@ -11,8 +11,9 @@ import {
   serializeEmbedding,
   generateEmbedding,
   generateEmbeddings,
-  isVoyageAvailable,
+  isEmbeddingAvailable,
 } from "../../embeddings";
+import { reheatEntity } from "../../commands/consolidation";
 import { logError } from "../../utils/errors";
 
 // ============================================================================
@@ -39,6 +40,7 @@ interface RecordWithEmbedding {
   title: string;
   content: string | null;
   embedding: Buffer | null;
+  archived_at: string | null;
 }
 
 // ============================================================================
@@ -174,16 +176,18 @@ async function searchTable(
 
     // Symbols need special handling - they're linked through files
     let records: RecordWithEmbedding[];
+    const hasArchived = ["files", "decisions", "issues", "learnings"].includes(table);
     if (table === "symbols") {
       records = db.query<RecordWithEmbedding, [number]>(`
-        SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding
+        SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding, NULL as archived_at
         FROM symbols s
         JOIN files f ON s.file_id = f.id
         WHERE f.project_id = ? AND s.embedding IS NOT NULL
       `).all(projectId);
     } else {
+      const archivedCol = hasArchived ? ", archived_at" : ", NULL as archived_at";
       records = db.query<RecordWithEmbedding, [number]>(`
-        SELECT id, ${titleCol} as title, ${contentCol} as content, embedding
+        SELECT id, ${titleCol} as title, ${contentCol} as content, embedding${archivedCol}
         FROM ${table}
         WHERE project_id = ? AND embedding IS NOT NULL
       `).all(projectId);
@@ -199,6 +203,12 @@ async function searchTable(
         const similarity = cosineSimilarity(queryEmbedding, embedding);
 
         if (similarity >= minSimilarity) {
+          // Re-heat archived items that match vector search
+          if (record.archived_at && hasArchived) {
+            const tableForReheat = table as "files" | "decisions" | "issues" | "learnings";
+            reheatEntity(db, tableForReheat, record.id);
+          }
+
           results.push({
             id: record.id,
             type,
@@ -268,7 +278,7 @@ export async function hybridSearch(
   } = options;
 
   // Check if embeddings are available
-  if (!isVoyageAvailable() || !hasEmbeddings(db, projectId)) {
+  if (!isEmbeddingAvailable() || !hasEmbeddings(db, projectId)) {
     // Fall back to FTS only
     return [];
   }
@@ -363,7 +373,7 @@ export async function backfillTable(
   projectId: number,
   onProgress?: (current: number, total: number) => void
 ): Promise<number> {
-  if (!isVoyageAvailable()) {
+  if (!isEmbeddingAvailable()) {
     return 0;
   }
 

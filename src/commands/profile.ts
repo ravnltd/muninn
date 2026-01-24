@@ -317,7 +317,7 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
       const entries = profileShow(db, projectId, { category });
 
       if (entries.length === 0) {
-        console.error("No profile entries yet. Run `context profile infer` or add with `context profile add`.");
+        console.error("No profile entries yet. Run `muninn profile infer` or add with `muninn profile add`.");
         outputJson([]);
         return;
       }
@@ -343,7 +343,7 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
       const category = (catIdx !== -1 ? args[catIdx + 1] : "coding_style") as ProfileCategory;
 
       if (!key || !value) {
-        console.error("Usage: context profile add <key> <value> [--category <cat>] [--global]");
+        console.error("Usage: muninn profile add <key> <value> [--category <cat>] [--global]");
         return;
       }
 
@@ -379,6 +379,6 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
     }
 
     default:
-      console.error("Usage: context profile <show|add|infer|evolve>");
+      console.error("Usage: muninn profile <show|add|infer|evolve>");
   }
 }

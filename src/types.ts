@@ -1,5 +1,5 @@
 /**
- * Type definitions for Claude Context Engine
+ * Type definitions for Muninn
  * All interfaces and types used throughout the application
  */
 

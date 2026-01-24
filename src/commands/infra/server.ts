@@ -34,7 +34,7 @@ export function serverAdd(db: Database, args: string[]): void {
   // Check if server already exists
   const existing = getServerByName(db, input.name);
   if (existing) {
-    console.error(`❌ Server '${input.name}' already exists. Use 'context infra server remove' first.`);
+    console.error(`❌ Server '${input.name}' already exists. Use 'muninn infra server remove' first.`);
     process.exit(1);
   }
 

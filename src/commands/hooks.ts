@@ -240,7 +240,7 @@ export function hookInit(
 function outputInitContext(result: HookInitResult): void {
   const healthEmoji = result.health === "good" ? "🟢" : result.health === "attention" ? "🟡" : "🔴";
 
-  console.error(`\n${healthEmoji} Context Engine Initialized\n`);
+  console.error(`\n${healthEmoji} Muninn Initialized\n`);
 
   if (result.lastSession) {
     console.error(`📋 Last Session (${result.lastSession.timeAgo}):`);
@@ -283,11 +283,11 @@ export function hookPostEdit(
 
   if (!fileRecord) {
     console.error(`\n💡 New file modified: ${filePath}`);
-    console.error(`   Consider: context file add "${filePath}" --purpose "..." --fragility 5`);
+    console.error(`   Consider: muninn file add "${filePath}" --purpose "..." --fragility 5`);
     console.error("");
   } else if (fileRecord.fragility >= 6) {
     console.error(`\n💡 Fragile file modified: ${filePath} (fragility: ${fileRecord.fragility}/10)`);
-    console.error(`   Consider: context_decision_add if you made architectural changes`);
+    console.error(`   Consider: muninn_decision_add if you made architectural changes`);
     console.error("");
   }
 
@@ -408,7 +408,7 @@ export function hookBrain(
     console.error("");
   }
 
-  console.error("Ready. Use context_query to search, context_check before editing.\n");
+  console.error("Ready. Use muninn_query to search, muninn_check before editing.\n");
 }
 
 // ============================================================================

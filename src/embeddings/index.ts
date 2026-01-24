@@ -1,20 +1,60 @@
 /**
  * Core embedding module
  * Provides embedding generation, serialization, and similarity functions
+ *
+ * Provider priority:
+ * 1. Voyage AI (if VOYAGE_API_KEY is set) — 512 dimensions, cloud-based
+ * 2. Local Transformers.js — 384 dimensions, offline, always available
  */
 
 import * as voyage from "./voyage";
+import * as local from "./local";
 import { logError } from "../utils/errors";
-
-// Re-export voyage functions
-export { isAvailable as isVoyageAvailable } from "./voyage";
-export { getDimensions } from "./voyage";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type EmbeddingProvider = "voyage" | "disabled";
+export type EmbeddingProvider = "voyage" | "local" | "disabled";
+
+// ============================================================================
+// Provider Selection
+// ============================================================================
+
+/**
+ * Get the current embedding provider
+ * Priority: Voyage (if API key set) > Local (always available)
+ */
+export function getProvider(): EmbeddingProvider {
+  if (voyage.isAvailable()) {
+    return "voyage";
+  }
+  return "local";
+}
+
+/**
+ * Check if any embedding provider is available
+ */
+export function isEmbeddingAvailable(): boolean {
+  return true; // Local is always available
+}
+
+/**
+ * Check if Voyage is specifically available
+ */
+export function isVoyageAvailable(): boolean {
+  return voyage.isAvailable();
+}
+
+/**
+ * Get the dimensions for the active provider
+ */
+export function getDimensions(): number {
+  if (voyage.isAvailable()) {
+    return voyage.getDimensions();
+  }
+  return local.getDimensions();
+}
 
 // ============================================================================
 // Embedding Generation
@@ -25,12 +65,19 @@ export type EmbeddingProvider = "voyage" | "disabled";
  * Returns Float32Array for efficient storage/comparison, or null if unavailable
  */
 export async function generateEmbedding(text: string): Promise<Float32Array | null> {
-  if (!voyage.isAvailable()) {
-    return null;
-  }
-
   try {
-    const embedding = await voyage.embed(text);
+    const provider = getProvider();
+
+    if (provider === "voyage") {
+      const embedding = await voyage.embed(text);
+      if (!embedding) {
+        return null;
+      }
+      return new Float32Array(embedding);
+    }
+
+    // Use local provider
+    const embedding = await local.embed(text);
     if (!embedding) {
       return null;
     }
@@ -46,12 +93,19 @@ export async function generateEmbedding(text: string): Promise<Float32Array | nu
  * Returns array of Float32Arrays, or null if unavailable
  */
 export async function generateEmbeddings(texts: string[]): Promise<Float32Array[] | null> {
-  if (!voyage.isAvailable()) {
-    return null;
-  }
-
   try {
-    const embeddings = await voyage.embedBatch(texts);
+    const provider = getProvider();
+
+    if (provider === "voyage") {
+      const embeddings = await voyage.embedBatch(texts);
+      if (!embeddings) {
+        return null;
+      }
+      return embeddings.map((emb) => new Float32Array(emb));
+    }
+
+    // Use local provider
+    const embeddings = await local.embedBatch(texts);
     if (!embeddings) {
       return null;
     }
@@ -92,7 +146,9 @@ export function deserializeEmbedding(blob: Buffer | Uint8Array): Float32Array {
  */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) {
-    throw new Error(`Embedding dimension mismatch: ${a.length} vs ${b.length}`);
+    // Dimension mismatch — different providers generated these
+    // Cannot compare, return 0 (orthogonal)
+    return 0;
   }
 
   let dotProduct = 0;
@@ -182,25 +238,4 @@ export function questionToText(
   context: string | null
 ): string {
   return `${question} ${context || ""}`.trim();
-}
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-/**
- * Check if embeddings are available
- */
-export function isEmbeddingAvailable(): boolean {
-  return voyage.isAvailable();
-}
-
-/**
- * Get the current embedding provider
- */
-export function getProvider(): EmbeddingProvider {
-  if (voyage.isAvailable()) {
-    return "voyage";
-  }
-  return "disabled";
 }

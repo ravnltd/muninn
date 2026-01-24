@@ -26,7 +26,7 @@ export function workflowSet(
   options: { preferences?: string; examples?: string; global?: boolean } = {}
 ): number {
   if (!taskType || !approach) {
-    console.error("Usage: context workflow set <task_type> <approach> [--preferences <json>]");
+    console.error("Usage: muninn workflow set <task_type> <approach> [--preferences <json>]");
     process.exit(1);
   }
 
@@ -122,7 +122,7 @@ export function workflowGet(
   options: { global?: boolean } = {}
 ): void {
   if (!taskType) {
-    console.error("Usage: context workflow get <task_type>");
+    console.error("Usage: muninn workflow get <task_type>");
     process.exit(1);
   }
 
@@ -270,6 +270,6 @@ export function handleWorkflowCommand(
     }
 
     default:
-      console.error("Usage: context workflow <set|get|list> [args]");
+      console.error("Usage: muninn workflow <set|get|list> [args]");
   }
 }

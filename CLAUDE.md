@@ -1,4 +1,4 @@
-# CLAUDE.md — Context Memory System
+# CLAUDE.md — Muninn Memory System
 
 You have **native MCP tools** for project memory. Query, don't preload.
 
@@ -23,27 +23,27 @@ Session startup is handled by the SessionStart hook. It automatically:
 - Outputs smart status (health, actions, warnings)
 - Starts a new session via CLI
 
-**Do NOT call** `context_resume`, `context_smart_status`, or `context_session_start` at startup.
+**Do NOT call** `muninn_resume`, `muninn_smart_status`, or `muninn_session_start` at startup.
 They are already provided in your initial context.
 
 ### Before Editing Files (MANDATORY)
 ```
-context_check [files...]  → Pre-edit warnings (fragility, issues, staleness)
+muninn_check [files...]  → Pre-edit warnings (fragility, issues, staleness)
 ```
 If fragility >= 7, explain your approach and wait for approval.
 
 ### During Work
 ```
-context_query "topic"     → Search for relevant context
-context_focus_set "area"  → Set focus to boost related results
-context_bookmark_add      → Save important snippets for later recall
+muninn_query "topic"     → Search for relevant context
+muninn_focus_set "area"  → Set focus to boost related results
+muninn_bookmark_add      → Save important snippets for later recall
 ```
 
 ### After Changes
 ```
-context_file_add          → Update file knowledge
-context_decision_add      → Record significant choices
-context_learn_add         → Save insights for future sessions
+muninn_file_add          → Update file knowledge
+muninn_decision_add      → Record significant choices
+muninn_learn_add         → Save insights for future sessions
 ```
 
 ---
@@ -53,20 +53,20 @@ context_learn_add         → Save insights for future sessions
 ### Status & Intelligence
 | Tool | Purpose |
 |------|---------|
-| `context_status` | Basic project state (JSON) |
-| `context_smart_status` | Actionable status with recommendations |
-| `context_fragile` | List files with high fragility scores |
-| `context_resume` | Last session goal, outcome, next steps |
-| `context_drift` | Detect stale knowledge and git changes |
-| `context_check` | **Pre-edit warnings** — ALWAYS use before editing |
-| `context_impact` | Blast radius analysis for a file |
-| `context_conflicts` | Check if files changed since last query |
+| `muninn_status` | Basic project state (JSON) |
+| `muninn_smart_status` | Actionable status with recommendations |
+| `muninn_fragile` | List files with high fragility scores |
+| `muninn_resume` | Last session goal, outcome, next steps |
+| `muninn_drift` | Detect stale knowledge and git changes |
+| `muninn_check` | **Pre-edit warnings** — ALWAYS use before editing |
+| `muninn_impact` | Blast radius analysis for a file |
+| `muninn_conflicts` | Check if files changed since last query |
 
 ### Search
 | Tool | Purpose |
 |------|---------|
-| `context_query` | Hybrid search (FTS + vector when available) |
-| `context_vector_search` | Pure semantic similarity search |
+| `muninn_query` | Hybrid search (FTS + vector when available) |
+| `muninn_vector_search` | Pure semantic similarity search |
 
 **Search Modes:**
 - `--fts` — Fast full-text search (know exact term)
@@ -77,11 +77,11 @@ context_learn_add         → Save insights for future sessions
 ### Working Memory
 | Tool | Purpose |
 |------|---------|
-| `context_bookmark_add` | Save context for later recall |
-| `context_bookmark_get` | Retrieve bookmarked content |
-| `context_bookmark_list` | List all bookmarks |
-| `context_bookmark_delete` | Delete a bookmark |
-| `context_bookmark_clear` | Clear all bookmarks |
+| `muninn_bookmark_add` | Save context for later recall |
+| `muninn_bookmark_get` | Retrieve bookmarked content |
+| `muninn_bookmark_list` | List all bookmarks |
+| `muninn_bookmark_delete` | Delete a bookmark |
+| `muninn_bookmark_clear` | Clear all bookmarks |
 
 **Use bookmarks to:**
 - Save code patterns you'll reference later
@@ -91,29 +91,29 @@ context_learn_add         → Save insights for future sessions
 ### Focus
 | Tool | Purpose |
 |------|---------|
-| `context_focus_set` | Set current work area |
-| `context_focus_get` | Show current focus |
-| `context_focus_clear` | Clear focus |
+| `muninn_focus_set` | Set current work area |
+| `muninn_focus_get` | Show current focus |
+| `muninn_focus_clear` | Clear focus |
 
 **Focus boosts results** from the specified area in all queries.
 
 ### Memory Updates
 | Tool | Purpose |
 |------|---------|
-| `context_file_add` | Record file purpose and fragility |
-| `context_decision_add` | Record architectural decisions |
-| `context_issue_add` | Track bugs and problems |
-| `context_issue_resolve` | Mark issues as fixed |
-| `context_learn_add` | Save learnings (project or global) |
+| `muninn_file_add` | Record file purpose and fragility |
+| `muninn_decision_add` | Record architectural decisions |
+| `muninn_issue_add` | Track bugs and problems |
+| `muninn_issue_resolve` | Mark issues as fixed |
+| `muninn_learn_add` | Save learnings (project or global) |
 
 ### Utilities
 | Tool | Purpose |
 |------|---------|
-| `context_ship` | Pre-deploy checklist |
-| `context_debt_add` | Track technical debt |
-| `context_debt_list` | List all tech debt |
-| `context_embed` | Manage vector embeddings |
-| `context_deps` | Query file dependencies |
+| `muninn_ship` | Pre-deploy checklist |
+| `muninn_debt_add` | Track technical debt |
+| `muninn_debt_list` | List all tech debt |
+| `muninn_embed` | Manage vector embeddings |
+| `muninn_deps` | Query file dependencies |
 
 ---
 
@@ -122,22 +122,22 @@ context_learn_add         → Save insights for future sessions
 ### Search Strategy
 | Situation | Use |
 |-----------|-----|
-| Know exact term | `context_query "term" --fts` |
-| Conceptual search | `context_query "concept" --vector` |
-| Need best results | `context_query "topic" --smart` |
-| Quick overview | `context_query "topic" --brief` |
+| Know exact term | `muninn_query "term" --fts` |
+| Conceptual search | `muninn_query "concept" --vector` |
+| Need best results | `muninn_query "topic" --smart` |
+| Quick overview | `muninn_query "topic" --brief` |
 
 ### When to Use What
 | Scenario | Tool |
 |----------|------|
 | Start of session | Automatic (hook provides resume + status) |
-| About to edit a file | `context_check` (MANDATORY) |
-| Need specific context | `context_query` |
-| Found useful pattern | `context_bookmark_add` |
-| Working on feature X | `context_focus_set "X"` |
-| Made a decision | `context_decision_add` |
-| Modified a file | `context_file_add` |
-| Learned something | `context_learn_add` |
+| About to edit a file | `muninn_check` (MANDATORY) |
+| Need specific context | `muninn_query` |
+| Found useful pattern | `muninn_bookmark_add` |
+| Working on feature X | `muninn_focus_set "X"` |
+| Made a decision | `muninn_decision_add` |
+| Modified a file | `muninn_file_add` |
+| Learned something | `muninn_learn_add` |
 
 ---
 

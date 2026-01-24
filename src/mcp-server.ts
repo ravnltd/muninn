@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Claude Context Engine — MCP Server
- * Exposes context commands as native Claude Code tools
+ * Muninn — MCP Server
+ * Exposes muninn commands as native Claude Code tools
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -14,13 +14,13 @@ import { execSync } from "child_process";
 
 // Log to stderr only (stdout is for JSON-RPC)
 function log(msg: string): void {
-  process.stderr.write(`[context-mcp] ${msg}\n`);
+  process.stderr.write(`[muninn-mcp] ${msg}\n`);
 }
 
 // Execute context CLI command
 function runContext(args: string, cwd?: string): string {
   try {
-    const result = execSync(`context ${args}`, {
+    const result = execSync(`muninn ${args}`, {
       cwd: cwd || process.cwd(),
       encoding: "utf-8",
       timeout: 30000,
@@ -36,7 +36,7 @@ function runContext(args: string, cwd?: string): string {
 
 const server = new Server(
   {
-    name: "claude-context",
+    name: "muninn",
     version: "1.0.0",
   },
   {
@@ -51,7 +51,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "context_status",
+        name: "muninn_status",
         description:
           "Get current project state including fragile files, open issues, and recent decisions. ALWAYS call this at the start of a session to understand the project.",
         inputSchema: {
@@ -66,7 +66,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_fragile",
+        name: "muninn_fragile",
         description:
           "List files with high fragility scores that need careful handling. Call this BEFORE modifying any files to check if they're dangerous.",
         inputSchema: {
@@ -81,7 +81,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_query",
+        name: "muninn_query",
         description:
           "Search project memory for relevant context. Supports hybrid search (FTS + vector similarity) when embeddings are available. Use this to find decisions, issues, learnings, and file knowledge about a topic BEFORE making changes.",
         inputSchema: {
@@ -112,7 +112,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_file_add",
+        name: "muninn_file_add",
         description:
           "Record knowledge about a file including its purpose and fragility. Call this AFTER modifying a file to update the project memory.",
         inputSchema: {
@@ -147,7 +147,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_decision_add",
+        name: "muninn_decision_add",
         description:
           "Record an architectural or design decision. Use this when you make a significant choice that future sessions should know about.",
         inputSchema: {
@@ -178,7 +178,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_issue_add",
+        name: "muninn_issue_add",
         description:
           "Record a known issue or bug. Use this when you discover a problem that needs tracking.",
         inputSchema: {
@@ -217,7 +217,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_issue_resolve",
+        name: "muninn_issue_resolve",
         description:
           "Mark an issue as resolved. Use this when you fix a known issue.",
         inputSchema: {
@@ -240,7 +240,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_learn_add",
+        name: "muninn_learn_add",
         description:
           "Record a learning, pattern, or gotcha. Use this when you discover something that future sessions should know.",
         inputSchema: {
@@ -275,7 +275,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_ship",
+        name: "muninn_ship",
         description:
           "Run pre-deploy checklist. Use this before deploying to verify the project is ready.",
         inputSchema: {
@@ -290,7 +290,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_debt_add",
+        name: "muninn_debt_add",
         description:
           "Record technical debt. Use this when you take a shortcut that should be fixed later.",
         inputSchema: {
@@ -321,7 +321,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_debt_list",
+        name: "muninn_debt_list",
         description: "List all technical debt items.",
         inputSchema: {
           type: "object",
@@ -339,7 +339,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_embed",
+        name: "muninn_embed",
         description:
           "Manage vector embeddings for semantic search. Use 'status' to check coverage, 'backfill' to generate missing embeddings, 'test' to verify embedding generation.",
         inputSchema: {
@@ -368,9 +368,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_vector_search",
+        name: "muninn_vector_search",
         description:
           "Pure semantic similarity search using vector embeddings. Returns results ranked by similarity to the query. Requires VOYAGE_API_KEY to be set.",
+        // Note: Local embeddings are now always available even without VOYAGE_API_KEY
         inputSchema: {
           type: "object",
           properties: {
@@ -400,7 +401,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_check",
+        name: "muninn_check",
         description:
           "Pre-edit warnings for files. Call this BEFORE modifying files to check fragility, related issues, staleness, and get suggestions. Essential for safe editing.",
         inputSchema: {
@@ -420,7 +421,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_impact",
+        name: "muninn_impact",
         description:
           "Analyze what depends on a file. Shows direct dependents, indirect dependents, related decisions, and suggested tests. Use before making changes to understand the blast radius.",
         inputSchema: {
@@ -439,7 +440,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_drift",
+        name: "muninn_drift",
         description:
           "Detect knowledge drift. Shows files that have changed since last analysis, git changes, and untracked files. Use at session start to see what's out of date.",
         inputSchema: {
@@ -454,7 +455,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_smart_status",
+        name: "muninn_smart_status",
         description:
           "Get actionable project status with prioritized recommendations. Shows project health, warnings, and suggested next actions. More useful than basic status.",
         inputSchema: {
@@ -469,7 +470,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_resume",
+        name: "muninn_resume",
         description:
           "Get session resume information. Shows last session goal, outcome, files modified, and pending next steps. Use at session start to continue where you left off.",
         inputSchema: {
@@ -484,9 +485,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_session_start",
+        name: "muninn_session_start",
         description:
-          "Start a new work session with a goal. Call this after context_resume when you understand what the user wants to accomplish. The session tracks files modified, queries made, and learnings.",
+          "Start a new work session with a goal. Call this after muninn_resume when you understand what the user wants to accomplish. The session tracks files modified, queries made, and learnings.",
         inputSchema: {
           type: "object",
           properties: {
@@ -503,7 +504,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_session_end",
+        name: "muninn_session_end",
         description:
           "End the current work session with an outcome summary. Call this when the task is complete or the user is done working. Captures what was accomplished for future sessions.",
         inputSchema: {
@@ -530,7 +531,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_deps",
+        name: "muninn_deps",
         description:
           "Query file dependencies. Shows what a file imports and what depends on it. Useful for understanding code relationships before refactoring.",
         inputSchema: {
@@ -553,7 +554,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_conflicts",
+        name: "muninn_conflicts",
         description:
           "Check if files have changed since last query. Use before editing to detect if someone else modified the files.",
         inputSchema: {
@@ -573,7 +574,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_bookmark_add",
+        name: "muninn_bookmark_add",
         description:
           "Save context to working memory. Use this to 'set aside' important information (code patterns, decisions, snippets) that you can recall later without keeping it in your context window.",
         inputSchema: {
@@ -614,7 +615,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_bookmark_get",
+        name: "muninn_bookmark_get",
         description:
           "Retrieve a bookmarked piece of context by label. Use this to recall information you previously set aside.",
         inputSchema: {
@@ -633,7 +634,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_bookmark_list",
+        name: "muninn_bookmark_list",
         description:
           "List all bookmarks in working memory. Shows what context you have saved for quick recall.",
         inputSchema: {
@@ -648,7 +649,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_bookmark_delete",
+        name: "muninn_bookmark_delete",
         description: "Delete a bookmark from working memory.",
         inputSchema: {
           type: "object",
@@ -666,7 +667,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_bookmark_clear",
+        name: "muninn_bookmark_clear",
         description: "Clear all bookmarks from working memory.",
         inputSchema: {
           type: "object",
@@ -680,7 +681,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_focus_set",
+        name: "muninn_focus_set",
         description:
           "Set your current work focus area. Queries will automatically prioritize results from this area. Use when starting work on a specific feature or module.",
         inputSchema: {
@@ -713,7 +714,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_focus_get",
+        name: "muninn_focus_get",
         description:
           "Get your current work focus. Shows what area you're focused on and any file/keyword boosts.",
         inputSchema: {
@@ -728,7 +729,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_focus_clear",
+        name: "muninn_focus_clear",
         description: "Clear your current work focus.",
         inputSchema: {
           type: "object",
@@ -742,7 +743,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_observe",
+        name: "muninn_observe",
         description:
           "Record a lightweight observation (pattern, frustration, insight, preference, behavior). Auto-deduplicates similar observations by incrementing frequency. Use for quick notes-to-self that are less formal than learnings.",
         inputSchema: {
@@ -770,7 +771,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_questions_add",
+        name: "muninn_questions_add",
         description:
           "Park a question for later investigation. Questions are surfaced automatically on session resume. Use when you notice something worth revisiting but don't want to break flow.",
         inputSchema: {
@@ -801,7 +802,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_questions_list",
+        name: "muninn_questions_list",
         description:
           "Show open questions, ordered by priority. Questions are things worth revisiting that were parked during previous sessions.",
         inputSchema: {
@@ -825,7 +826,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_questions_resolve",
+        name: "muninn_questions_resolve",
         description:
           "Answer or drop a parked question. Use 'resolved' when answered, 'dropped' when no longer relevant.",
         inputSchema: {
@@ -853,7 +854,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_workflow_set",
+        name: "muninn_workflow_set",
         description:
           "Record how the user works on a specific task type. Evolves over time with UPSERT semantics. Use to capture preferred approaches for code_review, debugging, feature_build, creative, research, refactor.",
         inputSchema: {
@@ -885,7 +886,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_workflow_get",
+        name: "muninn_workflow_get",
         description:
           "Retrieve workflow preferences for a task type. Falls back to global workflows if no project-specific one exists.",
         inputSchema: {
@@ -909,7 +910,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_profile",
+        name: "muninn_profile",
         description:
           "View your developer profile — preferences, coding style, and patterns learned from your usage. Optional category filter.",
         inputSchema: {
@@ -929,7 +930,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_profile_add",
+        name: "muninn_profile_add",
         description:
           "Declare a developer preference (e.g., 'error_handling', 'Result types over try/catch', 'coding_style'). Builds your profile for personalized assistance.",
         inputSchema: {
@@ -961,7 +962,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_profile_infer",
+        name: "muninn_profile_infer",
         description:
           "Trigger inference of developer preferences from existing observations, decisions, learnings, and workflows.",
         inputSchema: {
@@ -976,7 +977,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_predict",
+        name: "muninn_predict",
         description:
           "Bundle all relevant context for a task in one call. Returns related files, co-changers, decisions, issues, learnings, applicable workflow, and profile entries.",
         inputSchema: {
@@ -1000,7 +1001,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_outcome",
+        name: "muninn_outcome",
         description:
           "Record whether an architectural decision worked out. Status: succeeded, failed, revised, unknown.",
         inputSchema: {
@@ -1028,7 +1029,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_decisions_due",
+        name: "muninn_decisions_due",
         description:
           "List decisions that are due for outcome review (enough sessions have passed since the decision was made).",
         inputSchema: {
@@ -1043,7 +1044,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_insights",
+        name: "muninn_insights",
         description:
           "List or generate cross-session insights. Detects co-change patterns, fragility trends, decision outcomes, workflow deviations, and scope creep.",
         inputSchema: {
@@ -1067,7 +1068,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "context_insight_ack",
+        name: "muninn_insight_ack",
         description:
           "Acknowledge, dismiss, or apply an insight. Acknowledged insights won't resurface.",
         inputSchema: {
@@ -1090,6 +1091,66 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["id", "action"],
         },
       },
+      {
+        name: "muninn_relate",
+        description:
+          "Create a typed semantic relationship between two entities. Entities are referenced as type:id (e.g., 'file:5', 'decision:3').",
+        inputSchema: {
+          type: "object",
+          properties: {
+            source: {
+              type: "string",
+              description: "Source entity (e.g., 'decision:5', 'file:3')",
+            },
+            relationship: {
+              type: "string",
+              enum: ["causes", "fixes", "supersedes", "depends_on", "contradicts", "supports", "follows", "related"],
+              description: "Relationship type",
+            },
+            target: {
+              type: "string",
+              description: "Target entity (e.g., 'issue:3', 'file:7')",
+            },
+            strength: {
+              type: "number",
+              description: "Relationship strength 1-10 (default: 5)",
+            },
+            notes: {
+              type: "string",
+              description: "Optional notes about the relationship",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: ["source", "relationship", "target"],
+        },
+      },
+      {
+        name: "muninn_relations",
+        description:
+          "Query relationships for an entity or by type. Shows semantic links between files, decisions, issues, learnings, and sessions.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            entity: {
+              type: "string",
+              description: "Entity to query (e.g., 'decision:5'). If omitted, shows all.",
+            },
+            type: {
+              type: "string",
+              enum: ["causes", "fixes", "supersedes", "depends_on", "contradicts", "supports", "follows", "related"],
+              description: "Filter by relationship type (optional)",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory (optional)",
+            },
+          },
+          required: [],
+        },
+      },
     ],
   };
 });
@@ -1106,15 +1167,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: string;
 
     switch (name) {
-      case "context_status":
+      case "muninn_status":
         result = runContext("status", cwd);
         break;
 
-      case "context_fragile":
+      case "muninn_fragile":
         result = runContext("fragile", cwd);
         break;
 
-      case "context_query": {
+      case "muninn_query": {
         const query = typedArgs.query as string;
         const smart = typedArgs.smart ? "--smart" : "";
         const vector = typedArgs.vector ? "--vector" : "";
@@ -1123,7 +1184,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_file_add": {
+      case "muninn_file_add": {
         const path = typedArgs.path as string;
         const purpose = typedArgs.purpose as string;
         const fragility = typedArgs.fragility as number;
@@ -1139,7 +1200,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_decision_add": {
+      case "muninn_decision_add": {
         const title = typedArgs.title as string;
         const decision = typedArgs.decision as string;
         const reasoning = typedArgs.reasoning as string;
@@ -1152,7 +1213,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_issue_add": {
+      case "muninn_issue_add": {
         const title = typedArgs.title as string;
         const severity = typedArgs.severity as number;
         const desc = typedArgs.description
@@ -1171,14 +1232,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_issue_resolve": {
+      case "muninn_issue_resolve": {
         const id = typedArgs.id as number;
         const resolution = typedArgs.resolution as string;
         result = runContext(`issue resolve ${id} "${resolution}"`, cwd);
         break;
       }
 
-      case "context_learn_add": {
+      case "muninn_learn_add": {
         const title = typedArgs.title as string;
         const content = typedArgs.content as string;
         const category = typedArgs.category ? `--category ${typedArgs.category}` : "";
@@ -1192,11 +1253,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_ship":
+      case "muninn_ship":
         result = runContext("ship", cwd);
         break;
 
-      case "context_debt_add": {
+      case "muninn_debt_add": {
         const title = typedArgs.title as string;
         const severity = typedArgs.severity as number;
         const effort = typedArgs.effort as string;
@@ -1211,13 +1272,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_debt_list": {
+      case "muninn_debt_list": {
         const projectOnly = typedArgs.project_only ? "--project" : "";
         result = runContext(`debt list ${projectOnly}`.trim(), cwd);
         break;
       }
 
-      case "context_embed": {
+      case "muninn_embed": {
         const action = typedArgs.action as string;
         const table = typedArgs.table as string | undefined;
         const text = typedArgs.text as string | undefined;
@@ -1232,44 +1293,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_vector_search": {
+      case "muninn_vector_search": {
         const query = typedArgs.query as string;
         // Use the --vector flag with the query command
         result = runContext(`query "${query}" --vector`, cwd);
         break;
       }
 
-      case "context_check": {
+      case "muninn_check": {
         const files = typedArgs.files as string[];
         if (!files || files.length === 0) {
-          throw new Error("Files array is required for context_check");
+          throw new Error("Files array is required for muninn_check");
         }
         result = runContext(`check ${files.map(f => `"${f}"`).join(" ")}`, cwd);
         break;
       }
 
-      case "context_impact": {
+      case "muninn_impact": {
         const file = typedArgs.file as string;
         if (!file) {
-          throw new Error("File path is required for context_impact");
+          throw new Error("File path is required for muninn_impact");
         }
         result = runContext(`impact "${file}"`, cwd);
         break;
       }
 
-      case "context_drift":
+      case "muninn_drift":
         result = runContext("drift", cwd);
         break;
 
-      case "context_smart_status":
+      case "muninn_smart_status":
         result = runContext("ss", cwd);
         break;
 
-      case "context_resume":
+      case "muninn_resume":
         result = runContext("resume", cwd);
         break;
 
-      case "context_session_start": {
+      case "muninn_session_start": {
         const goal = typedArgs.goal as string;
         if (!goal) {
           return { content: [{ type: "text", text: JSON.stringify({ success: false, error: "Goal is required" }) }] };
@@ -1286,7 +1347,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_session_end": {
+      case "muninn_session_end": {
         const outcome = typedArgs.outcome as string;
         const nextSteps = typedArgs.next_steps as string;
         const success = typedArgs.success as number;
@@ -1316,7 +1377,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_deps": {
+      case "muninn_deps": {
         const file = typedArgs.file as string;
         const refresh = typedArgs.refresh as boolean;
 
@@ -1330,16 +1391,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_conflicts": {
+      case "muninn_conflicts": {
         const files = typedArgs.files as string[];
         if (!files || files.length === 0) {
-          throw new Error("Files array is required for context_conflicts");
+          throw new Error("Files array is required for muninn_conflicts");
         }
         result = runContext(`conflicts ${files.map(f => `"${f}"`).join(" ")}`, cwd);
         break;
       }
 
-      case "context_bookmark_add": {
+      case "muninn_bookmark_add": {
         const label = typedArgs.label as string;
         const content = typedArgs.content as string;
         const source = typedArgs.source ? `--source "${typedArgs.source}"` : "";
@@ -1354,27 +1415,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_bookmark_get": {
+      case "muninn_bookmark_get": {
         const label = typedArgs.label as string;
         result = runContext(`bookmark get "${label}"`, cwd);
         break;
       }
 
-      case "context_bookmark_list":
+      case "muninn_bookmark_list":
         result = runContext("bookmark list", cwd);
         break;
 
-      case "context_bookmark_delete": {
+      case "muninn_bookmark_delete": {
         const label = typedArgs.label as string;
         result = runContext(`bookmark delete "${label}"`, cwd);
         break;
       }
 
-      case "context_bookmark_clear":
+      case "muninn_bookmark_clear":
         result = runContext("bookmark clear", cwd);
         break;
 
-      case "context_focus_set": {
+      case "muninn_focus_set": {
         const area = typedArgs.area as string;
         const desc = typedArgs.description ? `--description "${typedArgs.description}"` : "";
         const files = typedArgs.files ? `--files '${JSON.stringify(typedArgs.files)}'` : "";
@@ -1387,15 +1448,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_focus_get":
+      case "muninn_focus_get":
         result = runContext("focus get", cwd);
         break;
 
-      case "context_focus_clear":
+      case "muninn_focus_clear":
         result = runContext("focus clear", cwd);
         break;
 
-      case "context_observe": {
+      case "muninn_observe": {
         const content = typedArgs.content as string;
         const type = typedArgs.type ? `--type ${typedArgs.type}` : "";
         const global = typedArgs.global ? "--global" : "";
@@ -1406,7 +1467,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_questions_add": {
+      case "muninn_questions_add": {
         const question = typedArgs.question as string;
         const context = typedArgs.context ? `--context "${(typedArgs.context as string).replace(/"/g, '\\"')}"` : "";
         const priority = typedArgs.priority ? `--priority ${typedArgs.priority}` : "";
@@ -1418,14 +1479,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_questions_list": {
+      case "muninn_questions_list": {
         const status = typedArgs.status ? `--status ${typedArgs.status}` : "";
         const global = typedArgs.global ? "--global" : "";
         result = runContext(`questions list ${status} ${global}`.trim(), cwd);
         break;
       }
 
-      case "context_questions_resolve": {
+      case "muninn_questions_resolve": {
         const id = typedArgs.id as number;
         const resolution = typedArgs.resolution as string;
         const status = typedArgs.status === "dropped" ? "drop" : "resolve";
@@ -1436,7 +1497,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_workflow_set": {
+      case "muninn_workflow_set": {
         const taskType = typedArgs.task_type as string;
         const approach = typedArgs.approach as string;
         const preferences = typedArgs.preferences ? `--preferences '${typedArgs.preferences}'` : "";
@@ -1448,20 +1509,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_workflow_get": {
+      case "muninn_workflow_get": {
         const taskType = typedArgs.task_type as string;
         const global = typedArgs.global ? "--global" : "";
         result = runContext(`workflow get ${taskType} ${global}`.trim(), cwd);
         break;
       }
 
-      case "context_profile": {
+      case "muninn_profile": {
         const category = typedArgs.category ? `${typedArgs.category}` : "";
         result = runContext(`profile show ${category}`.trim(), cwd);
         break;
       }
 
-      case "context_profile_add": {
+      case "muninn_profile_add": {
         const key = typedArgs.key as string;
         const value = typedArgs.value as string;
         const category = typedArgs.category ? `--category ${typedArgs.category}` : "";
@@ -1473,11 +1534,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_profile_infer":
+      case "muninn_profile_infer":
         result = runContext("profile infer", cwd);
         break;
 
-      case "context_predict": {
+      case "muninn_predict": {
         const task = typedArgs.task as string | undefined;
         const files = typedArgs.files as string[] | undefined;
         let cmd = "predict";
@@ -1487,7 +1548,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_outcome": {
+      case "muninn_outcome": {
         const id = typedArgs.id as number;
         const status = typedArgs.status as string;
         const notes = typedArgs.notes ? (typedArgs.notes as string).replace(/"/g, '\\"') : "";
@@ -1498,11 +1559,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_decisions_due":
+      case "muninn_decisions_due":
         result = runContext("outcome due", cwd);
         break;
 
-      case "context_insights": {
+      case "muninn_insights": {
         const generate = typedArgs.generate as boolean;
         const status = typedArgs.status as string | undefined;
         if (generate) {
@@ -1514,7 +1575,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      case "context_insight_ack": {
+      case "muninn_insight_ack": {
         const id = typedArgs.id as number;
         const action = typedArgs.action as string;
         const cmdMap: Record<string, string> = {
@@ -1523,6 +1584,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           apply: "apply",
         };
         result = runContext(`insights ${cmdMap[action] || "ack"} ${id}`, cwd);
+        break;
+      }
+
+      case "muninn_relate": {
+        const source = typedArgs.source as string;
+        const relationship = typedArgs.relationship as string;
+        const target = typedArgs.target as string;
+        const strength = typedArgs.strength ? `--strength ${typedArgs.strength}` : "";
+        const notes = typedArgs.notes ? `--notes "${(typedArgs.notes as string).replace(/"/g, '\\"')}"` : "";
+        result = runContext(
+          `relate "${source}" "${relationship}" "${target}" ${strength} ${notes}`.trim(),
+          cwd
+        );
+        break;
+      }
+
+      case "muninn_relations": {
+        const entity = typedArgs.entity as string | undefined;
+        const relType = typedArgs.type ? `--type ${typedArgs.type}` : "";
+        const entityArg = entity ? `"${entity}"` : "";
+        result = runContext(`relations ${entityArg} ${relType}`.trim(), cwd);
         break;
       }
 
@@ -1554,7 +1636,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start server
 async function main(): Promise<void> {
-  log("Starting Claude Context MCP Server...");
+  log("Starting Muninn MCP Server...");
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("Server connected via stdio");

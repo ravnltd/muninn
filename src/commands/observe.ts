@@ -29,7 +29,7 @@ export async function observeAdd(
   isGlobal: boolean = false
 ): Promise<number> {
   if (!content) {
-    console.error("Usage: context observe <content> [--type <type>] [--global]");
+    console.error("Usage: muninn observe <content> [--type <type>] [--global]");
     process.exit(1);
   }
 

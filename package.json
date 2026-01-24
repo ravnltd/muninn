@@ -1,17 +1,20 @@
 {
-  "name": "claude-context-engine",
+  "name": "muninn",
   "version": "2.0.0",
   "description": "Semantic memory system for Claude Code - persistent context across sessions",
   "type": "module",
   "bin": {
-    "context": "./src/index.ts"
+    "muninn": "./src/index.ts"
   },
   "scripts": {
-    "build": "bun build ./src/index.ts --compile --outfile=context",
-    "build:mcp": "bun build ./src/mcp-server.ts --compile --outfile=context-mcp",
-    "install-global": "bun build ./src/index.ts --compile --outfile=/usr/local/bin/context && bun build ./src/mcp-server.ts --compile --outfile=/usr/local/bin/context-mcp",
+    "build": "bun build ./src/index.ts --compile --outfile=muninn",
+    "build:mcp": "bun build ./src/mcp-server.ts --compile --outfile=muninn-mcp",
+    "build:dashboard": "cd src/dashboard && bun install && bun run build",
+    "build:all": "bun run build:dashboard && bun run build && bun run build:mcp",
+    "install-global": "bun build ./src/index.ts --compile --outfile=/usr/local/bin/muninn && bun build ./src/mcp-server.ts --compile --outfile=/usr/local/bin/muninn-mcp",
     "mcp": "bun run src/mcp-server.ts",
     "dev": "bun run src/index.ts",
+    "dev:dashboard": "cd src/dashboard && bun run dev",
     "typecheck": "bun x tsc --noEmit",
     "db:generate": "bunx drizzle-kit generate",
     "db:migrate": "bunx drizzle-kit migrate",
@@ -19,8 +22,10 @@
     "db:push": "bunx drizzle-kit push"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.5.0",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "drizzle-orm": "^0.45.1",
+    "hono": "^4.7.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

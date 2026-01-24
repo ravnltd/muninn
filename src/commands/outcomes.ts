@@ -106,7 +106,7 @@ export function handleOutcomeCommand(db: Database, projectId: number, args: stri
       const notes = args.slice(3).join(" ") || undefined;
 
       if (!id || !status || !['succeeded', 'failed', 'revised', 'unknown'].includes(status)) {
-        console.error("Usage: context outcome record <decision_id> <succeeded|failed|revised|unknown> [notes]");
+        console.error("Usage: muninn outcome record <decision_id> <succeeded|failed|revised|unknown> [notes]");
         return;
       }
 
@@ -140,6 +140,6 @@ export function handleOutcomeCommand(db: Database, projectId: number, args: stri
     }
 
     default:
-      console.error("Usage: context outcome <due|record> [args]");
+      console.error("Usage: muninn outcome <due|record> [args]");
   }
 }

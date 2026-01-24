@@ -1,4 +1,4 @@
-# Claude Context Engine
+# Muninn
 
 A semantic memory system for Claude Code. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
 
@@ -15,12 +15,12 @@ Projects are auto-initialized on first session — no manual setup required.
 
 ```bash
 # Install CLI (requires Bun)
-cd /path/to/claude-context
+cd /path/to/muninn
 bun run build
-cp context ~/.local/bin/
+cp muninn ~/.local/bin/
 
 # Register MCP server with Claude Code (user scope = all projects)
-claude mcp add --scope user --transport stdio claude-context -- bun run /path/to/claude-context/src/mcp-server.ts
+claude mcp add --scope user --transport stdio muninn -- bun run /path/to/muninn/src/mcp-server.ts
 
 # Verify
 claude mcp list
@@ -104,110 +104,110 @@ Once registered, Claude has these native tools:
 
 | Tool | Purpose |
 |------|---------|
-| `context_status` | Basic project state |
-| `context_smart_status` | Actionable status with recommendations |
-| `context_fragile` | List files with high fragility scores |
-| `context_resume` | Last session goal, outcome, next steps |
-| `context_drift` | Detect stale knowledge and git changes |
-| `context_check` | Pre-edit warnings (fragility, issues, staleness) |
-| `context_impact` | Blast radius analysis for a file |
-| `context_conflicts` | Check if files changed since last query |
+| `muninn_status` | Basic project state |
+| `muninn_smart_status` | Actionable status with recommendations |
+| `muninn_fragile` | List files with high fragility scores |
+| `muninn_resume` | Last session goal, outcome, next steps |
+| `muninn_drift` | Detect stale knowledge and git changes |
+| `muninn_check` | Pre-edit warnings (fragility, issues, staleness) |
+| `muninn_impact` | Blast radius analysis for a file |
+| `muninn_conflicts` | Check if files changed since last query |
 
 ### Search
 
 | Tool | Purpose |
 |------|---------|
-| `context_query` | Hybrid search (FTS + vector) |
-| `context_vector_search` | Pure semantic similarity search |
+| `muninn_query` | Hybrid search (FTS + vector) |
+| `muninn_vector_search` | Pure semantic similarity search |
 
 ### Working Memory
 
 | Tool | Purpose |
 |------|---------|
-| `context_bookmark_add` | Save context for later recall |
-| `context_bookmark_get` | Retrieve bookmarked content |
-| `context_bookmark_list` | List all bookmarks |
-| `context_bookmark_delete` | Remove a bookmark |
-| `context_bookmark_clear` | Clear all bookmarks |
+| `muninn_bookmark_add` | Save context for later recall |
+| `muninn_bookmark_get` | Retrieve bookmarked content |
+| `muninn_bookmark_list` | List all bookmarks |
+| `muninn_bookmark_delete` | Remove a bookmark |
+| `muninn_bookmark_clear` | Clear all bookmarks |
 
 ### Focus
 
 | Tool | Purpose |
 |------|---------|
-| `context_focus_set` | Set current work area (boosts related results) |
-| `context_focus_get` | Show current focus |
-| `context_focus_clear` | Clear focus |
+| `muninn_focus_set` | Set current work area (boosts related results) |
+| `muninn_focus_get` | Show current focus |
+| `muninn_focus_clear` | Clear focus |
 
 ### Memory Updates
 
 | Tool | Purpose |
 |------|---------|
-| `context_file_add` | Record file purpose and fragility |
-| `context_decision_add` | Record architectural decisions |
-| `context_issue_add` | Track bugs and problems |
-| `context_issue_resolve` | Mark issues as fixed |
-| `context_learn_add` | Save learnings (project or global) |
+| `muninn_file_add` | Record file purpose and fragility |
+| `muninn_decision_add` | Record architectural decisions |
+| `muninn_issue_add` | Track bugs and problems |
+| `muninn_issue_resolve` | Mark issues as fixed |
+| `muninn_learn_add` | Save learnings (project or global) |
 
 ### Session Management
 
 | Tool | Purpose |
 |------|---------|
-| `context_session_start` | Start a work session with a goal |
-| `context_session_end` | End session with outcome summary |
+| `muninn_session_start` | Start a work session with a goal |
+| `muninn_session_end` | End session with outcome summary |
 
 ### Utilities
 
 | Tool | Purpose |
 |------|---------|
-| `context_ship` | Pre-deploy checklist |
-| `context_debt_add` | Track technical debt |
-| `context_debt_list` | List all tech debt |
-| `context_embed` | Manage vector embeddings |
-| `context_deps` | Query file dependencies |
+| `muninn_ship` | Pre-deploy checklist |
+| `muninn_debt_add` | Track technical debt |
+| `muninn_debt_list` | List all tech debt |
+| `muninn_embed` | Manage vector embeddings |
+| `muninn_deps` | Query file dependencies |
 
 ## CLI Reference
 
 ```bash
 # Project
-context init                        # Initialize .context/ for current project
-context status                      # Full project state
-context fragile                     # List fragile files
+muninn init                        # Initialize .context/ for current project
+muninn status                      # Full project state
+muninn fragile                     # List fragile files
 
 # Search
-context query "authentication"      # FTS search
-context query "auth" --vector       # Semantic similarity
-context query "auth" --smart        # Claude re-ranked results
+muninn query "authentication"      # FTS search
+muninn query "auth" --vector       # Semantic similarity
+muninn query "auth" --smart        # Claude re-ranked results
 
 # Intelligence
-context check src/auth.ts           # Pre-edit warnings
-context impact src/types.ts         # Blast radius
-context ss                          # Smart status
-context drift                       # Knowledge staleness
-context resume                      # Last session summary
+muninn check src/auth.ts           # Pre-edit warnings
+muninn impact src/types.ts         # Blast radius
+muninn ss                          # Smart status
+muninn drift                       # Knowledge staleness
+muninn resume                      # Last session summary
 
 # Dependencies
-context deps src/index.ts           # Show imports/dependents
-context deps --refresh              # Rebuild dependency graph
-context deps --graph                # Mermaid diagram
-context deps --cycles               # Find circular deps
+muninn deps src/index.ts           # Show imports/dependents
+muninn deps --refresh              # Rebuild dependency graph
+muninn deps --graph                # Mermaid diagram
+muninn deps --cycles               # Find circular deps
 
 # Memory
-context file add src/auth.ts --fragility 8 --purpose "Auth system"
-context decision add --title "Use Drizzle" --reasoning "Type-safe SQL"
-context issue add --title "Bug" --severity 7
-context issue resolve 1 "Fixed in commit abc123"
-context learn add --title "Pattern" --content "Always validate at boundaries"
+muninn file add src/auth.ts --fragility 8 --purpose "Auth system"
+muninn decision add --title "Use Drizzle" --reasoning "Type-safe SQL"
+muninn issue add --title "Bug" --severity 7
+muninn issue resolve 1 "Fixed in commit abc123"
+muninn learn add --title "Pattern" --content "Always validate at boundaries"
 
 # Sessions
-context session start "implementing auth"
-context session end 42 --outcome "Auth complete" --success 2
+muninn session start "implementing auth"
+muninn session end 42 --outcome "Auth complete" --success 2
 
 # Embeddings
-context embed status                # Coverage stats
-context embed backfill              # Generate missing embeddings
+muninn embed status                # Coverage stats
+muninn embed backfill              # Generate missing embeddings
 
 # Deploy
-context ship                        # Pre-deploy checklist
+muninn ship                        # Pre-deploy checklist
 ```
 
 ## Vector Search
@@ -218,10 +218,10 @@ Semantic search uses [Voyage AI](https://www.voyageai.com/) embeddings. Set `VOY
 export VOYAGE_API_KEY=your-key
 
 # Generate embeddings for existing knowledge
-context embed backfill
+muninn embed backfill
 
 # Search by meaning (not just keywords)
-context query "how does error handling work" --vector
+muninn query "how does error handling work" --vector
 ```
 
 ## Philosophy

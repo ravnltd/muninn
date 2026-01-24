@@ -95,7 +95,7 @@ function checkSingleFile(
         const currentHash = computeContentHash(content);
         if (currentHash !== fileRecord.content_hash) {
           isStale = true;
-          warnings.push("STALE: File has changed since last analysis. Consider running `context analyze`.");
+          warnings.push("STALE: File has changed since last analysis. Consider running `muninn analyze`.");
         }
       } catch {
         // Skip hash check
@@ -111,7 +111,7 @@ function checkSingleFile(
       }
     }
   } else {
-    suggestions.push("File not tracked. Consider running `context file add` after changes.");
+    suggestions.push("File not tracked. Consider running `muninn file add` after changes.");
   }
 
   // Get related issues

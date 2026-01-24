@@ -185,11 +185,11 @@ export function detectDrift(
     });
 
     if (criticalStale.length > 0) {
-      recommendations.push(`URGENT: ${criticalStale.length} fragile file(s) have stale knowledge. Run \`context analyze\` or update individually.`);
+      recommendations.push(`URGENT: ${criticalStale.length} fragile file(s) have stale knowledge. Run \`muninn analyze\` or update individually.`);
     }
 
     if (staleFiles.length > 5) {
-      recommendations.push(`Consider running \`context analyze\` to refresh knowledge for all ${staleFiles.length} stale files.`);
+      recommendations.push(`Consider running \`muninn analyze\` to refresh knowledge for all ${staleFiles.length} stale files.`);
     } else {
       recommendations.push(`Update knowledge for: ${staleFiles.map(f => f.path).join(", ")}`);
     }
@@ -200,7 +200,7 @@ export function detectDrift(
       f.endsWith(".ts") || f.endsWith(".tsx") || f.endsWith(".js") || f.endsWith(".jsx")
     );
     if (codeFiles.length > 0) {
-      recommendations.push(`${codeFiles.length} new code file(s) not tracked. Consider adding them with \`context file add\`.`);
+      recommendations.push(`${codeFiles.length} new code file(s) not tracked. Consider adding them with \`muninn file add\`.`);
     }
   }
 

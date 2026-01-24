@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Claude Context Engine v3 — Elite Mode
+ * Muninn — Elite Mode
  * Main CLI entry point
  */
 
@@ -29,6 +29,8 @@ import { handleOutcomeCommand, incrementSessionsSince } from "./commands/outcome
 import { handleTemporalCommand, updateFileVelocity, assignSessionNumber } from "./commands/temporal";
 import { handlePredictCommand } from "./commands/predict";
 import { handleInsightsCommand, generateInsights } from "./commands/insights";
+import { handleRelationshipCommand } from "./commands/relationships";
+import { handleConsolidationCommand } from "./commands/consolidation";
 import { outputSuccess } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -37,7 +39,7 @@ import { join } from "path";
 // Help Text
 // ============================================================================
 
-const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
+const HELP_TEXT = `Muninn — Elite Mode
 
 🧠 Intelligence Commands:
   check <files...>            Pre-edit warnings (fragility, issues, staleness)
@@ -167,7 +169,7 @@ const HELP_TEXT = `Claude Context Engine v3 — Elite Mode
   db errors [N]               Show recent errors (default 20)
   db optimize                 Run WAL checkpoint and optimize
 
-Run 'context <command> --help' for more information on a command.
+Run 'muninn <command> --help' for more information on a command.
 `;
 
 // ============================================================================
@@ -189,7 +191,7 @@ async function main(): Promise<void> {
   if (command === "init") {
     const db = initProjectDb(process.cwd());
     const projectId = ensureProject(db);
-    console.error(`✅ Context initialized for ${process.cwd()}`);
+    console.error(`✅ Muninn initialized for ${process.cwd()}`);
     outputSuccess({
       projectId,
       dbPath: join(process.cwd(), LOCAL_DB_DIR, LOCAL_DB_NAME),
@@ -223,7 +225,7 @@ async function main(): Promise<void> {
       } else if (subCmd === "list") {
         patternList();
       } else {
-        console.error("Usage: context pattern <add|search|list>");
+        console.error("Usage: muninn pattern <add|search|list>");
       }
     } finally {
       closeAll();
@@ -242,7 +244,7 @@ async function main(): Promise<void> {
     } else if (subCmd === "resolve") {
       debtResolve(parseInt(subArgs[1]));
     } else {
-      console.error("Usage: context debt <list|add|resolve>");
+      console.error("Usage: muninn debt <list|add|resolve>");
     }
     closeAll();
     return;
@@ -300,7 +302,7 @@ async function main(): Promise<void> {
             fileList(db, projectId, subArgs[1]);
             break;
           default:
-            console.error("Usage: context file <add|get|list> [args]");
+            console.error("Usage: muninn file <add|get|list> [args]");
         }
         break;
 
@@ -315,7 +317,7 @@ async function main(): Promise<void> {
             decisionList(db, projectId);
             break;
           default:
-            console.error("Usage: context decision <add|list> [args]");
+            console.error("Usage: muninn decision <add|list> [args]");
         }
         break;
 
@@ -333,7 +335,7 @@ async function main(): Promise<void> {
             issueList(db, projectId, subArgs[1]);
             break;
           default:
-            console.error("Usage: context issue <add|resolve|list> [args]");
+            console.error("Usage: muninn issue <add|resolve|list> [args]");
         }
         break;
 
@@ -348,7 +350,7 @@ async function main(): Promise<void> {
             learnList(db, projectId);
             break;
           default:
-            console.error("Usage: context learn <add|list> [args]");
+            console.error("Usage: muninn learn <add|list> [args]");
         }
         break;
 
@@ -386,6 +388,22 @@ async function main(): Promise<void> {
 
       case "insights":
         handleInsightsCommand(db, projectId, subArgs);
+        break;
+
+      case "relate":
+        handleRelationshipCommand(db, ["add", ...subArgs]);
+        break;
+
+      case "relations":
+        handleRelationshipCommand(db, ["list", ...subArgs]);
+        break;
+
+      case "unrelate":
+        handleRelationshipCommand(db, ["remove", ...subArgs]);
+        break;
+
+      case "consolidate":
+        await handleConsolidationCommand(db, projectId, subArgs);
         break;
 
       case "session":
@@ -426,7 +444,7 @@ async function main(): Promise<void> {
             handleCorrelationCommand(db, projectId, subArgs.slice(1));
             break;
           default:
-            console.error("Usage: context session <start|end|last|list|correlations> [args]");
+            console.error("Usage: muninn session <start|end|last|list|correlations> [args]");
         }
         break;
 
@@ -468,7 +486,7 @@ async function main(): Promise<void> {
       // Intelligence commands
       case "check":
         if (subArgs.length === 0) {
-          console.error("Usage: context check <file1> [file2] ...");
+          console.error("Usage: muninn check <file1> [file2] ...");
         } else {
           checkFiles(db, projectId, process.cwd(), subArgs);
         }
@@ -476,7 +494,7 @@ async function main(): Promise<void> {
 
       case "impact":
         if (subArgs.length === 0) {
-          console.error("Usage: context impact <file>");
+          console.error("Usage: muninn impact <file>");
         } else {
           analyzeImpact(db, projectId, process.cwd(), subArgs[0]);
         }
@@ -493,7 +511,7 @@ async function main(): Promise<void> {
 
       case "conflicts":
         if (subArgs.length === 0) {
-          console.error("Usage: context conflicts <file1> [file2] ...");
+          console.error("Usage: muninn conflicts <file1> [file2] ...");
         } else {
           checkConflicts(db, projectId, process.cwd(), subArgs);
         }
@@ -519,7 +537,7 @@ async function main(): Promise<void> {
         } else if (subArgs.length > 0 && !subArgs[0].startsWith("--")) {
           showDependencies(db, projectId, process.cwd(), subArgs[0]);
         } else {
-          console.error("Usage: context deps <file> | --refresh | --graph [file] | --cycles");
+          console.error("Usage: muninn deps <file> | --refresh | --graph [file] | --cycles");
         }
         break;
 
@@ -532,7 +550,7 @@ async function main(): Promise<void> {
         } else if (subArgs.length > 0 && !subArgs[0].startsWith("--")) {
           showBlastRadius(db, projectId, process.cwd(), subArgs[0]);
         } else {
-          console.error("Usage: context blast <file> | --refresh | --high");
+          console.error("Usage: muninn blast <file> | --refresh | --high");
         }
         break;
 
@@ -638,7 +656,7 @@ async function main(): Promise<void> {
           }
 
           default:
-            console.error("Usage: context db <check|version|migrate|errors|optimize>");
+            console.error("Usage: muninn db <check|version|migrate|errors|optimize>");
         }
         break;
 
@@ -651,7 +669,7 @@ async function main(): Promise<void> {
             const thresholdIdx = subArgs.indexOf("--threshold");
             const threshold = thresholdIdx !== -1 ? parseInt(subArgs[thresholdIdx + 1]) : 7;
             if (hookFiles.length === 0) {
-              console.error("Usage: context hook check <file1> [file2] [--threshold N]");
+              console.error("Usage: muninn hook check <file1> [file2] [--threshold N]");
               process.exit(1);
             }
             hookCheck(db, projectId, process.cwd(), hookFiles, threshold);
@@ -662,7 +680,7 @@ async function main(): Promise<void> {
             break;
           case "post-edit":
             if (!subArgs[1]) {
-              console.error("Usage: context hook post-edit <file>");
+              console.error("Usage: muninn hook post-edit <file>");
               process.exit(1);
             }
             hookPostEdit(db, projectId, subArgs[1]);
@@ -671,10 +689,34 @@ async function main(): Promise<void> {
             hookBrain(db, projectId, process.cwd());
             break;
           default:
-            console.error("Usage: context hook <check|init|post-edit|brain>");
+            console.error("Usage: muninn hook <check|init|post-edit|brain>");
             process.exit(1);
         }
         break;
+
+      case "dashboard": {
+        const portIdx = subArgs.indexOf("--port");
+        const port = portIdx !== -1 ? parseInt(subArgs[portIdx + 1], 10) : 3333;
+        const shouldOpen = subArgs.includes("--open");
+
+        const { createApp } = await import("./web-server");
+        const app = createApp();
+
+        console.error(`\n🌌 Muninn Dashboard`);
+        console.error(`   http://localhost:${port}\n`);
+
+        Bun.serve({ fetch: app.fetch, port });
+
+        if (shouldOpen) {
+          const { exec } = await import("child_process");
+          const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+          exec(`${openCmd} http://localhost:${port}`);
+        }
+
+        // Keep the process running
+        await new Promise(() => {});
+        break;
+      }
 
       default:
         console.log(HELP_TEXT);

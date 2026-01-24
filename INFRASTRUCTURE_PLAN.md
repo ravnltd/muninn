@@ -1,4 +1,4 @@
-# Claude Context Engine - Infrastructure Expansion Plan
+# Muninn - Infrastructure Expansion Plan
 
 ## Vision
 Run a software business from a phone on a yacht in a fjord. Complete infrastructure awareness + cross-server context sync.
@@ -385,7 +385,7 @@ Deploying api to hetzner...
 ```
 
 ### Simple Web Dashboard
-- Single HTML page served by `context infra serve`
+- Single HTML page served by `muninn infra serve`
 - Real-time health status
 - One-click deploy/rollback buttons
 - Works on mobile
@@ -407,8 +407,8 @@ Deploying api to hetzner...
 8. [ ] Route management
 
 ### Week 3: Intelligence
-9. [ ] `context infra map` - topology visualization
-10. [ ] `context infra scan` - auto-discover services
+9. [ ] `muninn infra map` - topology visualization
+10. [ ] `muninn infra scan` - auto-discover services
 11. [ ] AI-powered status brief
 12. [ ] Dependency analysis
 
@@ -419,7 +419,7 @@ Deploying api to hetzner...
 16. [ ] Test from multiple locations
 
 ### Week 5: Polish
-17. [ ] `context infra incident` AI troubleshooting
+17. [ ] `muninn infra incident` AI troubleshooting
 18. [ ] Mobile web dashboard
 19. [ ] Telegram bot (optional)
 20. [ ] Documentation

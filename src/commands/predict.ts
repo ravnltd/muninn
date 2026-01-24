@@ -298,7 +298,7 @@ export function handlePredictCommand(db: Database, projectId: number, args: stri
   const task = taskParts.join(' ') || undefined;
 
   if (!task && files.length === 0) {
-    console.error("Usage: context predict <task description> [--files file1 file2 ...]");
+    console.error("Usage: muninn predict <task description> [--files file1 file2 ...]");
     return;
   }
 

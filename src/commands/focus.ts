@@ -43,7 +43,7 @@ export function focusSet(
   const { area, description, files, keywords } = options;
 
   if (!area) {
-    console.error("Usage: context focus set --area <area>");
+    console.error("Usage: muninn focus set --area <area>");
     console.error("Options:");
     console.error("  --description <text>   What you're working on");
     console.error("  --files <json>         JSON array of file patterns to prioritize");
@@ -255,7 +255,7 @@ export function handleFocusCommand(
     default:
       // If no subcommand, treat as "get" or "set" based on args
       if (!subCmd || subCmd === "-h" || subCmd === "--help") {
-        console.error("Usage: context focus <set|get|clear|list>");
+        console.error("Usage: muninn focus <set|get|clear|list>");
         console.error("");
         console.error("Commands:");
         console.error("  set --area <area>     Set current focus area");

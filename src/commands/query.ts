@@ -23,7 +23,7 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
   const queryTerms = args.filter(a => !a.startsWith("--")).join(" ");
 
   if (!queryTerms) {
-    console.error("Usage: context query <text> [--smart] [--vector] [--fts] [--brief]");
+    console.error("Usage: muninn query <text> [--smart] [--vector] [--fts] [--brief]");
     console.error("");
     console.error("Options:");
     console.error("  --smart    Use Claude re-ranking for better relevance");
@@ -104,7 +104,7 @@ async function performSemanticQuery(
 
 function displayQueryResults(results: QueryResult[], brief = false): void {
   if (results.length === 0) {
-    console.error("No results found. Try different search terms or run `context analyze` first.");
+    console.error("No results found. Try different search terms or run `muninn analyze` first.");
     return;
   }
 

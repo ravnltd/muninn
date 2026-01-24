@@ -272,6 +272,6 @@ export function handleTemporalCommand(db: Database, projectId: number, args: str
     }
 
     default:
-      console.error("Usage: context temporal <velocity [file]|anomalies>");
+      console.error("Usage: muninn temporal <velocity [file]|anomalies>");
   }
 }

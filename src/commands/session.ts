@@ -38,7 +38,7 @@ interface ExtractedLearning {
 
 export function sessionStart(db: Database, projectId: number, goal: string): number {
   if (!goal) {
-    exitWithUsage("Usage: context session start <goal>");
+    exitWithUsage("Usage: muninn session start <goal>");
   }
 
   // Decay temperatures on session start
@@ -58,7 +58,7 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
 
   console.error(`\n🚀 Session #${sessionId} started`);
   console.error(`   Goal: ${goal}`);
-  console.error(`\n   When done, run: context session end ${sessionId}`);
+  console.error(`\n   When done, run: muninn session end ${sessionId}`);
   console.error("");
 
   outputSuccess({ sessionId, goal });
@@ -121,7 +121,7 @@ export function sessionEnd(db: Database, sessionId: number, args: string[]): voi
   const { values } = parseSessionEndArgs(args);
 
   if (!sessionId) {
-    exitWithUsage("Usage: context session end <id> [--outcome <text>] [--next <steps>] [--success 0-2]");
+    exitWithUsage("Usage: muninn session end <id> [--outcome <text>] [--next <steps>] [--success 0-2]");
   }
 
   // Verify session exists
@@ -177,7 +177,7 @@ export function sessionLast(db: Database, projectId: number): void {
   `).get(projectId);
 
   if (!session) {
-    console.error("No sessions found. Start one with: context session start <goal>");
+    console.error("No sessions found. Start one with: muninn session start <goal>");
     outputJson({ found: false });
     return;
   }
@@ -194,7 +194,7 @@ export function sessionLast(db: Database, projectId: number): void {
 
   if (isOngoing) {
     console.error(`   Status: IN PROGRESS`);
-    console.error(`\n   End with: context session end ${session.id}`);
+    console.error(`\n   End with: muninn session end ${session.id}`);
   } else {
     if (session.next_steps) {
       console.error(`   Next: ${session.next_steps}`);
@@ -252,7 +252,7 @@ export function generateResume(db: Database, projectId: number): string {
   `).get(projectId);
 
   if (!lastSession) {
-    return "No previous sessions found. Start fresh with `context session start \"Your goal\"`";
+    return "No previous sessions found. Start fresh with `muninn session start \"Your goal\"`";
   }
 
   // Build system primer section
@@ -401,11 +401,11 @@ export function generateResume(db: Database, projectId: number): string {
 
   if (isOngoing) {
     md += `---\n`;
-    md += `Session still in progress. Use \`context session end ${lastSession.id}\` to close it.\n`;
+    md += `Session still in progress. Use \`muninn session end ${lastSession.id}\` to close it.\n`;
   } else {
     const goalPreview = ((lastSession.goal as string) || "previous work").substring(0, 40);
     md += `---\n`;
-    md += `Continue with: \`context session start "Continue: ${goalPreview}"\`\n`;
+    md += `Continue with: \`muninn session start "Continue: ${goalPreview}"\`\n`;
   }
 
   return md;
@@ -1164,15 +1164,15 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   let md = `# Context Intelligence System\n\n`;
 
   md += `## Your Tools (use proactively)\n`;
-  md += `- \`context_predict "task"\` — Bundle all relevant context for a task in one call\n`;
-  md += `- \`context_profile\` — Your developer preferences (coding style, patterns, anti-patterns)\n`;
-  md += `- \`context_check [files]\` — Pre-edit safety check (MANDATORY before editing)\n`;
-  md += `- \`context_query "topic"\` — Search all knowledge (decisions, learnings, issues, files)\n`;
-  md += `- \`context_insights\` — Cross-session pattern insights\n`;
-  md += `- \`context_decisions_due\` — Decisions needing outcome review\n`;
-  md += `- \`context_outcome <id> <status>\` — Record whether a decision worked out\n`;
-  md += `- \`context_observe "note"\` — Record a quick observation (auto-dedupes)\n`;
-  md += `- \`context_focus_set "area"\` — Boost queries toward your current work\n`;
+  md += `- \`muninn_predict "task"\` — Bundle all relevant context for a task in one call\n`;
+  md += `- \`muninn_profile\` — Your developer preferences (coding style, patterns, anti-patterns)\n`;
+  md += `- \`muninn_check [files]\` — Pre-edit safety check (MANDATORY before editing)\n`;
+  md += `- \`muninn_query "topic"\` — Search all knowledge (decisions, learnings, issues, files)\n`;
+  md += `- \`muninn_insights\` — Cross-session pattern insights\n`;
+  md += `- \`muninn_decisions_due\` — Decisions needing outcome review\n`;
+  md += `- \`muninn_outcome <id> <status>\` — Record whether a decision worked out\n`;
+  md += `- \`muninn_observe "note"\` — Record a quick observation (auto-dedupes)\n`;
+  md += `- \`muninn_focus_set "area"\` — Boost queries toward your current work\n`;
   md += `\n`;
 
   // Developer profile top entries

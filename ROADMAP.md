@@ -1,4 +1,4 @@
-# Claude Context Engine — Roadmap
+# Muninn — Roadmap
 
 This document outlines planned features that are not yet implemented. Features are organized by category and priority.
 

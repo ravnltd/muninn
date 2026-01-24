@@ -19,7 +19,7 @@ export async function questionAdd(
   options: { context?: string; priority?: number; sessionId?: number; global?: boolean } = {}
 ): Promise<number> {
   if (!question) {
-    console.error("Usage: context questions add <question> [--priority 1-5] [--context <text>]");
+    console.error("Usage: muninn questions add <question> [--priority 1-5] [--context <text>]");
     process.exit(1);
   }
 
@@ -143,7 +143,7 @@ export function questionResolve(
   status: 'resolved' | 'dropped' = 'resolved'
 ): void {
   if (!id || !resolution) {
-    console.error("Usage: context questions resolve <id> <resolution>");
+    console.error("Usage: muninn questions resolve <id> <resolution>");
     process.exit(1);
   }
 
@@ -244,6 +244,6 @@ export async function handleQuestionsCommand(
     }
 
     default:
-      console.error("Usage: context questions <add|list|resolve|drop> [args]");
+      console.error("Usage: muninn questions <add|list|resolve|drop> [args]");
   }
 }

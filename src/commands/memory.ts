@@ -14,7 +14,7 @@ import { addGlobalLearning, addPattern, searchPatterns, getAllPatterns, listTech
 import {
   generateEmbedding,
   serializeEmbedding,
-  isVoyageAvailable,
+  isEmbeddingAvailable,
   fileToText,
   decisionToText,
   issueToText,
@@ -72,7 +72,7 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
   ]);
 
   // Generate embedding if Voyage API is available
-  if (isVoyageAvailable()) {
+  if (isEmbeddingAvailable()) {
     try {
       const text = fileToText(values.path, values.purpose || null);
       const embedding = await generateEmbedding(text);
@@ -99,7 +99,7 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
 
 export function fileGet(db: Database, projectId: number, path: string): void {
   if (!path) {
-    exitWithUsage("Usage: context file get <path>");
+    exitWithUsage("Usage: muninn file get <path>");
   }
 
   const file = db.query<Record<string, unknown>, [number, string]>(`
@@ -139,7 +139,7 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
   const { values } = parseDecisionArgs(args);
 
   if (!values.title || !values.decision) {
-    exitWithUsage("Usage: context decision add --title <title> --decision <decision> [--reasoning <why>] [--affects <files>]");
+    exitWithUsage("Usage: muninn decision add --title <title> --decision <decision> [--reasoning <why>] [--affects <files>]");
   }
 
   const result = db.run(`
@@ -156,7 +156,7 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
   const insertedId = Number(result.lastInsertRowid);
 
   // Generate embedding if Voyage API is available
-  if (isVoyageAvailable()) {
+  if (isEmbeddingAvailable()) {
     try {
       const text = decisionToText(values.title, values.decision, values.reasoning || null);
       const embedding = await generateEmbedding(text);
@@ -208,7 +208,7 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
   const { values } = parseIssueArgs(args);
 
   if (!values.title) {
-    exitWithUsage("Usage: context issue add --title <title> [--severity 1-10] [--type bug|tech-debt] [--files <files>]");
+    exitWithUsage("Usage: muninn issue add --title <title> [--severity 1-10] [--type bug|tech-debt] [--files <files>]");
   }
 
   const result = db.run(`
@@ -227,7 +227,7 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
   const insertedId = Number(result.lastInsertRowid);
 
   // Generate embedding if Voyage API is available
-  if (isVoyageAvailable()) {
+  if (isEmbeddingAvailable()) {
     try {
       const text = issueToText(values.title, values.description || null, values.workaround || null);
       const embedding = await generateEmbedding(text);
@@ -251,7 +251,7 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
 
 export function issueResolve(db: Database, issueId: number, resolution: string): void {
   if (!issueId || !resolution) {
-    exitWithUsage("Usage: context issue resolve <id> <resolution>");
+    exitWithUsage("Usage: muninn issue resolve <id> <resolution>");
   }
 
   db.run(`
@@ -294,7 +294,7 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
   const { values } = parseLearnArgs(args);
 
   if (!values.title || !values.content) {
-    exitWithUsage("Usage: context learn add --title <title> --content <content> [--category pattern|gotcha] [--global]");
+    exitWithUsage("Usage: muninn learn add --title <title> --content <content> [--category pattern|gotcha] [--global]");
   }
 
   if (values.global) {
@@ -330,7 +330,7 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
     const insertedId = Number(result.lastInsertRowid);
 
     // Generate embedding if Voyage API is available
-    if (isVoyageAvailable()) {
+    if (isEmbeddingAvailable()) {
       try {
         const text = learningToText(values.title, values.content, values.context || null);
         const embedding = await generateEmbedding(text);
@@ -392,7 +392,7 @@ export function patternAdd(_db: Database, args: string[]): void {
   const { values } = parsePatternArgs(args);
 
   if (!values.name || !values.description) {
-    exitWithUsage("Usage: context pattern add --name <name> --description <desc> [--example <code>] [--anti <antipattern>]");
+    exitWithUsage("Usage: muninn pattern add --name <name> --description <desc> [--example <code>] [--anti <antipattern>]");
   }
 
   const globalDb = getGlobalDb();
@@ -405,7 +405,7 @@ export function patternAdd(_db: Database, args: string[]): void {
 
 export function patternSearch(_db: Database, query: string): void {
   if (!query) {
-    exitWithUsage("Usage: context pattern search <query>");
+    exitWithUsage("Usage: muninn pattern search <query>");
   }
 
   const globalDb = getGlobalDb();
@@ -431,7 +431,7 @@ export function patternList(): void {
   closeGlobalDb();
 
   if (patterns.length === 0) {
-    console.error("No patterns recorded. Add one with: context pattern add --name <name> --description <desc>");
+    console.error("No patterns recorded. Add one with: muninn pattern add --name <name> --description <desc>");
   } else {
     console.error("\n💡 Pattern Library:\n");
     for (const p of patterns) {
@@ -451,7 +451,7 @@ export function debtAdd(args: string[]): void {
   const { values } = parseDebtArgs(args);
 
   if (!values.title) {
-    exitWithUsage("Usage: context debt add --title <title> [--severity 1-10] [--effort small|medium|large] [--files <files>]");
+    exitWithUsage("Usage: muninn debt add --title <title> [--severity 1-10] [--effort small|medium|large] [--files <files>]");
   }
 
   const globalDb = getGlobalDb();
@@ -491,7 +491,7 @@ export function debtList(projectOnly: boolean): void {
 
 export function debtResolve(id: number): void {
   if (!id) {
-    exitWithUsage("Usage: context debt resolve <id>");
+    exitWithUsage("Usage: muninn debt resolve <id>");
   }
 
   const globalDb = getGlobalDb();

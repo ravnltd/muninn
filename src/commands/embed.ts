@@ -5,7 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import { outputJson, outputSuccess } from "../utils/format";
-import { getProvider, isVoyageAvailable, generateEmbedding, getDimensions } from "../embeddings";
+import { getProvider, isEmbeddingAvailable, generateEmbedding, getDimensions } from "../embeddings";
 import { getEmbeddingStats, backfillAll, backfillTable } from "../database/queries/vector";
 
 // ============================================================================
@@ -34,7 +34,7 @@ export async function handleEmbedCommand(
       break;
 
     default:
-      console.error(`Usage: context embed <status|backfill|test>
+      console.error(`Usage: muninn embed <status|backfill|test>
 
 Commands:
   status              Show embedding coverage statistics
@@ -50,13 +50,18 @@ Commands:
 
 function showEmbedStatus(db: Database, projectId: number): void {
   const provider = getProvider();
-  const available = isVoyageAvailable();
+  const available = isEmbeddingAvailable();
+  const dimensions = getDimensions();
   const stats = getEmbeddingStats(db, projectId);
 
   console.error("\n📊 Embedding Status\n");
-  console.error(`Provider: ${provider}`);
-  console.error(`API Available: ${available ? "✅ Yes" : "❌ No (VOYAGE_API_KEY not set)"}`);
-  console.error(`Dimensions: ${getDimensions()}`);
+  console.error(`Provider: ${provider} (${dimensions}-dim)`);
+  console.error(`Available: ${available ? "✅ Yes" : "❌ No"}`);
+  if (provider === "local") {
+    console.error(`Model: all-MiniLM-L6-v2 (offline, no API key needed)`);
+  } else {
+    console.error(`Model: voyage-3-lite (cloud, VOYAGE_API_KEY set)`);
+  }
   console.error("");
 
   if (stats.length === 0) {
@@ -84,11 +89,11 @@ function showEmbedStatus(db: Database, projectId: number): void {
 
   console.error("");
 
-  if (!available) {
-    console.error("💡 To enable embeddings, set VOYAGE_API_KEY environment variable.");
-    console.error("   Get your key at: https://dash.voyageai.com/");
-  } else if (stats.some((s) => s.coverage < 100)) {
-    console.error("💡 Run 'context embed backfill' to generate missing embeddings.");
+  if (stats.some((s) => s.coverage < 100)) {
+    console.error("💡 Run 'muninn embed backfill' to generate missing embeddings.");
+  }
+  if (provider === "local") {
+    console.error("💡 Set VOYAGE_API_KEY for higher quality embeddings (512-dim).");
   }
 
   console.error("");
@@ -112,8 +117,8 @@ function createProgressBar(percent: number, width: number): string {
 // ============================================================================
 
 async function runBackfill(db: Database, projectId: number, args: string[]): Promise<void> {
-  if (!isVoyageAvailable()) {
-    console.error("❌ VOYAGE_API_KEY not set. Cannot generate embeddings.");
+  if (!isEmbeddingAvailable()) {
+    console.error("❌ No embedding provider available.");
     process.exit(1);
   }
 
@@ -166,12 +171,12 @@ async function runBackfill(db: Database, projectId: number, args: string[]): Pro
 
 async function testEmbedding(text: string): Promise<void> {
   if (!text) {
-    console.error("Usage: context embed test \"your text here\"");
+    console.error("Usage: muninn embed test \"your text here\"");
     process.exit(1);
   }
 
-  if (!isVoyageAvailable()) {
-    console.error("❌ VOYAGE_API_KEY not set. Cannot test embeddings.");
+  if (!isEmbeddingAvailable()) {
+    console.error("❌ No embedding provider available.");
     process.exit(1);
   }
 

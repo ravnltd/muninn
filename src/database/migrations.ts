@@ -745,6 +745,69 @@ export const MIGRATIONS: Migration[] = [
       ).get();
       return !!exists;
     }
+  },
+  // Version 14: Consolidation & Long Memory
+  {
+    version: 14,
+    name: "consolidation",
+    description: "Add archival columns and consolidation table for long-term memory management",
+    up: `
+      ALTER TABLE files ADD COLUMN archived_at TEXT;
+      ALTER TABLE files ADD COLUMN consolidated_into INTEGER;
+
+      ALTER TABLE decisions ADD COLUMN archived_at TEXT;
+      ALTER TABLE decisions ADD COLUMN consolidated_into INTEGER;
+
+      ALTER TABLE issues ADD COLUMN archived_at TEXT;
+      ALTER TABLE issues ADD COLUMN consolidated_into INTEGER;
+
+      ALTER TABLE learnings ADD COLUMN archived_at TEXT;
+      ALTER TABLE learnings ADD COLUMN consolidated_into INTEGER;
+
+      CREATE TABLE IF NOT EXISTS consolidations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        entity_type TEXT NOT NULL,
+        source_ids TEXT NOT NULL,
+        summary_title TEXT NOT NULL,
+        summary_content TEXT NOT NULL,
+        entity_count INTEGER NOT NULL,
+        confidence REAL DEFAULT 0.8,
+        embedding BLOB,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_consolidations_project ON consolidations(project_id);
+      CREATE INDEX IF NOT EXISTS idx_consolidations_type ON consolidations(entity_type);
+      CREATE INDEX IF NOT EXISTS idx_files_archived ON files(archived_at);
+      CREATE INDEX IF NOT EXISTS idx_decisions_archived ON decisions(archived_at);
+      CREATE INDEX IF NOT EXISTS idx_issues_archived ON issues(archived_at);
+      CREATE INDEX IF NOT EXISTS idx_learnings_archived ON learnings(archived_at);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('consolidation_enabled', 'true');
+    `,
+    validate: (db) => {
+      const exists = db.query<{ name: string }, []>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='consolidations'`
+      ).get();
+      return !!exists;
+    }
+  },
+  // Version 15: Project Rename History
+  {
+    version: 15,
+    name: "project_rename_history",
+    description: "Track previous project paths/names so renames preserve context lineage",
+    up: `
+      ALTER TABLE projects ADD COLUMN previous_paths TEXT DEFAULT '[]';
+    `,
+    validate: (db) => {
+      const col = db.query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('projects') WHERE name = 'previous_paths'`
+      ).get();
+      return !!col;
+    }
   }
 ];
 

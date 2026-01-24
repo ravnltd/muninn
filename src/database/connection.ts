@@ -444,6 +444,34 @@ export function ensureProject(db: Database, projectPath?: string): number {
     return existing.id;
   }
 
+  // Detect project rename: if no match by path, check for a project
+  // with the most data that likely IS this project under an old path.
+  // This DB is project-local (.claude/memory.db inside the project dir),
+  // so any existing project with a stale path is a rename candidate.
+  const renamed = db.query<{ id: number; path: string }, []>(`
+    SELECT p.id, p.path FROM projects p
+    LEFT JOIN files f ON f.project_id = p.id
+    GROUP BY p.id
+    ORDER BY COUNT(f.id) DESC
+    LIMIT 1
+  `).get();
+
+  if (renamed && renamed.path !== path) {
+    // Preserve old path in rename history
+    const prev = db.query<{ previous_paths: string | null }, [number]>(
+      "SELECT previous_paths FROM projects WHERE id = ?"
+    ).get(renamed.id);
+    const history: string[] = prev?.previous_paths ? JSON.parse(prev.previous_paths) : [];
+    if (!history.includes(renamed.path)) {
+      history.push(renamed.path);
+    }
+    db.run(
+      "UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?",
+      [path, name, JSON.stringify(history), renamed.id]
+    );
+    return renamed.id;
+  }
+
   const result = db.run(
     "INSERT INTO projects (path, name) VALUES (?, ?)",
     [path, name]

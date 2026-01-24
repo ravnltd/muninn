@@ -366,7 +366,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
       const insights = listInsights(db, projectId, { status });
 
       if (insights.length === 0) {
-        console.error("No insights yet. Run `context insights generate` to analyze patterns.");
+        console.error("No insights yet. Run `muninn insights generate` to analyze patterns.");
         outputJson([]);
         return;
       }
@@ -386,7 +386,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
     case "acknowledge": {
       const id = parseInt(args[1]);
       if (!id) {
-        console.error("Usage: context insights ack <id>");
+        console.error("Usage: muninn insights ack <id>");
         return;
       }
       acknowledgeInsight(db, id);
@@ -398,7 +398,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
     case "dismiss": {
       const id = parseInt(args[1]);
       if (!id) {
-        console.error("Usage: context insights dismiss <id>");
+        console.error("Usage: muninn insights dismiss <id>");
         return;
       }
       dismissInsight(db, id);
@@ -410,7 +410,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
     case "apply": {
       const id = parseInt(args[1]);
       if (!id) {
-        console.error("Usage: context insights apply <id>");
+        console.error("Usage: muninn insights apply <id>");
         return;
       }
       applyInsight(db, id);
@@ -420,6 +420,6 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
     }
 
     default:
-      console.error("Usage: context insights <list|generate|ack|dismiss|apply> [args]");
+      console.error("Usage: muninn insights <list|generate|ack|dismiss|apply> [args]");
   }
 }

@@ -7,7 +7,7 @@
 import type { Database } from "bun:sqlite";
 import type { QueryResult, GlobalLearning, Pattern } from "../../types";
 import { logError } from "../../utils/errors";
-import { isVoyageAvailable } from "../../embeddings";
+import { isEmbeddingAvailable } from "../../embeddings";
 import { hasEmbeddings, hybridSearch as vectorHybridSearch } from "./vector";
 
 // ============================================================================
@@ -153,7 +153,7 @@ export async function semanticQuery(
   const useVectorSearch =
     mode === 'vector' ||
     mode === 'hybrid' ||
-    (mode === 'auto' && isVoyageAvailable() && projectId && hasEmbeddings(db, projectId));
+    (mode === 'auto' && isEmbeddingAvailable() && projectId && hasEmbeddings(db, projectId));
 
   // If vector mode or hybrid mode with embeddings available, try vector search first
   if (useVectorSearch && projectId) {
@@ -208,7 +208,7 @@ function ftsOnlyQuery(
                  bm25(fts_files) as relevance
           FROM fts_files
           JOIN files f ON fts_files.rowid = f.id
-          WHERE fts_files MATCH ?1 AND f.project_id = ?2
+          WHERE fts_files MATCH ?1 AND f.project_id = ?2 AND f.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `)
@@ -217,7 +217,7 @@ function ftsOnlyQuery(
                  bm25(fts_files) as relevance
           FROM fts_files
           JOIN files f ON fts_files.rowid = f.id
-          WHERE fts_files MATCH ?1
+          WHERE fts_files MATCH ?1 AND f.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `);
@@ -245,7 +245,7 @@ function ftsOnlyQuery(
                  bm25(fts_decisions) as relevance
           FROM fts_decisions
           JOIN decisions d ON fts_decisions.rowid = d.id
-          WHERE fts_decisions MATCH ?1 AND d.project_id = ?2
+          WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `)
@@ -254,7 +254,7 @@ function ftsOnlyQuery(
                  bm25(fts_decisions) as relevance
           FROM fts_decisions
           JOIN decisions d ON fts_decisions.rowid = d.id
-          WHERE fts_decisions MATCH ?1
+          WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `);
@@ -282,7 +282,7 @@ function ftsOnlyQuery(
                  bm25(fts_issues) as relevance
           FROM fts_issues
           JOIN issues i ON fts_issues.rowid = i.id
-          WHERE fts_issues MATCH ?1 AND i.project_id = ?2
+          WHERE fts_issues MATCH ?1 AND i.project_id = ?2 AND i.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `)
@@ -291,7 +291,7 @@ function ftsOnlyQuery(
                  bm25(fts_issues) as relevance
           FROM fts_issues
           JOIN issues i ON fts_issues.rowid = i.id
-          WHERE fts_issues MATCH ?1
+          WHERE fts_issues MATCH ?1 AND i.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `);
@@ -319,7 +319,7 @@ function ftsOnlyQuery(
                  bm25(fts_learnings) as relevance
           FROM fts_learnings
           JOIN learnings l ON fts_learnings.rowid = l.id
-          WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL)
+          WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `)
@@ -328,7 +328,7 @@ function ftsOnlyQuery(
                  bm25(fts_learnings) as relevance
           FROM fts_learnings
           JOIN learnings l ON fts_learnings.rowid = l.id
-          WHERE fts_learnings MATCH ?1
+          WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5
         `);

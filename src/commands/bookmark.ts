@@ -47,7 +47,7 @@ export function bookmarkAdd(
   const { label, content, source, contentType, priority, tags } = options;
 
   if (!label || !content) {
-    console.error("Usage: context bookmark add --label <label> --content <content>");
+    console.error("Usage: muninn bookmark add --label <label> --content <content>");
     console.error("Options:");
     console.error("  --source <src>      Source reference (e.g., 'file:path:lines')");
     console.error("  --type <type>       Content type: text, code, json, markdown");
@@ -90,7 +90,7 @@ export function bookmarkGet(
   label: string
 ): Bookmark | null {
   if (!label) {
-    console.error("Usage: context bookmark get <label>");
+    console.error("Usage: muninn bookmark get <label>");
     process.exit(1);
   }
 
@@ -159,7 +159,7 @@ export function bookmarkDelete(
   label: string
 ): boolean {
   if (!label) {
-    console.error("Usage: context bookmark delete <label>");
+    console.error("Usage: muninn bookmark delete <label>");
     process.exit(1);
   }
 
@@ -253,7 +253,7 @@ export function handleBookmarkCommand(
       break;
 
     default:
-      console.error("Usage: context bookmark <add|get|list|delete|clear>");
+      console.error("Usage: muninn bookmark <add|get|list|delete|clear>");
       console.error("");
       console.error("Commands:");
       console.error("  add --label <l> --content <c>  Save a bookmark");

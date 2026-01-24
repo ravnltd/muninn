@@ -47,6 +47,8 @@ export const files = sqliteTable("files", {
   velocityScore: real("velocity_score").default(0.0),
   changeCount: integer("change_count").default(0),
   firstChangedAt: text("first_changed_at"),
+  archivedAt: text("archived_at"),
+  consolidatedInto: integer("consolidated_into"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -56,6 +58,7 @@ export const files = sqliteTable("files", {
   index("idx_files_fragility").on(table.fragility),
   index("idx_files_project_fragility").on(table.projectId, table.fragility),
   uniqueIndex("idx_files_project_path").on(table.projectId, table.path),
+  index("idx_files_archived").on(table.archivedAt),
 ]);
 
 export const symbols = sqliteTable("symbols", {
@@ -102,11 +105,14 @@ export const decisions = sqliteTable("decisions", {
   outcomeAt: text("outcome_at"),
   checkAfterSessions: integer("check_after_sessions").default(5),
   sessionsSince: integer("sessions_since").default(0),
+  archivedAt: text("archived_at"),
+  consolidatedInto: integer("consolidated_into"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_decisions_project").on(table.projectId),
   index("idx_decisions_status").on(table.status),
   index("idx_decisions_project_status").on(table.projectId, table.status),
+  index("idx_decisions_archived").on(table.archivedAt),
 ]);
 
 export const issues = sqliteTable("issues", {
@@ -125,6 +131,8 @@ export const issues = sqliteTable("issues", {
   embedding: blob("embedding"),
   temperature: text("temperature").default("cold"),
   lastReferencedAt: text("last_referenced_at"),
+  archivedAt: text("archived_at"),
+  consolidatedInto: integer("consolidated_into"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -133,6 +141,7 @@ export const issues = sqliteTable("issues", {
   index("idx_issues_type").on(table.type),
   index("idx_issues_severity").on(table.severity),
   index("idx_issues_project_status").on(table.projectId, table.status),
+  index("idx_issues_archived").on(table.archivedAt),
 ]);
 
 export const sessions = sqliteTable("sessions", {
@@ -173,12 +182,15 @@ export const learnings = sqliteTable("learnings", {
   embedding: blob("embedding"),
   temperature: text("temperature").default("cold"),
   lastReferencedAt: text("last_referenced_at"),
+  archivedAt: text("archived_at"),
+  consolidatedInto: integer("consolidated_into"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   index("idx_learnings_project").on(table.projectId),
   index("idx_learnings_category").on(table.category),
   index("idx_learnings_applied").on(table.timesApplied, table.confidence),
+  index("idx_learnings_archived").on(table.archivedAt),
 ]);
 
 export const relationships = sqliteTable("relationships", {
@@ -223,6 +235,26 @@ export const modeTransitions = sqliteTable("mode_transitions", {
 }, (table) => [
   index("idx_mode_transitions_project").on(table.projectId),
   index("idx_mode_transitions_time").on(table.transitionedAt),
+]);
+
+// ============================================================================
+// CONSOLIDATION TABLES
+// ============================================================================
+
+export const consolidations = sqliteTable("consolidations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  projectId: integer("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  entityType: text("entity_type").notNull(),
+  sourceIds: text("source_ids").notNull(), // JSON array of consolidated entity IDs
+  summaryTitle: text("summary_title").notNull(),
+  summaryContent: text("summary_content").notNull(),
+  entityCount: integer("entity_count").notNull(),
+  confidence: real("confidence").default(0.8),
+  embedding: blob("embedding"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_consolidations_project").on(table.projectId),
+  index("idx_consolidations_type").on(table.entityType),
 ]);
 
 // ============================================================================

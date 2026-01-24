@@ -439,7 +439,7 @@ export async function handleChunkCommand(
     case 'find': {
       const query = args.slice(1).filter(a => !a.startsWith('-')).join(' ');
       if (!query) {
-        console.error('Usage: context chunk search <query>');
+        console.error('Usage: muninn chunk search <query>');
         process.exit(1);
       }
 
@@ -466,7 +466,7 @@ export async function handleChunkCommand(
     case 'file': {
       const filePath = args[1];
       if (!filePath) {
-        console.error('Usage: context chunk file <path>');
+        console.error('Usage: muninn chunk file <path>');
         process.exit(1);
       }
 
@@ -499,7 +499,7 @@ export async function handleChunkCommand(
     }
 
     default:
-      console.error('Usage: context chunk <command>');
+      console.error('Usage: muninn chunk <command>');
       console.error('');
       console.error('Commands:');
       console.error('  run [--no-embeddings] [-v]   Chunk all code files');
