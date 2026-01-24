@@ -236,6 +236,12 @@ muninn query "how does error handling work" --vector
 
 The goal: your AI assistant operates like a senior engineer who's been on the project for years.
 
+## Contributing
+
+Issues and bug reports welcome.
+Feature requests: open an issue first.
+PRs: not accepting at this time.
+
 ## License
 
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free to use, modify, and share for any noncommercial purpose. Commercial use requires a separate license from [Ravn Ltd](https://råven.com).
