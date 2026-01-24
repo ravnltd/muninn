@@ -281,7 +281,7 @@ export const MIGRATIONS: Migration[] = [
     }
   },
 
-  // Version 7: Claude Intelligence System v2 - Decision Entanglement, Intent Preservation, Project Modes
+  // Version 7: Intelligence System v2 - Decision Entanglement, Intent Preservation, Project Modes
   {
     version: 7,
     name: "intelligence_v2",

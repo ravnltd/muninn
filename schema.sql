@@ -1,4 +1,4 @@
--- Claude Context Memory System
+-- Muninn Memory System
 -- SQLite database schema
 -- Location: ~/.claude/memory.db (global) or .claude/memory.db (per-project)
 
@@ -9,7 +9,7 @@ PRAGMA foreign_keys = ON;
 -- CORE TABLES
 -- ============================================================================
 
--- Projects Claude has worked on
+-- Projects Muninn has worked on
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT UNIQUE NOT NULL,              -- /opt/projects/myapp
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Files Claude knows about
+-- Files Muninn knows about
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS files (
     UNIQUE(project_id, path)
 );
 
--- Functions/Components Claude has learned about
+-- Functions/Components Muninn has learned about
 CREATE TABLE IF NOT EXISTS symbols (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     decisions_made TEXT,                    -- JSON array of decision IDs
     issues_found TEXT,                      -- JSON array of issue IDs
     issues_resolved TEXT,                   -- JSON array of issue IDs
-    learnings TEXT,                         -- What Claude learned
+    learnings TEXT,                         -- What the AI learned
     next_steps TEXT,                        -- What should happen next
     success INTEGER                         -- 0 = failed, 1 = partial, 2 = success
 );
@@ -542,7 +542,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     version TEXT NOT NULL,                   -- git sha or semver
     previous_version TEXT,
-    deployed_by TEXT,                        -- user, ci, claude
+    deployed_by TEXT,                        -- user, ci, muninn
     deploy_method TEXT,                      -- manual, git-pull, docker, ci
     status TEXT DEFAULT 'pending',           -- pending, in_progress, success, failed, rolled_back
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -645,8 +645,8 @@ LEFT JOIN servers srv2 ON s2.server_id = srv2.id;
 -- SESSION WORKING MEMORY TABLES
 -- ============================================================================
 
--- Bookmarks: Session-scoped working memory for Claude
--- Allows Claude to "set aside" context and recall it later without keeping it in context window
+-- Bookmarks: Session-scoped working memory
+-- Allows the AI to "set aside" context and recall it later without keeping it in context window
 CREATE TABLE IF NOT EXISTS bookmarks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
@@ -667,7 +667,7 @@ CREATE INDEX IF NOT EXISTS idx_bookmarks_project ON bookmarks(project_id);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_label ON bookmarks(label);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_priority ON bookmarks(priority);
 
--- Focus: Tell Claude what area you're working in
+-- Focus: Set the current work area to prioritize related results
 -- Queries automatically prioritize results from the focus area
 CREATE TABLE IF NOT EXISTS focus (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

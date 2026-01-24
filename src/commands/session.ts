@@ -761,7 +761,7 @@ export function getTopCorrelations(
 // ============================================================================
 
 /**
- * Extract learnings from a completed session using Claude
+ * Extract learnings from a completed session using LLM
  */
 export async function extractSessionLearnings(
   db: Database,
@@ -786,7 +786,7 @@ export async function extractSessionLearnings(
 
   try {
     const prompt = buildExtractionPrompt(context);
-    const response = await callClaudeForExtraction(keyResult.value, prompt);
+    const response = await callLLMForExtraction(keyResult.value, prompt);
     const learnings = parseExtractedLearnings(response);
 
     // Record the extractions
@@ -865,7 +865,7 @@ Return ONLY a JSON array (no markdown, no explanation):
 If no meaningful learnings, return empty array: []`;
 }
 
-async function callClaudeForExtraction(apiKey: string, prompt: string): Promise<string> {
+async function callLLMForExtraction(apiKey: string, prompt: string): Promise<string> {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -882,7 +882,7 @@ async function callClaudeForExtraction(apiKey: string, prompt: string): Promise<
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Claude API error ${response.status}: ${redactApiKeys(errorText)}`);
+    throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
   }
 
   const data = await response.json() as { content: Array<{ type: string; text: string }> };
@@ -978,7 +978,7 @@ Return ONLY valid JSON (no markdown, no explanation):
   "next_steps": "What to do next (or null)"
 }`;
 
-  const response = await callClaudeForExtraction(apiKey, prompt);
+  const response = await callLLMForExtraction(apiKey, prompt);
   const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
   const jsonStr = jsonMatch ? jsonMatch[1] : response;
   const parsed = JSON.parse(jsonStr.trim());
@@ -1017,7 +1017,7 @@ export async function sessionEndEnhanced(
 
   const filesTouched = safeJsonParse<string[]>(session.files_touched || values.files || "[]", []);
 
-  // If --analyze, read stdin transcript and use Claude to extract structured data
+  // If --analyze, read stdin transcript and use LLM to extract structured data
   let analysisResult: TranscriptAnalysis | null = null;
   if (values.analyze) {
     const keyResult = getApiKey("anthropic");
@@ -1157,7 +1157,7 @@ export function handleCorrelationCommand(
 // ============================================================================
 
 /**
- * Build the system primer section that teaches Claude the available tools
+ * Build the system primer section that teaches the AI the available tools
  * and surfaces the developer profile + active state.
  */
 function buildSystemPrimer(db: Database, projectId: number): string {

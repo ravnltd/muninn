@@ -82,7 +82,7 @@ const HELP_TEXT = `Muninn — Elite Mode
 
 📁 Project Commands:
   init                        Initialize context DB for current project
-  analyze                     Auto-analyze project with Claude API
+  analyze                     Auto-analyze project with LLM API
   status                      Current project state (JSON)
   fragile                     List fragile files
   query <text> [options]      Search context (--smart, --vector, --fts, --brief)

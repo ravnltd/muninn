@@ -1,7 +1,7 @@
 /**
  * Hook commands
  * Optimized for automation with proper exit codes and concise output
- * These commands are designed to be called by Claude Code hooks
+ * These commands are designed to be called by MCP client hooks
  */
 
 import type { Database } from "bun:sqlite";

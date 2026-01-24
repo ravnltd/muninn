@@ -1,10 +1,10 @@
 # Muninn
 
-A semantic memory system for Claude Code. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
+A semantic memory system for AI-assisted development. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
 
 ## How It Works
 
-Every Claude Code session automatically:
+Every session automatically:
 1. Loads context from the last session (via `SessionStart` hook)
 2. Makes 20+ memory tools available as native MCP tools
 3. Tracks file edits and session state (via `PostToolUse` and `Stop` hooks)
@@ -19,7 +19,7 @@ cd /path/to/muninn
 bun run build
 cp muninn ~/.local/bin/
 
-# Register MCP server with Claude Code (user scope = all projects)
+# Register MCP server (user scope = all projects)
 claude mcp add --scope user --transport stdio muninn -- bun run /path/to/muninn/src/mcp-server.ts
 
 # Verify
@@ -30,18 +30,18 @@ claude mcp list
 
 Add to `~/.claude/settings.json` for automatic session management:
 
-- **SessionStart**: Loads resume context, smart status, auto-inits `.context/` database
+- **SessionStart**: Loads resume context, smart status, auto-inits `.claude/` database
 - **PreToolUse**: Checks file fragility before edits
 - **PostToolUse**: Tracks edited files in memory
 - **Stop**: Persists session state on exit
 
-See `~/.claude/hooks/context-integration/` for the hook scripts.
+See `~/.claude/hooks/` for the hook scripts.
 
 ## Architecture
 
 ### Database
 
-Each project gets a `.context/` directory containing a SQLite database with:
+Each project gets a `.claude/` directory containing a SQLite database with:
 - **Files**: Purpose, fragility scores, staleness detection
 - **Decisions**: Architectural choices with reasoning
 - **Issues**: Bugs and problems with workarounds
@@ -58,12 +58,12 @@ Each project gets a `.context/` directory containing a SQLite database with:
 ```
 src/
 ├── index.ts                    # CLI entry point and command router
-├── mcp-server.ts               # MCP server (exposes tools to Claude)
+├── mcp-server.ts               # MCP server (exposes tools via MCP)
 ├── types.ts                    # All interfaces and type definitions
 ├── analysis/
 │   └── chunker.ts              # Semantic code chunking for function-level search
 ├── commands/
-│   ├── analysis.ts             # Project analysis, Claude API integration
+│   ├── analysis.ts             # Project analysis, LLM API integration
 │   ├── blast.ts                # Blast radius computation
 │   ├── bookmark.ts             # Working memory bookmarks
 │   ├── chunk.ts                # Code chunking CLI
@@ -87,8 +87,9 @@ src/
 │       ├── search.ts           # FTS5 search (parameterized)
 │       └── vector.ts           # Vector similarity search
 ├── embeddings/
-│   ├── index.ts                # Embedding orchestration
-│   └── voyage.ts               # Voyage AI embeddings
+│   ├── index.ts                # Embedding provider orchestration
+│   ├── local.ts                # Local Transformers.js embeddings
+│   └── voyage.ts               # Voyage AI embeddings (cloud)
 └── utils/
     ├── api-keys.ts             # API key management
     ├── errors.ts               # Result types, error logging
@@ -98,7 +99,7 @@ src/
 
 ## MCP Tools
 
-Once registered, Claude has these native tools:
+Once registered, these tools are available:
 
 ### Status & Intelligence
 
@@ -176,7 +177,7 @@ muninn fragile                     # List fragile files
 # Search
 muninn query "authentication"      # FTS search
 muninn query "auth" --vector       # Semantic similarity
-muninn query "auth" --smart        # Claude re-ranked results
+muninn query "auth" --smart        # LLM re-ranked results
 
 # Intelligence
 muninn check src/auth.ts           # Pre-edit warnings
@@ -212,9 +213,10 @@ muninn ship                        # Pre-deploy checklist
 
 ## Vector Search
 
-Semantic search uses [Voyage AI](https://www.voyageai.com/) embeddings. Set `VOYAGE_API_KEY` to enable:
+Semantic search is always available via local [Transformers.js](https://huggingface.co/docs/transformers.js) embeddings (384 dimensions, offline). For higher quality, set a Voyage AI key:
 
 ```bash
+# Optional: use Voyage AI for better embeddings (512 dimensions)
 export VOYAGE_API_KEY=your-key
 
 # Generate embeddings for existing knowledge
@@ -232,8 +234,8 @@ muninn query "how does error handling work" --vector
 4. **Learning** — Build project knowledge over time
 5. **Minimal friction** — Auto-init, auto-session, auto-track
 
-The goal: Claude operates like a senior engineer who's been on the project for years.
+The goal: your AI assistant operates like a senior engineer who's been on the project for years.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free to use, modify, and share for any noncommercial purpose. Commercial use requires a separate license from the author.
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free to use, modify, and share for any noncommercial purpose. Commercial use requires a separate license from [Ravn Ltd](https://råven.com).

@@ -113,8 +113,8 @@ export async function runAnalysis(
   // Determine project type and stack
   const projectInfo = detectProjectType(projectPath);
 
-  // Call Claude for deep analysis
-  const analysis = await analyzeWithClaude(projectInfo, fileContents);
+  // Call LLM for deep analysis
+  const analysis = await analyzeWithLLM(projectInfo, fileContents);
 
   // Store analysis results
   storeAnalysisResults(db, projectId, projectPath, analysis, files);
@@ -168,7 +168,7 @@ function detectProjectType(projectPath: string): { type: string; stack: string[]
   return { type, stack };
 }
 
-async function analyzeWithClaude(
+async function analyzeWithLLM(
   projectInfo: { type: string; stack: string[] },
   fileContents: string[]
 ): Promise<AnalysisResult> {
@@ -258,7 +258,7 @@ Focus on:
     const safeError = error instanceof Error
       ? new Error(redactApiKeys(error.message))
       : error;
-    logError('analyzeWithClaude', safeError);
+    logError('analyzeWithLLM', safeError);
     return {
       project: {
         type: projectInfo.type,

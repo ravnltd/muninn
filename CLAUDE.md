@@ -71,7 +71,7 @@ muninn_learn_add         → Save insights for future sessions
 **Search Modes:**
 - `--fts` — Fast full-text search (know exact term)
 - `--vector` — Semantic similarity (conceptual search)
-- `--smart` — Claude re-ranking (best results)
+- `--smart` — LLM re-ranking (best results)
 - `--brief` — Concise summaries (quick overview)
 
 ### Working Memory

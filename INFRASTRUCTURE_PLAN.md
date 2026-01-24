@@ -1,7 +1,7 @@
 # Muninn - Infrastructure Expansion Plan
 
 ## Vision
-Run a software business from a phone on a yacht in a fjord. Complete infrastructure awareness + cross-server context sync.
+Manage infrastructure from anywhere. Complete infrastructure awareness + cross-server context sync.
 
 ---
 
@@ -141,8 +141,8 @@ CREATE TABLE deployments (
     service_id INTEGER NOT NULL REFERENCES services(id),
     version TEXT NOT NULL,               -- git sha or semver
     previous_version TEXT,
-    deployed_by TEXT,                    -- user, ci, claude
-    deploy_method TEXT,                  -- manual, ci, claude
+    deployed_by TEXT,                    -- user, ci, muninn
+    deploy_method TEXT,                  -- manual, ci, muninn
     status TEXT,                         -- pending, in_progress, success, failed, rolled_back
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     completed_at DATETIME,
@@ -191,19 +191,19 @@ CREATE TABLE secrets_registry (
 
 ### Server Management
 ```bash
-context infra server add prod-1 \
+muninn infra server add prod-1 \
   --ip 192.168.1.10 \
   --role homelab \
   --ssh "user=deploy,port=22,key=~/.ssh/id_ed25519"
 
-context infra server list
-context infra server status [name]       # Check connectivity + basic metrics
-context infra server ssh <name>          # Quick SSH connect
+muninn infra server list
+muninn infra server status [name]       # Check connectivity + basic metrics
+muninn infra server ssh <name>          # Quick SSH connect
 ```
 
 ### Service Management
 ```bash
-context infra service add api \
+muninn infra service add api \
   --server prod-1 \
   --type app \
   --port 3000 \
@@ -211,55 +211,55 @@ context infra service add api \
   --project /opt/apps/api \
   --deploy "cd /opt/apps/api && git pull && bun run build && pm2 restart api"
 
-context infra service list [--server name]
-context infra service status <name>      # Health check + recent logs
-context infra service logs <name> [-f]   # Tail logs
-context infra service restart <name>
+muninn infra service list [--server name]
+muninn infra service status <name>      # Health check + recent logs
+muninn infra service logs <name> [-f]   # Tail logs
+muninn infra service restart <name>
 ```
 
 ### Route Management
 ```bash
-context infra route add api.example.com \
+muninn infra route add api.example.com \
   --service api \
   --ssl letsencrypt
 
-context infra route list
-context infra route check                # Verify all routes resolve correctly
+muninn infra route list
+muninn infra route check                # Verify all routes resolve correctly
 ```
 
 ### Dependency Mapping
 ```bash
-context infra deps <service>             # Show what this service depends on
-context infra deps --reverse <service>   # Show what depends on this service
-context infra map                        # ASCII art or JSON of full topology
-context infra map --mermaid              # Mermaid diagram output
+muninn infra deps <service>             # Show what this service depends on
+muninn infra deps --reverse <service>   # Show what depends on this service
+muninn infra map                        # ASCII art or JSON of full topology
+muninn infra map --mermaid              # Mermaid diagram output
 ```
 
 ### Deployment
 ```bash
-context infra deploy <service>           # Run deploy command
-context infra deploy <service> --version <sha>
-context infra rollback <service>         # Rollback to previous version
-context infra history <service>          # Deployment history
+muninn infra deploy <service>           # Run deploy command
+muninn infra deploy <service> --version <sha>
+muninn infra rollback <service>         # Rollback to previous version
+muninn infra history <service>          # Deployment history
 ```
 
 ### Health & Monitoring
 ```bash
-context infra health                     # Check all services
-context infra health <service>           # Check specific service
-context infra scan                       # Full infrastructure scan (discover services)
-context infra events [--server] [--service] [--since]
+muninn infra health                     # Check all services
+muninn infra health <service>           # Check specific service
+muninn infra scan                       # Full infrastructure scan (discover services)
+muninn infra events [--server] [--service] [--since]
 ```
 
-### Quick Operations (Yacht Mode)
+### Quick Operations (Mobile Mode)
 ```bash
-context infra status                     # One-liner: all servers + services health
-context infra brief                      # AI summary of infrastructure state
-context infra alert                      # Show any active issues
+muninn infra status                      # One-liner: all servers + services health
+muninn infra brief                       # AI summary of infrastructure state
+muninn infra alert                       # Show any active issues
 
-# From phone:
-context infra deploy api                 # Deploy with confidence
-context infra rollback api               # Quick rollback if broken
+# From anywhere:
+muninn infra deploy api                  # Deploy with confidence
+muninn infra rollback api                # Quick rollback if broken
 ```
 
 ---
@@ -325,9 +325,9 @@ function getInfraDb() {
 
 ### Smart Deployment
 ```bash
-context infra deploy api --smart
+muninn infra deploy api --smart
 ```
-Claude analyzes:
+Muninn analyzes:
 - Recent commits since last deploy
 - Dependencies that might be affected
 - Current health of dependent services
@@ -336,7 +336,7 @@ Claude analyzes:
 
 ### Impact Analysis
 ```bash
-context infra impact postgres
+muninn infra impact postgres
 ```
 Shows:
 - All services that depend on postgres
@@ -346,9 +346,9 @@ Shows:
 
 ### Incident Response
 ```bash
-context infra incident "api returning 500s"
+muninn infra incident "api returning 500s"
 ```
-Claude:
+Muninn:
 1. Checks service health
 2. Tails recent logs
 3. Checks recent deployments
@@ -357,7 +357,7 @@ Claude:
 
 ### Cost Optimization
 ```bash
-context infra costs
+muninn infra costs
 ```
 Analyzes:
 - Underutilized servers
@@ -462,23 +462,6 @@ Deploying api to hetzner...
 | Turso | $0/mo | Free tier: 9GB, 500M reads |
 | Domain (optional) | ~$12/yr | For dashboard |
 | **Total** | **~$0-1/mo** | |
-
----
-
-## Questions Before Proceeding
-
-1. **Server access**: Do all 3 servers have SSH access from each other, or is there a bastion/jump host?
-
-2. **Current services**: What services are already running? (rough list helps design the scan feature)
-
-3. **Deployment preference**:
-   - Git pull + build on server?
-   - Docker containers?
-   - Pre-built binaries?
-
-4. **Secrets management**: Currently using .env files, 1Password, Vault, or something else?
-
-5. **Priority**: Start with sync (Turso) or infra commands first?
 
 ---
 

@@ -1,7 +1,7 @@
 /**
  * Bookmark commands
- * Session-scoped working memory for Claude
- * Allows Claude to "set aside" context and recall it later
+ * Session-scoped working memory
+ * Allows the AI to "set aside" context and recall it later
  */
 
 import type { Database } from "bun:sqlite";

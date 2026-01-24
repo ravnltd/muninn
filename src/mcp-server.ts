@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Muninn — MCP Server
- * Exposes muninn commands as native Claude Code tools
+ * Exposes muninn commands as native MCP tools
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -93,7 +93,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             smart: {
               type: "boolean",
-              description: "Use Claude API for intelligent re-ranking (optional)",
+              description: "Use LLM API for intelligent re-ranking (optional)",
             },
             vector: {
               type: "boolean",

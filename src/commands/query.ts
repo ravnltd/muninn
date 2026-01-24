@@ -26,7 +26,7 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
     console.error("Usage: muninn query <text> [--smart] [--vector] [--fts] [--brief]");
     console.error("");
     console.error("Options:");
-    console.error("  --smart    Use Claude re-ranking for better relevance");
+    console.error("  --smart    Use LLM re-ranking for better relevance");
     console.error("  --vector   Use vector similarity search only");
     console.error("  --fts      Use full-text search only (default without embeddings)");
     console.error("  --brief    Return concise summaries instead of full content");
@@ -44,7 +44,7 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
   }
 
   if (useSmartQuery) {
-    console.error("🧠 Using Claude re-ranking for semantic search...\n");
+    console.error("🧠 Using LLM re-ranking for semantic search...\n");
     try {
       const results = await semanticQueryWithReranking(db, queryTerms, projectId);
       displayQueryResults(results, useBrief);
@@ -184,7 +184,7 @@ function getTypeIcon(type: string): string {
 }
 
 // ============================================================================
-// Smart Query with Claude Re-ranking
+// Smart Query with LLM Re-ranking
 // ============================================================================
 
 async function semanticQueryWithReranking(
@@ -199,7 +199,7 @@ async function semanticQueryWithReranking(
     return candidates; // Not enough to rerank
   }
 
-  // Stage 2: Use Claude to rerank
+  // Stage 2: Use LLM to rerank
   try {
     const candidateList = candidates.map((c: QueryResult, i: number) =>
       `[${i}] ${c.type}: ${c.title} - ${c.content?.substring(0, 100) || ""}...`
@@ -215,7 +215,7 @@ ${candidateList}
 Return ONLY a JSON array of indices in order of relevance (most relevant first).
 Example: [3, 0, 2, 1, 4]`;
 
-    const response = await callClaude(prompt, 200);
+    const response = await callLLM(prompt, 200);
     const rankedIndices = parseJsonResponse(response);
 
     if (Array.isArray(rankedIndices)) {
@@ -241,10 +241,10 @@ Example: [3, 0, 2, 1, 4]`;
 }
 
 // ============================================================================
-// Claude API Helper
+// LLM API Helper
 // ============================================================================
 
-async function callClaude(prompt: string, maxTokens: number = 2000): Promise<string> {
+async function callLLM(prompt: string, maxTokens: number = 2000): Promise<string> {
   const keyResult = getApiKey("anthropic");
   if (!keyResult.ok) {
     throw new Error(keyResult.error.message);
@@ -267,7 +267,7 @@ async function callClaude(prompt: string, maxTokens: number = 2000): Promise<str
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Claude API error ${response.status}: ${redactApiKeys(errorText)}`);
+      throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
     }
 
     const data = await response.json() as { content: Array<{ type: string; text: string }> };

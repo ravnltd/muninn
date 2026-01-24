@@ -96,7 +96,7 @@ TypeScript type coverage analysis:
 Generate Vitest tests for a file:
 - Analyze exports and function signatures
 - Generate test stubs with happy path and edge cases
-- Use Claude API for intelligent test generation
+- Use LLM API for intelligent test generation
 
 **Implementation notes:**
 - Requires ANTHROPIC_API_KEY
@@ -110,7 +110,7 @@ AI-powered code review:
 - Refactoring suggestions
 
 **Implementation notes:**
-- Send file content to Claude API
+- Send file content to LLM API
 - Return structured review with line references
 
 ---
@@ -166,7 +166,7 @@ Install git hooks for auto-updates:
 
 **Implementation notes:**
 - Generate hook scripts in `.git/hooks/`
-- Make hooks configurable via `.contextrc`
+- Make hooks configurable via `.muninnrc`
 
 #### `suggest <task>`
 AI suggests files for a task:

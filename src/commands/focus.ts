@@ -1,6 +1,6 @@
 /**
  * Focus commands
- * Tell Claude what area you're working in
+ * Set the current work area to prioritize related results
  * Queries automatically prioritize results from the focus area
  */
 
