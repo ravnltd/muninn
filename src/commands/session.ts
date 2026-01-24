@@ -10,8 +10,9 @@ import { parseSessionEndArgs } from "../utils/validation";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
 import { getOpenQuestionsForResume } from "./questions";
 import { getTopProfileEntries } from "./profile";
-import { getDecisionsDue } from "./outcomes";
-import { listInsights } from "./insights";
+import { getDecisionsDue, incrementSessionsSince } from "./outcomes";
+import { generateInsights, listInsights } from "./insights";
+import { assignSessionNumber, detectAnomalies } from "./temporal";
 
 // ============================================================================
 // Types
@@ -50,6 +51,11 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
 
   const sessionId = Number(result.lastInsertRowid);
 
+  // Fire intelligence on session start
+  assignSessionNumber(db, projectId, sessionId);
+  incrementSessionsSince(db, projectId);
+  generateInsightsIfDue(db, projectId);
+
   console.error(`\n🚀 Session #${sessionId} started`);
   console.error(`   Goal: ${goal}`);
   console.error(`\n   When done, run: context session end ${sessionId}`);
@@ -57,6 +63,54 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
 
   outputSuccess({ sessionId, goal });
   return sessionId;
+}
+
+/**
+ * Check if there's meaningful new data since last insight generation.
+ * Signals: completed sessions, file correlation updates, new decisions.
+ */
+function shouldGenerateInsights(db: Database, projectId: number): boolean {
+  try {
+    const last = db.query<{ generated_at: string | null }, [number]>(
+      `SELECT MAX(generated_at) as generated_at FROM insights WHERE project_id = ?`
+    ).get(projectId);
+
+    // Never generated — bootstrap
+    if (!last?.generated_at) return true;
+
+    const since = last.generated_at;
+
+    // 3+ completed sessions since last generation
+    const sessions = db.query<{ count: number }, [number, string]>(
+      `SELECT COUNT(*) as count FROM sessions
+       WHERE project_id = ? AND ended_at > ?`
+    ).get(projectId, since);
+    if ((sessions?.count ?? 0) >= 3) return true;
+
+    // 5+ correlation updates since last generation
+    const correlations = db.query<{ count: number }, [number, string]>(
+      `SELECT COUNT(*) as count FROM file_correlations
+       WHERE project_id = ? AND last_cochange > ?`
+    ).get(projectId, since);
+    if ((correlations?.count ?? 0) >= 5) return true;
+
+    // 2+ new decisions since last generation
+    const decisions = db.query<{ count: number }, [number, string]>(
+      `SELECT COUNT(*) as count FROM decisions
+       WHERE project_id = ? AND decided_at > ?`
+    ).get(projectId, since);
+    if ((decisions?.count ?? 0) >= 2) return true;
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function generateInsightsIfDue(db: Database, projectId: number): void {
+  if (shouldGenerateInsights(db, projectId)) {
+    generateInsights(db, projectId);
+  }
 }
 
 // ============================================================================
@@ -1159,16 +1213,34 @@ function buildSystemPrimer(db: Database, projectId: number): string {
     }
   } catch { /* temperature column might not exist */ }
 
-  // Decisions due
+  // Decisions due — show titles + age
   const decisionsDue = getDecisionsDue(db, projectId);
   if (decisionsDue.length > 0) {
-    md += `- Decisions due: ${decisionsDue.length}\n`;
+    md += `- Decisions due for review:\n`;
+    for (const d of decisionsDue.slice(0, 3)) {
+      md += `  - "${d.title}" (${d.sessions_since} sessions)\n`;
+    }
+    if (decisionsDue.length > 3) {
+      md += `  - ...and ${decisionsDue.length - 3} more\n`;
+    }
   }
 
-  // Pending insights
+  // Pending insights — show type + content
   const newInsights = listInsights(db, projectId, { status: 'new' });
   if (newInsights.length > 0) {
-    md += `- Pending insights: ${newInsights.length}\n`;
+    md += `- New insights:\n`;
+    for (const i of newInsights.slice(0, 3)) {
+      md += `  - [${i.type}] ${i.title}: ${i.content.slice(0, 80)}\n`;
+    }
+    if (newInsights.length > 3) {
+      md += `  - ...and ${newInsights.length - 3} more\n`;
+    }
+  }
+
+  // Velocity anomalies — hot-changing files
+  const anomalies = detectAnomalies(db, projectId);
+  if (anomalies.length > 0) {
+    md += `- Velocity anomalies: ${anomalies.map(a => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(', ')}\n`;
   }
 
   // Open questions count
