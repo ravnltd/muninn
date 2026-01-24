@@ -239,3 +239,7 @@ The goal: your AI assistant operates like a senior engineer who's been on the pr
 ## License
 
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free to use, modify, and share for any noncommercial purpose. Commercial use requires a separate license from [Ravn Ltd](https://råven.com).
+
+---
+
+Built in collaboration with [Claude Code](https://github.com/anthropics/claude-code).
