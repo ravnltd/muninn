@@ -169,7 +169,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
       {
         name: "muninn_predict",
-        description: "Bundle all context for a task: files, co-changers, decisions, issues, learnings.",
+        description: "Bundle all context for a task: files, co-changers, decisions, issues, learnings. Uses FTS (keyword matching).",
         inputSchema: {
           type: "object",
           properties: {
@@ -178,6 +178,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             cwd: { type: "string", description: "Working directory" },
           },
           required: [],
+        },
+      },
+
+      {
+        name: "muninn_suggest",
+        description: "Suggest files for a task using semantic search. Finds conceptually related files (e.g., 'fix auth bug' finds login, session, token files).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task: { type: "string", description: "Task description to find relevant files" },
+            limit: { type: "number", description: "Max results (default: 10)" },
+            includeSymbols: { type: "boolean", description: "Also search functions/classes" },
+            cwd: { type: "string", description: "Working directory" },
+          },
+          required: ["task"],
         },
       },
 
@@ -350,6 +365,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         let cmd = "predict";
         if (task) cmd += ` "${task.replace(/"/g, '\\"')}"`;
         if (files && files.length > 0) cmd += ` --files ${files.join(" ")}`;
+        result = runContext(cmd, cwd);
+        break;
+      }
+
+      case "muninn_suggest": {
+        const task = typedArgs.task as string;
+        if (!task) throw new Error("Task description required");
+        const limit = typedArgs.limit as number | undefined;
+        const includeSymbols = typedArgs.includeSymbols as boolean | undefined;
+        let cmd = `suggest "${task.replace(/"/g, '\\"')}"`;
+        if (limit) cmd += ` --limit ${limit}`;
+        if (includeSymbols) cmd += " --symbols";
         result = runContext(cmd, cwd);
         break;
       }

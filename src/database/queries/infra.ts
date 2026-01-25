@@ -7,7 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { DrizzleDb } from "../connection";
 import { servers, services, routes, infraEvents } from "../schema";
 import type {

@@ -1043,7 +1043,7 @@ function getStdinContent(): string {
 async function analyzeTranscript(
   apiKey: string,
   transcript: string,
-  goal: string,
+  _goal: string,
   files: string[]
 ): Promise<TranscriptAnalysis> {
   const prompt = `Analyze this coding session transcript and extract what was done.

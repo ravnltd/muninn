@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 export default defineConfig({
-  plugins: [svelte({ compilerOptions: { generate: "client" } })],
+  plugins: [svelte({ compilerOptions: { generate: "client" } as Record<string, unknown> })],
   resolve: {
     conditions: ["browser", "module", "import"],
   },

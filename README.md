@@ -6,7 +6,7 @@ A semantic memory system for AI-assisted development. Persistent, queryable proj
 
 Every session automatically:
 1. Loads context from the last session (via `SessionStart` hook)
-2. Makes 9 MCP tools available (8 core + 1 passthrough for full CLI access)
+2. Makes 10 MCP tools available (9 core + 1 passthrough for full CLI access)
 3. Tracks file edits and session state (via `PostToolUse` and `Stop` hooks)
 
 Projects are auto-initialized on first session — no manual setup required.
@@ -18,7 +18,7 @@ Projects are auto-initialized on first session — no manual setup required.
 curl -fsSL https://bun.sh/install | bash
 
 # Clone and build
-git clone https://github.com/your-repo/muninn.git
+git clone https://github.com/ravnltd/muninn.git
 cd muninn
 bun run build
 
@@ -64,7 +64,7 @@ Each project gets a `.claude/` directory containing a SQLite database with:
 ```
 src/
 ├── index.ts                    # CLI entry point and command router
-├── mcp-server.ts               # MCP server (9 tools: 8 core + 1 passthrough)
+├── mcp-server.ts               # MCP server (10 tools: 9 core + 1 passthrough)
 ├── types.ts                    # All interfaces and type definitions
 ├── commands/                   # All CLI commands
 ├── database/                   # SQLite connection, migrations, queries
@@ -87,7 +87,8 @@ Once registered, these tools are available:
 | `muninn_learn_add` | Save learnings for future sessions |
 | `muninn_issue` | Add or resolve issues (action: add/resolve) |
 | `muninn_session` | Start or end sessions (action: start/end) |
-| `muninn_predict` | Bundle all context for a task |
+| `muninn_predict` | Bundle all context for a task (FTS/keyword matching) |
+| `muninn_suggest` | Suggest files for a task (semantic/embedding search) |
 
 ### Passthrough Tool
 
@@ -127,6 +128,8 @@ muninn impact src/types.ts         # Blast radius
 muninn ss                          # Smart status
 muninn drift                       # Knowledge staleness
 muninn resume                      # Last session summary
+muninn predict "fix auth bug"      # FTS-based context bundle
+muninn suggest "fix auth bug"      # Semantic file suggestions
 
 # Dependencies
 muninn deps src/index.ts           # Show imports/dependents

@@ -71,7 +71,7 @@ muninn_learn_add         → Save insights for future sessions
 
 ## Tools (Optimized)
 
-### 8 Core Tools (Full Schemas)
+### 9 Core Tools (Full Schemas)
 | Tool | Purpose |
 |------|---------|
 | `muninn_query` | Search project memory (FTS/vector/smart) |
@@ -81,7 +81,8 @@ muninn_learn_add         → Save insights for future sessions
 | `muninn_learn_add` | Save learnings for future sessions |
 | `muninn_issue` | Add or resolve issues (action: add/resolve) |
 | `muninn_session` | Start or end sessions (action: start/end) |
-| `muninn_predict` | Bundle all context for a task |
+| `muninn_predict` | Bundle context for a task (FTS/keyword matching) |
+| `muninn_suggest` | Suggest files for a task (semantic/embedding search) |
 
 ### Passthrough Tool
 For everything else, use the `muninn` passthrough:
@@ -108,6 +109,8 @@ muninn "debt add --title X --severity 5 --effort medium"
 | Know exact term | `muninn_query "term"` with fts: true |
 | Conceptual search | `muninn_query "concept"` with vector: true |
 | Need best results | `muninn_query "topic"` with smart: true |
+| Find related files for task | `muninn_suggest "task description"` |
+| Bundle all task context | `muninn_predict "task"` (FTS) + files list |
 
 ### When to Use What
 | Scenario | Tool |
@@ -116,6 +119,7 @@ muninn "debt add --title X --severity 5 --effort medium"
 | REQUIRED ACTIONS shown | Address decisions/insights FIRST |
 | About to edit a file | `muninn_check` (MANDATORY) |
 | Need specific context | `muninn_query` |
+| Find files for a task | `muninn_suggest` (semantic) or `muninn_predict` (FTS) |
 | Made a decision | `muninn_decision_add` |
 | Modified a file | `muninn_file_add` |
 | Learned something | `muninn_learn_add` |

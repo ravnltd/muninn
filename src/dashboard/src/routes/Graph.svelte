@@ -17,7 +17,7 @@
   let showLearnings = $state(true);
   let showIssues = $state(true);
   let showSessions = $state(true);
-  let hideDisconnected = $state(true);
+  let connectOrphans = $state(true); // Connect orphan nodes to nearest neighbors
 
   const NODE_COLORS: Record<string, string> = {
     file: "#06b6d4",
@@ -47,25 +47,48 @@
 
     // First filter by type
     let filteredNodes = data.nodes.filter(n => typeFilters[n.type] ?? true);
-
-    // Find connected node IDs
-    const connectedIds = new Set<string>();
-    for (const edge of data.edges) {
-      connectedIds.add(edge.source);
-      connectedIds.add(edge.target);
-    }
-
-    // Filter out disconnected nodes if toggle is on
-    if (hideDisconnected) {
-      filteredNodes = filteredNodes.filter(n => connectedIds.has(n.id));
-    }
-
     const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
 
     // Filter edges to only include those between filtered nodes
-    const filteredEdges = data.edges.filter(
-      e => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)
-    );
+    // Handle D3's mutation of source/target from strings to objects
+    let filteredEdges = data.edges.filter(e => {
+      const sourceId = typeof e.source === 'string' ? e.source : (e.source as any).id;
+      const targetId = typeof e.target === 'string' ? e.target : (e.target as any).id;
+      return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
+    });
+
+    // Find connected node IDs
+    const connectedIds = new Set<string>();
+    for (const edge of filteredEdges) {
+      const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as any).id;
+      const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as any).id;
+      connectedIds.add(sourceId);
+      connectedIds.add(targetId);
+    }
+
+    // Connect orphan nodes to their nearest type-neighbor
+    if (connectOrphans) {
+      const orphanNodes = filteredNodes.filter(n => !connectedIds.has(n.id));
+
+      for (const orphan of orphanNodes) {
+        // Find a connected node of the same type, or any connected node
+        let target = filteredNodes.find(n => n.type === orphan.type && connectedIds.has(n.id));
+        if (!target) {
+          target = filteredNodes.find(n => connectedIds.has(n.id));
+        }
+
+        if (target) {
+          // Create a weak virtual edge
+          filteredEdges.push({
+            source: orphan.id,
+            target: target.id,
+            type: "virtual",
+            strength: 1,
+          } as GraphEdge);
+          connectedIds.add(orphan.id);
+        }
+      }
+    }
 
     return { nodes: filteredNodes, edges: filteredEdges };
   }
@@ -123,7 +146,7 @@
   $effect(() => {
     if (graphData) {
       // Access filter states to trigger reactivity
-      void [showFiles, showDecisions, showLearnings, showIssues, showSessions, hideDisconnected];
+      void [showFiles, showDecisions, showLearnings, showIssues, showSessions, connectOrphans];
       renderGraph(getFilteredData(graphData));
     }
   });
@@ -133,6 +156,22 @@
 
     // Dynamic import of D3
     const d3 = await import("d3");
+
+    // Calculate connection count for each node (for sizing)
+    const connectionCounts = new Map<string, number>();
+    for (const edge of data.edges) {
+      const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as any).id;
+      const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as any).id;
+      connectionCounts.set(sourceId, (connectionCounts.get(sourceId) || 0) + 1);
+      connectionCounts.set(targetId, (connectionCounts.get(targetId) || 0) + 1);
+    }
+
+    // Helper to calculate node radius (capped to prevent huge nodes)
+    const getNodeRadius = (nodeId: string) => {
+      const connections = connectionCounts.get(nodeId) || 0;
+      // Base 6, grows with sqrt, max 35
+      return Math.min(35, 6 + Math.sqrt(connections) * 2);
+    };
 
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -158,26 +197,41 @@
 
     // Setup simulation
     const simulation = d3.forceSimulation(data.nodes as any)
-      .force("link", d3.forceLink(data.edges).id((d: any) => d.id).distance(80))
-      .force("charge", d3.forceManyBody().strength(-200))
+      .force("link", d3.forceLink(data.edges)
+        .id((d: any) => d.id)
+        .distance((d: any) => {
+          if (d.type === "virtual") return 900;
+          return 450;
+        })
+        .strength((d: any) => d.type === "virtual" ? 0.02 : 0.1)
+      )
+      .force("charge", d3.forceManyBody()
+        .strength(-600)
+      )
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius(25));
+      .force("collision", d3.forceCollide()
+        .radius((d: any) => getNodeRadius(d.id) + 150)
+        .strength(1)
+      )
+      .force("x", d3.forceX(width / 2).strength(0.008))
+      .force("y", d3.forceY(height / 2).strength(0.008));
 
     // Draw edges
     const link = g.append("g")
       .selectAll("line")
       .data(data.edges)
       .join("line")
-      .attr("stroke", "#1e3a5f")
-      .attr("stroke-opacity", 0.6)
-      .attr("stroke-width", (d: GraphEdge) => Math.max(1, d.strength / 3));
+      .attr("stroke", (d: GraphEdge) => d.type === "virtual" ? "#334155" : "#4a90a4")
+      .attr("stroke-opacity", (d: GraphEdge) => d.type === "virtual" ? 0.3 : 0.6)
+      .attr("stroke-width", (d: GraphEdge) => d.type === "virtual" ? 1 : Math.max(1, d.strength / 3))
+      .attr("stroke-dasharray", (d: GraphEdge) => d.type === "virtual" ? "3,3" : "none");
 
     // Draw nodes
     const node = g.append("g")
       .selectAll("circle")
       .data(data.nodes)
       .join("circle")
-      .attr("r", (d: GraphNode) => Math.max(6, d.size))
+      .attr("r", (d: GraphNode) => getNodeRadius(d.id))
       .attr("fill", (d: GraphNode) => NODE_COLORS[d.type] || "#64748b")
       .attr("stroke", (d: GraphNode) => highlightedNodes.has(d.id) ? "#fff" : "#0a0e1a")
       .attr("stroke-width", (d: GraphNode) => highlightedNodes.has(d.id) ? 3 : 1.5)
@@ -206,11 +260,12 @@
       .selectAll("text")
       .data(data.nodes)
       .join("text")
-      .text((d: GraphNode) => d.label.length > 20 ? d.label.substring(0, 20) + "..." : d.label)
-      .attr("font-size", "10px")
-      .attr("fill", "#94a3b8")
-      .attr("dx", 12)
-      .attr("dy", 4);
+      .text((d: GraphNode) => d.label.length > 30 ? d.label.substring(0, 30) + "..." : d.label)
+      .attr("font-size", "14px")
+      .attr("font-weight", "500")
+      .attr("fill", "#e2e8f0")
+      .attr("dx", 16)
+      .attr("dy", 5);
 
     simulation.on("tick", () => {
       link
@@ -271,9 +326,9 @@
         <span class="filter-dot" style="background: {NODE_COLORS.session}"></span>
         Sessions
       </label>
-      <label class="filter-checkbox hide-disconnected">
-        <input type="checkbox" bind:checked={hideDisconnected} />
-        Hide disconnected
+      <label class="filter-checkbox connect-orphans" title="Connect isolated nodes to the main graph">
+        <input type="checkbox" bind:checked={connectOrphans} />
+        Connect orphans
       </label>
     </div>
   </div>
@@ -386,7 +441,7 @@
     cursor: pointer;
   }
 
-  .filter-checkbox.hide-disconnected {
+  .filter-checkbox.connect-orphans {
     margin-left: auto;
     padding-left: 1rem;
     border-left: 1px solid var(--border-subtle);

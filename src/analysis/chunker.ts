@@ -211,7 +211,7 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
 /**
  * Match the start of a code chunk
  */
-function matchChunkStart(line: string, lineNum: number, comment: string): Partial<CodeChunk> | null {
+function matchChunkStart(line: string, lineNum: number, _comment: string): Partial<CodeChunk> | null {
   // Exported function
   let match = line.match(/^export\s+(async\s+)?function\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?/);
   if (match) {

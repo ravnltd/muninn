@@ -506,6 +506,16 @@ function syncProjectToGlobal(projectPath: string, projectName: string): void {
 
   try {
     const globalDb = getGlobalDb();
+
+    // Skip if this path is a subdirectory of an existing project
+    const parentProject = globalDb.query<{ path: string }, [string]>(
+      "SELECT path FROM projects WHERE ? LIKE path || '/%'"
+    ).get(projectPath);
+    if (parentProject) {
+      syncedProjects.add(projectPath); // Don't check again
+      return;
+    }
+
     const existing = globalDb.query<{ id: number; name: string }, [string]>(
       "SELECT id, name FROM projects WHERE path = ?"
     ).get(projectPath);

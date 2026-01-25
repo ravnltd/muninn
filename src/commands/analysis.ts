@@ -11,7 +11,7 @@ import { outputJson, computeContentHash, getFileMtime, formatBrief } from "../ut
 import { logError, safeJsonParse } from "../utils/errors";
 import { getGlobalDb, closeGlobalDb } from "../database/connection";
 import { ELITE_STACK } from "../types";
-import { getApiKey, redactApiKeys, isApiKeyAvailable } from "../utils/api-keys";
+import { getApiKey, redactApiKeys } from "../utils/api-keys";
 
 // ============================================================================
 // Constants
@@ -32,14 +32,21 @@ const IGNORE_DIRS = new Set([
   ".claude", ".vscode", ".idea", "coverage",
 ]);
 
-const MAX_FILE_SIZE = 100 * 1024; // 100KB
+const MAX_FILE_SIZE = 500 * 1024; // 500KB - files larger than this are skipped with warning
+const CHUNK_SIZE = 8000; // ~8KB chunks for LLM context (balances detail vs token usage)
 
 // ============================================================================
 // File Discovery
 // ============================================================================
 
-export function discoverFiles(projectPath: string, maxFiles: number = 100): DiscoveredFile[] {
+interface DiscoveryResult {
+  files: DiscoveredFile[];
+  skippedLargeFiles: { path: string; size: number }[];
+}
+
+export function discoverFiles(projectPath: string, maxFiles: number = 100): DiscoveryResult {
   const files: DiscoveredFile[] = [];
+  const skippedLargeFiles: { path: string; size: number }[] = [];
 
   function walk(dir: string, depth: number = 0): void {
     if (depth > 10 || files.length >= maxFiles) return;
@@ -56,9 +63,17 @@ export function discoverFiles(projectPath: string, maxFiles: number = 100): Disc
 
         if (stat.isDirectory()) {
           walk(fullPath, depth + 1);
-        } else if (stat.isFile() && stat.size < MAX_FILE_SIZE) {
+        } else if (stat.isFile()) {
           const ext = extname(entry);
           const relativePath = fullPath.replace(projectPath + "/", "");
+
+          // Skip files larger than MAX_FILE_SIZE with warning
+          if (stat.size > MAX_FILE_SIZE) {
+            if (CODE_EXTENSIONS.has(ext)) {
+              skippedLargeFiles.push({ path: relativePath, size: stat.size });
+            }
+            continue;
+          }
 
           let fileType: DiscoveredFile['type'] = 'other';
           if (CODE_EXTENSIONS.has(ext)) {
@@ -82,12 +97,34 @@ export function discoverFiles(projectPath: string, maxFiles: number = 100): Disc
   }
 
   walk(projectPath);
-  return files;
+  return { files, skippedLargeFiles };
 }
 
 // ============================================================================
 // Project Analysis
 // ============================================================================
+
+/**
+ * Chunk a large file into smaller pieces for analysis
+ * Returns array of chunks with position info
+ */
+function chunkFileContent(content: string, filePath: string): string[] {
+  if (content.length <= CHUNK_SIZE) {
+    return [`=== ${filePath} ===\n${content}`];
+  }
+
+  const chunks: string[] = [];
+  const totalChunks = Math.ceil(content.length / CHUNK_SIZE);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, content.length);
+    const chunkContent = content.slice(start, end);
+    chunks.push(`=== ${filePath} (chunk ${i + 1}/${totalChunks}) ===\n${chunkContent}`);
+  }
+
+  return chunks;
+}
 
 export async function runAnalysis(
   db: Database,
@@ -96,18 +133,35 @@ export async function runAnalysis(
 ): Promise<AnalysisResult> {
   console.error("🔍 Analyzing project...\n");
 
-  const files = discoverFiles(projectPath, 100);
+  const { files, skippedLargeFiles } = discoverFiles(projectPath, 100);
   console.error(`Found ${files.length} files to analyze\n`);
 
-  // Read file contents for analysis
+  // Warn about skipped large files
+  if (skippedLargeFiles.length > 0) {
+    console.error(`⚠️  Skipped ${skippedLargeFiles.length} file(s) exceeding 500KB limit:`);
+    for (const { path, size } of skippedLargeFiles) {
+      console.error(`   - ${path} (${Math.round(size / 1024)}KB)`);
+    }
+    console.error("");
+  }
+
+  // Read and chunk file contents for analysis
   const fileContents: string[] = [];
+  let totalChunks = 0;
+
   for (const file of files.filter(f => f.type === 'code').slice(0, 30)) {
     try {
       const content = readFileSync(join(projectPath, file.path), 'utf-8');
-      fileContents.push(`=== ${file.path} ===\n${content.substring(0, 2000)}`);
+      const chunks = chunkFileContent(content, file.path);
+      fileContents.push(...chunks);
+      totalChunks += chunks.length;
     } catch {
       // Skip unreadable files
     }
+  }
+
+  if (totalChunks > files.filter(f => f.type === 'code').length) {
+    console.error(`📄 Processing ${totalChunks} chunks from ${files.filter(f => f.type === 'code').length} code files\n`);
   }
 
   // Determine project type and stack

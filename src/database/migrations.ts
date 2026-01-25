@@ -108,7 +108,7 @@ export const MIGRATIONS: Migration[] = [
       // Verify core tables exist
       const tables = ['projects', 'files', 'decisions', 'issues', 'sessions', 'learnings'];
       for (const table of tables) {
-        const exists = db.query<{ name: string }, []>(
+        const exists = db.query<{ name: string }, [string]>(
           `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
         ).get(table);
         if (!exists) return false;
@@ -987,12 +987,6 @@ const REQUIRED_PROJECT_TABLES = [
   'blast_radius', 'blast_summary',
   'observations', 'open_questions', 'workflow_patterns',
   'developer_profile', 'insights'
-];
-
-// Tables that exist in global database only
-const GLOBAL_ONLY_TABLES = [
-  'servers', 'services', 'routes', 'service_deps', 'deployments', 'infra_events',
-  'security_findings', 'quality_metrics', 'performance_findings'
 ];
 
 // Combined for reference

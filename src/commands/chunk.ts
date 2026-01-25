@@ -6,10 +6,10 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { join, relative } from "path";
-import { parseFile, chunkToSearchText, type CodeChunk, type ChunkResult } from "../analysis/chunker";
-import { embed, embedBatch, isAvailable as isEmbeddingAvailable } from "../embeddings/voyage";
+import { parseFile, chunkToSearchText, type CodeChunk } from "../analysis/chunker";
+import { embedBatch, isAvailable as isEmbeddingAvailable } from "../embeddings/voyage";
 import { outputJson } from "../utils/format";
 import { logError } from "../utils/errors";
 
@@ -23,17 +23,6 @@ interface ChunkStats {
   chunksStored: number;
   embeddingsGenerated: number;
   errors: string[];
-}
-
-interface StoredSymbol {
-  id: number;
-  file_id: number;
-  name: string;
-  type: string;
-  signature: string;
-  purpose: string | null;
-  start_line: number;
-  end_line: number;
 }
 
 // ============================================================================
@@ -352,7 +341,7 @@ export function searchSymbols(
     signature: string;
     purpose: string | null;
     file: string;
-  }, [string, number, number]>(
+  }, [number, string, number]>(
     `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file
      FROM fts_symbols fts
      JOIN symbols s ON fts.rowid = s.id

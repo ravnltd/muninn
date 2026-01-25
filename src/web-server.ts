@@ -100,7 +100,9 @@ function openDb(path: string, readonly = true): Database {
 // Schema-tolerant query helper
 // ============================================================================
 
-function safeQuery<T>(db: Database, query: string, fallbackQuery: string, params: unknown[]): T[] {
+type SQLParam = string | number | boolean | null | Uint8Array;
+
+function safeQuery<T>(db: Database, query: string, fallbackQuery: string, params: SQLParam[]): T[] {
   try {
     return db.query(query).all(...params) as T[];
   } catch {
@@ -108,7 +110,7 @@ function safeQuery<T>(db: Database, query: string, fallbackQuery: string, params
   }
 }
 
-function safeQueryGet<T>(db: Database, query: string, fallbackQuery: string, params: unknown[]): T | null {
+function safeQueryGet<T>(db: Database, query: string, fallbackQuery: string, params: SQLParam[]): T | null {
   try {
     return db.query(query).get(...params) as T | null;
   } catch {
@@ -128,14 +130,6 @@ export function createApp(dbPath?: string): Hono {
   // Global DB for project listing
   function getGlobalDb(): Database {
     return openDb(dbPath || getGlobalDbPath());
-  }
-
-  // Project-specific DB for detail queries
-  function getProjectDb(projectPath: string): Database {
-    const projectDbPath = getProjectDbPath(projectPath);
-    if (projectDbPath) return openDb(projectDbPath);
-    // Fall back to global DB if no project-local DB
-    return getGlobalDb();
   }
 
   // Look up project path and return its DB with the correct local project ID
@@ -605,7 +599,7 @@ if (import.meta.main) {
   const port = parseInt(process.argv[2] || "3334", 10);
   const app = createApp();
 
-  const server = Bun.serve({
+  Bun.serve({
     fetch: app.fetch,
     port,
   });

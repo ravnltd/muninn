@@ -63,8 +63,8 @@ export function getEmbeddingStats(db: Database, projectId: number): EmbeddingSta
 
   for (const table of tables) {
     try {
-      let totalResult: { count: number } | undefined;
-      let withEmbResult: { count: number } | undefined;
+      let totalResult: { count: number } | null;
+      let withEmbResult: { count: number } | null;
 
       // Symbols need special handling - they're linked through files
       if (table === "symbols") {

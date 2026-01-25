@@ -6,7 +6,7 @@
  * If any of these tests fail, static file serving is broken.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import { createApp } from "./web-server";
 
 describe("Static File Serving", () => {
