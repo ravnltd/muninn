@@ -2,6 +2,8 @@
 
 A semantic memory system for AI-assisted development. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
 
+**The more you use it, the smarter it gets** — Muninn learns your codebase patterns, tracks which files change together, remembers what worked (and what didn't), and adapts to your individual coding preferences over time.
+
 ## How It Works
 
 Every session automatically:
@@ -180,6 +182,26 @@ muninn query "how does error handling work" --vector
 5. **Minimal friction** — Auto-init, auto-session, auto-track
 
 The goal: your AI assistant operates like a senior engineer who's been on the project for years.
+
+## Adaptive Intelligence
+
+Muninn gets smarter in two dimensions:
+
+**Per-codebase**: Tracks file correlations (which files change together), fragility patterns, architectural decisions, and recurring issues. After a few sessions, it knows your project's hot spots and can predict what files you'll need to touch.
+
+**Per-developer**: Builds a profile of your coding preferences — error handling style, naming conventions, patterns you favor, anti-patterns you avoid. This profile follows you across projects (stored in `~/.claude/`).
+
+## Compatibility
+
+Muninn uses the [Model Context Protocol](https://modelcontextprotocol.io/), so the MCP server should work with any compatible tool:
+
+- Claude Desktop
+- Cursor
+- Windsurf
+- Continue.dev
+- Any future MCP client
+
+**Note:** Muninn has only been tested with Claude Code. The MCP tools will work elsewhere, but hooks (auto-session management, transcript analysis) are Claude Code specific. In other tools, you'll need to manually call `muninn session start/end`.
 
 ## Contributing
 
