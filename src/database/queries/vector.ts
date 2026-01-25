@@ -4,16 +4,16 @@
  */
 
 import type { Database } from "bun:sqlite";
-import type { QueryResult, QueryResultType } from "../../types";
+import { reheatEntity } from "../../commands/consolidation";
 import {
   cosineSimilarity,
   deserializeEmbedding,
-  serializeEmbedding,
   generateEmbedding,
   generateEmbeddings,
   isEmbeddingAvailable,
+  serializeEmbedding,
 } from "../../embeddings";
-import { reheatEntity } from "../../commands/consolidation";
+import type { QueryResult, QueryResultType } from "../../types";
 import { logError } from "../../utils/errors";
 
 // ============================================================================
@@ -68,19 +68,25 @@ export function getEmbeddingStats(db: Database, projectId: number): EmbeddingSta
 
       // Symbols need special handling - they're linked through files
       if (table === "symbols") {
-        totalResult = db.query<{ count: number }, [number]>(
-          `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ?`
-        ).get(projectId);
-        withEmbResult = db.query<{ count: number }, [number]>(
-          `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ? AND s.embedding IS NOT NULL`
-        ).get(projectId);
+        totalResult = db
+          .query<{ count: number }, [number]>(
+            `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ?`
+          )
+          .get(projectId);
+        withEmbResult = db
+          .query<{ count: number }, [number]>(
+            `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ? AND s.embedding IS NOT NULL`
+          )
+          .get(projectId);
       } else {
-        totalResult = db.query<{ count: number }, [number]>(
-          `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`
-        ).get(projectId);
-        withEmbResult = db.query<{ count: number }, [number]>(
-          `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ? AND embedding IS NOT NULL`
-        ).get(projectId);
+        totalResult = db
+          .query<{ count: number }, [number]>(`SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`)
+          .get(projectId);
+        withEmbResult = db
+          .query<{ count: number }, [number]>(
+            `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ? AND embedding IS NOT NULL`
+          )
+          .get(projectId);
       }
 
       const total = totalResult?.count ?? 0;
@@ -115,12 +121,7 @@ export function hasEmbeddings(db: Database, projectId: number): boolean {
 /**
  * Update embedding for a record
  */
-export function updateEmbedding(
-  db: Database,
-  table: string,
-  id: number,
-  embedding: Float32Array
-): void {
+export function updateEmbedding(db: Database, table: string, id: number, embedding: Float32Array): void {
   const blob = serializeEmbedding(embedding);
   db.run(`UPDATE ${table} SET embedding = ? WHERE id = ?`, [blob, id]);
 }
@@ -138,7 +139,11 @@ export async function vectorSearch(
   projectId: number,
   options: { limit?: number; minSimilarity?: number; tables?: string[] } = {}
 ): Promise<VectorSearchResult[]> {
-  const { limit = 10, minSimilarity = 0.3, tables = ["files", "decisions", "issues", "learnings", "symbols"] } = options;
+  const {
+    limit = 10,
+    minSimilarity = 0.3,
+    tables = ["files", "decisions", "issues", "learnings", "symbols"],
+  } = options;
 
   // Generate query embedding
   const queryEmbedding = await generateEmbedding(query);
@@ -155,9 +160,7 @@ export async function vectorSearch(
   }
 
   // Sort by similarity (descending) and limit
-  return results
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, limit);
+  return results.sort((a, b) => b.similarity - a.similarity).slice(0, limit);
 }
 
 /**
@@ -178,19 +181,23 @@ async function searchTable(
     let records: RecordWithEmbedding[];
     const hasArchived = ["files", "decisions", "issues", "learnings"].includes(table);
     if (table === "symbols") {
-      records = db.query<RecordWithEmbedding, [number]>(`
+      records = db
+        .query<RecordWithEmbedding, [number]>(`
         SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding, NULL as archived_at
         FROM symbols s
         JOIN files f ON s.file_id = f.id
         WHERE f.project_id = ? AND s.embedding IS NOT NULL
-      `).all(projectId);
+      `)
+        .all(projectId);
     } else {
       const archivedCol = hasArchived ? ", archived_at" : ", NULL as archived_at";
-      records = db.query<RecordWithEmbedding, [number]>(`
+      records = db
+        .query<RecordWithEmbedding, [number]>(`
         SELECT id, ${titleCol} as title, ${contentCol} as content, embedding${archivedCol}
         FROM ${table}
         WHERE project_id = ? AND embedding IS NOT NULL
-      `).all(projectId);
+      `)
+        .all(projectId);
     }
 
     const results: VectorSearchResult[] = [];
@@ -318,11 +325,7 @@ interface BackfillRecord {
 /**
  * Get records that need embeddings for a table
  */
-export function getRecordsNeedingEmbeddings(
-  db: Database,
-  table: string,
-  projectId: number
-): BackfillRecord[] {
+export function getRecordsNeedingEmbeddings(db: Database, table: string, projectId: number): BackfillRecord[] {
   const { titleCol, contentCol } = getTableMapping(table);
 
   // Build text representation matching the *ToText() functions (trimmed, no trailing spaces)
@@ -351,16 +354,18 @@ export function getRecordsNeedingEmbeddings(
   }
 
   // Learnings, observations, and questions allow NULL project_id (global)
-  const nullableProjectTables = ['learnings', 'observations', 'open_questions'];
+  const nullableProjectTables = ["learnings", "observations", "open_questions"];
   const whereClause = nullableProjectTables.includes(table)
     ? `(project_id = ? OR project_id IS NULL) AND embedding IS NULL`
     : `project_id = ? AND embedding IS NULL`;
 
-  return db.query<BackfillRecord, [number]>(`
+  return db
+    .query<BackfillRecord, [number]>(`
     SELECT id, (${textExpr}) as text
     FROM ${table}
     WHERE ${whereClause}
-  `).all(projectId);
+  `)
+    .all(projectId);
 }
 
 /**

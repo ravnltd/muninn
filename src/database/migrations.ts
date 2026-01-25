@@ -5,10 +5,10 @@
  * Migrations are atomic, tracked, and validated.
  */
 
-import { Database } from "bun:sqlite";
-import { existsSync, appendFileSync, mkdirSync } from "fs";
-import { join } from "path";
-import { Result, ok, err, ContextError } from "../utils/errors";
+import type { Database } from "bun:sqlite";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { ContextError, err, ok, type Result } from "../utils/errors";
 
 // ============================================================================
 // Types
@@ -18,15 +18,15 @@ export interface Migration {
   version: number;
   name: string;
   description: string;
-  up: string;       // SQL to apply
-  down?: string;    // SQL to rollback (optional, not all migrations are reversible)
+  up: string; // SQL to apply
+  down?: string; // SQL to rollback (optional, not all migrations are reversible)
   validate?: (db: Database) => boolean; // Optional validation after migration
 }
 
 export interface MigrationResult {
   version: number;
   name: string;
-  status: 'applied' | 'skipped' | 'failed';
+  status: "applied" | "skipped" | "failed";
   duration_ms: number;
   error?: string;
 }
@@ -56,7 +56,7 @@ function logMigration(
   dbPath: string,
   version: number,
   name: string,
-  status: 'start' | 'success' | 'failed',
+  status: "start" | "success" | "failed",
   error?: string
 ): void {
   const dir = join(process.env.HOME || "~", ".claude");
@@ -65,7 +65,7 @@ function logMigration(
   }
 
   const timestamp = new Date().toISOString();
-  const line = JSON.stringify({ timestamp, dbPath, version, name, status, error }) + "\n";
+  const line = `${JSON.stringify({ timestamp, dbPath, version, name, status, error })}\n`;
 
   try {
     appendFileSync(LOG_PATH, line);
@@ -106,15 +106,15 @@ export const MIGRATIONS: Migration[] = [
     `,
     validate: (db) => {
       // Verify core tables exist
-      const tables = ['projects', 'files', 'decisions', 'issues', 'sessions', 'learnings'];
+      const tables = ["projects", "files", "decisions", "issues", "sessions", "learnings"];
       for (const table of tables) {
-        const exists = db.query<{ name: string }, [string]>(
-          `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
-        ).get(table);
+        const exists = db
+          .query<{ name: string }, [string]>(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+          .get(table);
         if (!exists) return false;
       }
       return true;
-    }
+    },
   },
 
   // Version 2: Add busy timeout and WAL checkpoint settings
@@ -131,11 +131,11 @@ export const MIGRATIONS: Migration[] = [
         ('reliability_version', '2');
     `,
     validate: (db) => {
-      const meta = db.query<{ value: string }, [string]>(
-        `SELECT value FROM _migration_meta WHERE key = ?`
-      ).get('reliability_version');
-      return meta?.value === '2';
-    }
+      const meta = db
+        .query<{ value: string }, [string]>(`SELECT value FROM _migration_meta WHERE key = ?`)
+        .get("reliability_version");
+      return meta?.value === "2";
+    },
   },
 
   // Version 3: Add migration history table for audit trail
@@ -162,11 +162,11 @@ export const MIGRATIONS: Migration[] = [
         (3, 'migration_history', 0);
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='_migration_history'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='_migration_history'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 4: Add error log table
@@ -199,11 +199,11 @@ export const MIGRATIONS: Migration[] = [
       END;
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='_error_log'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='_error_log'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 5: Schema integrity checksums
@@ -224,11 +224,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('checksums_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='_schema_checksums'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='_schema_checksums'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 6: File change correlations and session intelligence
@@ -274,11 +274,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('session_intelligence_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='file_correlations'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='file_correlations'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 7: Intelligence System v2 - Decision Entanglement, Intent Preservation, Project Modes
@@ -368,27 +368,27 @@ export const MIGRATIONS: Migration[] = [
     `,
     validate: (db) => {
       // Check decision_links table exists
-      const linksExist = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='decision_links'`
-      ).get();
+      const linksExist = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='decision_links'`)
+        .get();
 
       // Check mode_transitions table exists
-      const modesExist = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='mode_transitions'`
-      ).get();
+      const modesExist = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='mode_transitions'`)
+        .get();
 
       // Check invariant column exists on decisions
-      const invariantExists = db.query<{ name: string }, []>(
-        `SELECT name FROM pragma_table_info('decisions') WHERE name='invariant'`
-      ).get();
+      const invariantExists = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('decisions') WHERE name='invariant'`)
+        .get();
 
       // Check mode column exists on projects
-      const modeExists = db.query<{ name: string }, []>(
-        `SELECT name FROM pragma_table_info('projects') WHERE name='mode'`
-      ).get();
+      const modeExists = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('projects') WHERE name='mode'`)
+        .get();
 
       return !!linksExist && !!modesExist && !!invariantExists && !!modeExists;
-    }
+    },
   },
 
   // Version 8: Blast Radius Engine - Precomputed transitive dependency impact
@@ -482,17 +482,17 @@ export const MIGRATIONS: Migration[] = [
     `,
     validate: (db) => {
       // Check blast_radius table exists
-      const radiusExists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='blast_radius'`
-      ).get();
+      const radiusExists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='blast_radius'`)
+        .get();
 
       // Check blast_summary table exists
-      const summaryExists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='blast_summary'`
-      ).get();
+      const summaryExists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='blast_summary'`)
+        .get();
 
       return !!radiusExists && !!summaryExists;
-    }
+    },
   },
 
   // Version 9: Continuity & Self-Improvement System
@@ -598,20 +598,20 @@ export const MIGRATIONS: Migration[] = [
         ('temperature_system_enabled', 'true');
     `,
     validate: (db) => {
-      const obsExists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='observations'`
-      ).get();
+      const obsExists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='observations'`)
+        .get();
 
-      const qExists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='open_questions'`
-      ).get();
+      const qExists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='open_questions'`)
+        .get();
 
-      const wfExists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_patterns'`
-      ).get();
+      const wfExists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_patterns'`)
+        .get();
 
       return !!obsExists && !!qExists && !!wfExists;
-    }
+    },
   },
 
   // Version 10: Developer Profile Engine
@@ -656,11 +656,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('developer_profile_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='developer_profile'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='developer_profile'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 11: Outcome Tracking for Decisions
@@ -679,11 +679,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('outcome_tracking_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM pragma_table_info('decisions') WHERE name='outcome_status'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('decisions') WHERE name='outcome_status'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 12: Temporal Intelligence
@@ -704,11 +704,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('temporal_intelligence_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM pragma_table_info('files') WHERE name='velocity_score'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('files') WHERE name='velocity_score'`)
+        .get();
       return !!exists;
-    }
+    },
   },
 
   // Version 13: Active Inference Engine (Insights)
@@ -740,11 +740,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('active_inference_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='insights'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='insights'`)
+        .get();
       return !!exists;
-    }
+    },
   },
   // Version 14: Consolidation & Long Memory
   {
@@ -788,11 +788,11 @@ export const MIGRATIONS: Migration[] = [
       VALUES ('consolidation_enabled', 'true');
     `,
     validate: (db) => {
-      const exists = db.query<{ name: string }, []>(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='consolidations'`
-      ).get();
+      const exists = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='consolidations'`)
+        .get();
       return !!exists;
-    }
+    },
   },
   // Version 15: Project Rename History
   {
@@ -803,11 +803,11 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE projects ADD COLUMN previous_paths TEXT DEFAULT '[]';
     `,
     validate: (db) => {
-      const col = db.query<{ name: string }, []>(
-        `SELECT name FROM pragma_table_info('projects') WHERE name = 'previous_paths'`
-      ).get();
+      const col = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('projects') WHERE name = 'previous_paths'`)
+        .get();
       return !!col;
-    }
+    },
   },
   // Version 16: Insight Auto-Dismiss
   {
@@ -818,12 +818,12 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE insights ADD COLUMN shown_count INTEGER DEFAULT 0;
     `,
     validate: (db) => {
-      const col = db.query<{ name: string }, []>(
-        `SELECT name FROM pragma_table_info('insights') WHERE name = 'shown_count'`
-      ).get();
+      const col = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('insights') WHERE name = 'shown_count'`)
+        .get();
       return !!col;
-    }
-  }
+    },
+  },
 ];
 
 // ============================================================================
@@ -834,9 +834,7 @@ export const MIGRATIONS: Migration[] = [
  * Get current schema version from PRAGMA user_version
  */
 export function getSchemaVersion(db: Database): number {
-  const result = db.query<{ user_version: number }, []>(
-    "PRAGMA user_version"
-  ).get();
+  const result = db.query<{ user_version: number }, []>("PRAGMA user_version").get();
   return result?.user_version ?? 0;
 }
 
@@ -859,7 +857,7 @@ export function getLatestVersion(): number {
  */
 export function getPendingMigrations(db: Database): Migration[] {
   const currentVersion = getSchemaVersion(db);
-  return MIGRATIONS.filter(m => m.version > currentVersion);
+  return MIGRATIONS.filter((m) => m.version > currentVersion);
 }
 
 // ============================================================================
@@ -869,14 +867,10 @@ export function getPendingMigrations(db: Database): Migration[] {
 /**
  * Apply a single migration atomically
  */
-function applyMigration(
-  db: Database,
-  migration: Migration,
-  dbPath: string
-): Result<MigrationResult> {
+function applyMigration(db: Database, migration: Migration, dbPath: string): Result<MigrationResult> {
   const startTime = Date.now();
 
-  logMigration(dbPath, migration.version, migration.name, 'start');
+  logMigration(dbPath, migration.version, migration.name, "start");
 
   try {
     // Run in transaction for atomicity
@@ -896,10 +890,11 @@ function applyMigration(
 
       // Record in history if table exists
       try {
-        db.run(
-          `INSERT OR REPLACE INTO _migration_history (version, name, duration_ms) VALUES (?, ?, ?)`,
-          [migration.version, migration.name, Date.now() - startTime]
-        );
+        db.run(`INSERT OR REPLACE INTO _migration_history (version, name, duration_ms) VALUES (?, ?, ?)`, [
+          migration.version,
+          migration.name,
+          Date.now() - startTime,
+        ]);
       } catch {
         // History table might not exist yet (for early migrations)
       }
@@ -907,39 +902,35 @@ function applyMigration(
       db.exec("COMMIT");
 
       const duration = Date.now() - startTime;
-      logMigration(dbPath, migration.version, migration.name, 'success');
+      logMigration(dbPath, migration.version, migration.name, "success");
 
       return ok({
         version: migration.version,
         name: migration.name,
-        status: 'applied',
-        duration_ms: duration
+        status: "applied",
+        duration_ms: duration,
       });
-
     } catch (error) {
       db.exec("ROLLBACK");
       throw error;
     }
-
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logMigration(dbPath, migration.version, migration.name, 'failed', message);
+    logMigration(dbPath, migration.version, migration.name, "failed", message);
 
-    return err(new ContextError(
-      `Migration ${migration.version} (${migration.name}) failed: ${message}`,
-      'DB_QUERY_ERROR',
-      { version: migration.version, name: migration.name }
-    ));
+    return err(
+      new ContextError(`Migration ${migration.version} (${migration.name}) failed: ${message}`, "DB_QUERY_ERROR", {
+        version: migration.version,
+        name: migration.name,
+      })
+    );
   }
 }
 
 /**
  * Apply all pending migrations
  */
-export function runMigrations(
-  db: Database,
-  dbPath: string = 'unknown'
-): Result<MigrationState> {
+export function runMigrations(db: Database, dbPath: string = "unknown"): Result<MigrationState> {
   const currentVersion = getSchemaVersion(db);
   const pending = getPendingMigrations(db);
   const results: MigrationResult[] = [];
@@ -949,7 +940,7 @@ export function runMigrations(
       current_version: currentVersion,
       latest_version: getLatestVersion(),
       pending_count: 0,
-      applied: []
+      applied: [],
     });
   }
 
@@ -971,7 +962,7 @@ export function runMigrations(
     current_version: getSchemaVersion(db),
     latest_version: getLatestVersion(),
     pending_count: 0,
-    applied: results
+    applied: results,
   });
 }
 
@@ -981,26 +972,40 @@ export function runMigrations(
 
 // Tables required in project databases
 const REQUIRED_PROJECT_TABLES = [
-  'projects', 'files', 'symbols', 'decisions', 'issues',
-  'sessions', 'learnings', 'relationships',
-  'bookmarks', 'focus', 'file_correlations', 'session_learnings',
-  'blast_radius', 'blast_summary',
-  'observations', 'open_questions', 'workflow_patterns',
-  'developer_profile', 'insights'
+  "projects",
+  "files",
+  "symbols",
+  "decisions",
+  "issues",
+  "sessions",
+  "learnings",
+  "relationships",
+  "bookmarks",
+  "focus",
+  "file_correlations",
+  "session_learnings",
+  "blast_radius",
+  "blast_summary",
+  "observations",
+  "open_questions",
+  "workflow_patterns",
+  "developer_profile",
+  "insights",
 ];
 
 // Combined for reference
 const REQUIRED_TABLES = REQUIRED_PROJECT_TABLES;
 
 const REQUIRED_INDEXES = [
-  'idx_files_project', 'idx_files_fragility',
-  'idx_decisions_project', 'idx_issues_project',
-  'idx_sessions_project', 'idx_learnings_project'
+  "idx_files_project",
+  "idx_files_fragility",
+  "idx_decisions_project",
+  "idx_issues_project",
+  "idx_sessions_project",
+  "idx_learnings_project",
 ];
 
-const REQUIRED_FTS_TABLES = [
-  'fts_files', 'fts_symbols', 'fts_decisions', 'fts_issues', 'fts_learnings'
-];
+const REQUIRED_FTS_TABLES = ["fts_files", "fts_symbols", "fts_decisions", "fts_issues", "fts_learnings"];
 
 /**
  * Check database schema integrity
@@ -1013,10 +1018,8 @@ export function checkIntegrity(db: Database): IntegrityCheck {
 
   // Check SQLite integrity
   try {
-    const integrityResult = db.query<{ integrity_check: string }, []>(
-      "PRAGMA integrity_check"
-    ).get();
-    if (integrityResult?.integrity_check !== 'ok') {
+    const integrityResult = db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get();
+    if (integrityResult?.integrity_check !== "ok") {
       issues.push(`SQLite integrity check failed: ${integrityResult?.integrity_check}`);
     }
   } catch (error) {
@@ -1025,9 +1028,9 @@ export function checkIntegrity(db: Database): IntegrityCheck {
 
   // Check required tables
   for (const table of REQUIRED_TABLES) {
-    const exists = db.query<{ name: string }, [string]>(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
-    ).get(table);
+    const exists = db
+      .query<{ name: string }, [string]>(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+      .get(table);
     tables.push({ name: table, exists: !!exists });
     if (!exists) {
       issues.push(`Missing required table: ${table}`);
@@ -1036,9 +1039,9 @@ export function checkIntegrity(db: Database): IntegrityCheck {
 
   // Check FTS tables
   for (const fts of REQUIRED_FTS_TABLES) {
-    const exists = db.query<{ name: string }, [string]>(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
-    ).get(fts);
+    const exists = db
+      .query<{ name: string }, [string]>(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+      .get(fts);
     tables.push({ name: fts, exists: !!exists });
     if (!exists) {
       issues.push(`Missing FTS table: ${fts}`);
@@ -1047,9 +1050,9 @@ export function checkIntegrity(db: Database): IntegrityCheck {
 
   // Check required indexes
   for (const index of REQUIRED_INDEXES) {
-    const exists = db.query<{ name: string }, [string]>(
-      `SELECT name FROM sqlite_master WHERE type='index' AND name=?`
-    ).get(index);
+    const exists = db
+      .query<{ name: string }, [string]>(`SELECT name FROM sqlite_master WHERE type='index' AND name=?`)
+      .get(index);
     indexes.push({ name: index, exists: !!exists });
     if (!exists) {
       issues.push(`Missing required index: ${index}`);
@@ -1057,18 +1060,14 @@ export function checkIntegrity(db: Database): IntegrityCheck {
   }
 
   // Check foreign keys are enabled
-  const fkResult = db.query<{ foreign_keys: number }, []>(
-    "PRAGMA foreign_keys"
-  ).get();
+  const fkResult = db.query<{ foreign_keys: number }, []>("PRAGMA foreign_keys").get();
   if (fkResult?.foreign_keys !== 1) {
-    issues.push('Foreign keys are not enabled');
+    issues.push("Foreign keys are not enabled");
   }
 
   // Check WAL mode
-  const journalResult = db.query<{ journal_mode: string }, []>(
-    "PRAGMA journal_mode"
-  ).get();
-  if (journalResult?.journal_mode !== 'wal') {
+  const journalResult = db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get();
+  if (journalResult?.journal_mode !== "wal") {
     issues.push(`Journal mode is ${journalResult?.journal_mode}, expected WAL`);
   }
 
@@ -1082,7 +1081,7 @@ export function checkIntegrity(db: Database): IntegrityCheck {
     version,
     issues,
     tables,
-    indexes
+    indexes,
   };
 }
 
@@ -1102,12 +1101,15 @@ export function logDbError(
   try {
     const message = error instanceof Error ? error.message : error;
     const stack = error instanceof Error ? error.stack : undefined;
-    const errorCode = error instanceof ContextError ? error.code : 'UNKNOWN_ERROR';
+    const errorCode = error instanceof ContextError ? error.code : "UNKNOWN_ERROR";
 
-    db.run(
-      `INSERT INTO _error_log (source, error_code, message, context, stack) VALUES (?, ?, ?, ?, ?)`,
-      [source, errorCode, message, context ? JSON.stringify(context) : null, stack ?? null]
-    );
+    db.run(`INSERT INTO _error_log (source, error_code, message, context, stack) VALUES (?, ?, ?, ?, ?)`, [
+      source,
+      errorCode,
+      message,
+      context ? JSON.stringify(context) : null,
+      stack ?? null,
+    ]);
   } catch {
     // Silently fail - we're already handling an error
   }
@@ -1127,18 +1129,23 @@ export function getRecentErrors(
   message: string;
 }> {
   try {
-    return db.query<{
-      id: number;
-      timestamp: string;
-      source: string;
-      error_code: string | null;
-      message: string;
-    }, [number]>(
-      `SELECT id, timestamp, source, error_code, message
+    return db
+      .query<
+        {
+          id: number;
+          timestamp: string;
+          source: string;
+          error_code: string | null;
+          message: string;
+        },
+        [number]
+      >(
+        `SELECT id, timestamp, source, error_code, message
        FROM _error_log
        ORDER BY timestamp DESC
        LIMIT ?`
-    ).all(limit);
+      )
+      .all(limit);
   } catch {
     return [];
   }
@@ -1156,8 +1163,8 @@ export function applyReliabilityPragmas(db: Database): void {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000");
-  db.exec("PRAGMA synchronous = NORMAL");  // Good balance of safety and speed
-  db.exec("PRAGMA cache_size = -64000");   // 64MB cache
+  db.exec("PRAGMA synchronous = NORMAL"); // Good balance of safety and speed
+  db.exec("PRAGMA cache_size = -64000"); // 64MB cache
   db.exec("PRAGMA temp_store = MEMORY");
 }
 

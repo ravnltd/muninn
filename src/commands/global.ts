@@ -8,8 +8,8 @@
 
 import type { Database } from "bun:sqlite";
 import { closeAll } from "../database/connection";
-import { patternAdd, patternSearch, patternList, debtList, debtAdd, debtResolve } from "./memory";
 import { showStack } from "./analysis";
+import { debtAdd, debtList, debtResolve, patternAdd, patternList, patternSearch } from "./memory";
 
 /**
  * Handle pattern commands (uses global DB only)
@@ -44,7 +44,7 @@ export function handleDebtCommand(subArgs: string[]): void {
   } else if (subCmd === "add") {
     debtAdd(subArgs.slice(1));
   } else if (subCmd === "resolve") {
-    debtResolve(parseInt(subArgs[1]));
+    debtResolve(parseInt(subArgs[1], 10));
   } else {
     console.error("Usage: muninn debt <list|add|resolve>");
   }

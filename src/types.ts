@@ -7,11 +7,11 @@
 // Server Roles & Status
 // ============================================================================
 
-export type ServerRole = 'production' | 'staging' | 'homelab' | 'development';
-export type ServerStatus = 'online' | 'offline' | 'degraded' | 'unknown';
-export type HealthStatus = 'healthy' | 'unhealthy' | 'degraded' | 'unknown';
-export type ServiceStatus = 'running' | 'stopped' | 'error' | 'unknown';
-export type DeploymentStatus = 'pending' | 'in_progress' | 'success' | 'failed' | 'rolled_back';
+export type ServerRole = "production" | "staging" | "homelab" | "development";
+export type ServerStatus = "online" | "offline" | "degraded" | "unknown";
+export type HealthStatus = "healthy" | "unhealthy" | "degraded" | "unknown";
+export type ServiceStatus = "running" | "stopped" | "error" | "unknown";
+export type DeploymentStatus = "pending" | "in_progress" | "success" | "failed" | "rolled_back";
 
 // ============================================================================
 // Infrastructure Types
@@ -123,7 +123,7 @@ export interface InfraEvent {
   server_id: number | null;
   service_id: number | null;
   event_type: string;
-  severity: 'info' | 'warning' | 'error' | 'critical';
+  severity: "info" | "warning" | "error" | "critical";
   title: string;
   description: string | null;
   metadata: string | null; // JSON object
@@ -153,7 +153,7 @@ export interface InfraStatus {
 // Project Types
 // ============================================================================
 
-export type ProjectMode = 'exploring' | 'building' | 'hardening' | 'shipping' | 'maintaining';
+export type ProjectMode = "exploring" | "building" | "hardening" | "shipping" | "maintaining";
 
 export interface Project {
   id: number;
@@ -161,7 +161,7 @@ export interface Project {
   name: string;
   type: string | null;
   stack: string | null; // JSON array
-  status: 'active' | 'maintenance' | 'archived';
+  status: "active" | "maintenance" | "archived";
   mode: ProjectMode; // Phase awareness for behavior adjustment
   created_at: string;
   updated_at: string;
@@ -188,8 +188,18 @@ export interface ProjectState extends Project {
 // File Types
 // ============================================================================
 
-export type FileType = 'component' | 'route' | 'util' | 'config' | 'schema' | 'service' | 'hook' | 'middleware' | 'test' | 'other';
-export type FileStatus = 'active' | 'deprecated' | 'do-not-touch' | 'generated';
+export type FileType =
+  | "component"
+  | "route"
+  | "util"
+  | "config"
+  | "schema"
+  | "service"
+  | "hook"
+  | "middleware"
+  | "test"
+  | "other";
+export type FileStatus = "active" | "deprecated" | "do-not-touch" | "generated";
 
 export interface FileRecord {
   id: number;
@@ -214,7 +224,7 @@ export interface FileRecord {
 
 export interface DiscoveredFile {
   path: string;
-  type: 'code' | 'config' | 'doc' | 'other';
+  type: "code" | "config" | "doc" | "other";
   size: number;
   content?: string;
 }
@@ -223,7 +233,7 @@ export interface StaleFile {
   path: string;
   lastAnalyzed: string;
   fsModified: string;
-  status: 'stale' | 'outdated' | 'missing';
+  status: "stale" | "outdated" | "missing";
   reason: string;
 }
 
@@ -231,9 +241,9 @@ export interface StaleFile {
 // Decision & Issue Types
 // ============================================================================
 
-export type DecisionStatus = 'active' | 'superseded' | 'reconsidering';
-export type ConstraintType = 'must_hold' | 'should_hold' | 'nice_to_have';
-export type DecisionLinkType = 'depends_on' | 'invalidates' | 'requires_reconsider' | 'supersedes' | 'contradicts';
+export type DecisionStatus = "active" | "superseded" | "reconsidering";
+export type ConstraintType = "must_hold" | "should_hold" | "nice_to_have";
+export type DecisionLinkType = "depends_on" | "invalidates" | "requires_reconsider" | "supersedes" | "contradicts";
 
 export interface Decision {
   id: number;
@@ -272,8 +282,8 @@ export interface DecisionRipple {
   linked_status: DecisionStatus;
 }
 
-export type IssueType = 'bug' | 'tech-debt' | 'enhancement' | 'question' | 'potential';
-export type IssueStatus = 'open' | 'in-progress' | 'resolved' | 'wont-fix';
+export type IssueType = "bug" | "tech-debt" | "enhancement" | "question" | "potential";
+export type IssueStatus = "open" | "in-progress" | "resolved" | "wont-fix";
 
 export interface Issue {
   id: number;
@@ -319,7 +329,7 @@ export interface Session {
 // Learning & Pattern Types
 // ============================================================================
 
-export type LearningCategory = 'pattern' | 'gotcha' | 'preference' | 'convention' | 'architecture';
+export type LearningCategory = "pattern" | "gotcha" | "preference" | "convention" | "architecture";
 
 export interface Learning {
   id: number;
@@ -363,8 +373,8 @@ export interface Pattern {
 // Tech Debt Types
 // ============================================================================
 
-export type DebtEffort = 'small' | 'medium' | 'large';
-export type DebtStatus = 'open' | 'in-progress' | 'resolved';
+export type DebtEffort = "small" | "medium" | "large";
+export type DebtStatus = "open" | "in-progress" | "resolved";
 
 export interface TechDebt {
   id: number;
@@ -382,7 +392,15 @@ export interface TechDebt {
 // Query & Search Types
 // ============================================================================
 
-export type QueryResultType = 'file' | 'decision' | 'issue' | 'learning' | 'global-learning' | 'symbol' | 'observation' | 'question';
+export type QueryResultType =
+  | "file"
+  | "decision"
+  | "issue"
+  | "learning"
+  | "global-learning"
+  | "symbol"
+  | "observation"
+  | "question";
 
 export interface QueryResult {
   type: QueryResultType;
@@ -396,7 +414,7 @@ export interface QueryResult {
 // Vector Search Types
 // ============================================================================
 
-export type EmbeddingProvider = 'voyage' | 'disabled';
+export type EmbeddingProvider = "voyage" | "disabled";
 
 export interface VectorSearchResult {
   id: number;
@@ -469,7 +487,7 @@ export interface AnalysisResult {
 // Ship Checklist Types
 // ============================================================================
 
-export type ShipCheckStatus = 'pass' | 'fail' | 'warn' | 'skip';
+export type ShipCheckStatus = "pass" | "fail" | "warn" | "skip";
 
 export interface ShipCheck {
   name: string;
@@ -481,7 +499,7 @@ export interface ShipCheck {
 // Security Types
 // ============================================================================
 
-export type SecuritySeverity = 'critical' | 'high' | 'medium' | 'low';
+export type SecuritySeverity = "critical" | "high" | "medium" | "low";
 
 export interface SecurityFinding {
   type: string;
@@ -527,7 +545,7 @@ export interface QualityMetrics {
 // Performance Types
 // ============================================================================
 
-export type PerformanceSeverity = 'high' | 'medium' | 'low';
+export type PerformanceSeverity = "high" | "medium" | "low";
 
 export interface PerformanceFinding {
   type: string;
@@ -571,12 +589,12 @@ export interface ImpactResult {
 export interface BlastRadiusEdge {
   id: number;
   project_id: number;
-  source_file: string;       // File being changed
-  affected_file: string;     // File that would be affected
-  distance: number;          // Hops: 1=direct, 2+=transitive
+  source_file: string; // File being changed
+  affected_file: string; // File that would be affected
+  distance: number; // Hops: 1=direct, 2+=transitive
   dependency_path: string | null; // JSON array showing path
-  is_test: number;           // 1 if affected_file is a test
-  is_route: number;          // 1 if affected_file is a route/page
+  is_test: number; // 1 if affected_file is a test
+  is_route: number; // 1 if affected_file is a route/page
   computed_at: string;
 }
 
@@ -585,13 +603,13 @@ export interface BlastSummary {
   id?: number;
   project_id?: number;
   file_path: string;
-  direct_dependents: number;     // Count of distance=1
+  direct_dependents: number; // Count of distance=1
   transitive_dependents: number; // Count of distance>1
-  total_affected: number;        // Total unique affected files
-  max_depth: number;             // Deepest transitive chain
-  affected_tests: number;        // Count of affected test files
-  affected_routes: number;       // Count of affected route files
-  blast_score: number;           // Computed risk score (0-100)
+  total_affected: number; // Total unique affected files
+  max_depth: number; // Deepest transitive chain
+  affected_tests: number; // Count of affected test files
+  affected_routes: number; // Count of affected route files
+  blast_score: number; // Computed risk score (0-100)
   computed_at?: string;
 }
 
@@ -607,13 +625,13 @@ export interface BlastResult {
   }>;
   affectedTests: string[];
   affectedRoutes: string[];
-  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskLevel: "low" | "medium" | "high" | "critical";
 }
 
 /** Blast radius computation options */
 export interface BlastComputeOptions {
-  maxDepth?: number;    // Maximum depth to traverse (default: 10)
-  maxFiles?: number;    // Maximum files to process (default: 500)
+  maxDepth?: number; // Maximum depth to traverse (default: 10)
+  maxFiles?: number; // Maximum files to process (default: 500)
   forceRefresh?: boolean; // Force recomputation even if cached
 }
 
@@ -624,7 +642,7 @@ export interface DriftResult {
   recommendations: string[];
 }
 
-export type ProjectHealth = 'good' | 'attention' | 'critical';
+export type ProjectHealth = "good" | "attention" | "critical";
 
 export interface SmartStatus {
   summary: string;
@@ -659,7 +677,7 @@ export interface CodeReviewResult {
   summary: string;
   score: number;
   issues: Array<{
-    severity: 'critical' | 'high' | 'medium' | 'low';
+    severity: "critical" | "high" | "medium" | "low";
     line: number | null;
     issue: string;
     suggestion: string;
@@ -672,9 +690,9 @@ export interface CodeReviewResult {
 // Continuity & Self-Improvement Types
 // ============================================================================
 
-export type Temperature = 'hot' | 'warm' | 'cold';
+export type Temperature = "hot" | "warm" | "cold";
 
-export type ObservationType = 'pattern' | 'frustration' | 'insight' | 'dropped_thread' | 'preference' | 'behavior';
+export type ObservationType = "pattern" | "frustration" | "insight" | "dropped_thread" | "preference" | "behavior";
 
 export interface Observation {
   id: number;
@@ -687,7 +705,7 @@ export interface Observation {
   created_at: string;
 }
 
-export type QuestionStatus = 'open' | 'resolved' | 'dropped';
+export type QuestionStatus = "open" | "resolved" | "dropped";
 
 export interface OpenQuestion {
   id: number;
@@ -702,14 +720,14 @@ export interface OpenQuestion {
   created_at: string;
 }
 
-export type TaskType = 'code_review' | 'debugging' | 'feature_build' | 'creative' | 'research' | 'refactor';
+export type TaskType = "code_review" | "debugging" | "feature_build" | "creative" | "research" | "refactor";
 
 // ============================================================================
 // Profile Types
 // ============================================================================
 
-export type ProfileCategory = 'coding_style' | 'architecture' | 'tooling' | 'workflow' | 'communication';
-export type ProfileSource = 'inferred' | 'declared' | 'observed';
+export type ProfileCategory = "coding_style" | "architecture" | "tooling" | "workflow" | "communication";
+export type ProfileSource = "inferred" | "declared" | "observed";
 
 export interface DeveloperProfileEntry {
   id: number;
@@ -729,7 +747,7 @@ export interface DeveloperProfileEntry {
 // Outcome Types
 // ============================================================================
 
-export type OutcomeStatus = 'pending' | 'succeeded' | 'failed' | 'revised' | 'unknown';
+export type OutcomeStatus = "pending" | "succeeded" | "failed" | "revised" | "unknown";
 
 // ============================================================================
 // Prediction Types
@@ -760,8 +778,8 @@ export interface PredictionBundle {
 // Insight Types
 // ============================================================================
 
-export type InsightType = 'correlation' | 'anomaly' | 'recommendation' | 'pattern';
-export type InsightStatus = 'new' | 'acknowledged' | 'dismissed' | 'applied';
+export type InsightType = "correlation" | "anomaly" | "recommendation" | "pattern";
+export type InsightStatus = "new" | "acknowledged" | "dismissed" | "applied";
 
 export interface WorkflowPattern {
   id: number;

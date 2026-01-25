@@ -4,32 +4,60 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { join, extname, basename } from "path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import { closeGlobalDb, getGlobalDb } from "../database/connection";
 import type { AnalysisResult, DiscoveredFile } from "../types";
-import { outputJson, computeContentHash, getFileMtime, formatBrief } from "../utils/format";
-import { logError, safeJsonParse } from "../utils/errors";
-import { getGlobalDb, closeGlobalDb } from "../database/connection";
 import { ELITE_STACK } from "../types";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
+import { logError, safeJsonParse } from "../utils/errors";
+import { computeContentHash, formatBrief, getFileMtime, outputJson } from "../utils/format";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const CODE_EXTENSIONS = new Set([
-  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-  ".py", ".go", ".rs", ".java", ".kt",
-  ".vue", ".svelte", ".astro",
-  ".sql", ".graphql", ".prisma",
-  ".css", ".scss", ".less",
-  ".sh", ".bash", ".zsh",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".vue",
+  ".svelte",
+  ".astro",
+  ".sql",
+  ".graphql",
+  ".prisma",
+  ".css",
+  ".scss",
+  ".less",
+  ".sh",
+  ".bash",
+  ".zsh",
 ]);
 
 const IGNORE_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", ".next", ".svelte-kit",
-  "__pycache__", ".pytest_cache", "target", "vendor",
-  ".claude", ".vscode", ".idea", "coverage",
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  ".svelte-kit",
+  "__pycache__",
+  ".pytest_cache",
+  "target",
+  "vendor",
+  ".claude",
+  ".vscode",
+  ".idea",
+  "coverage",
 ]);
 
 const MAX_FILE_SIZE = 500 * 1024; // 500KB - files larger than this are skipped with warning
@@ -65,7 +93,7 @@ export function discoverFiles(projectPath: string, maxFiles: number = 100): Disc
           walk(fullPath, depth + 1);
         } else if (stat.isFile()) {
           const ext = extname(entry);
-          const relativePath = fullPath.replace(projectPath + "/", "");
+          const relativePath = fullPath.replace(`${projectPath}/`, "");
 
           // Skip files larger than MAX_FILE_SIZE with warning
           if (stat.size > MAX_FILE_SIZE) {
@@ -75,13 +103,13 @@ export function discoverFiles(projectPath: string, maxFiles: number = 100): Disc
             continue;
           }
 
-          let fileType: DiscoveredFile['type'] = 'other';
+          let fileType: DiscoveredFile["type"] = "other";
           if (CODE_EXTENSIONS.has(ext)) {
-            fileType = 'code';
-          } else if (['.json', '.yaml', '.yml', '.toml', '.env'].includes(ext)) {
-            fileType = 'config';
-          } else if (['.md', '.mdx', '.txt', '.rst'].includes(ext)) {
-            fileType = 'doc';
+            fileType = "code";
+          } else if ([".json", ".yaml", ".yml", ".toml", ".env"].includes(ext)) {
+            fileType = "config";
+          } else if ([".md", ".mdx", ".txt", ".rst"].includes(ext)) {
+            fileType = "doc";
           }
 
           files.push({
@@ -92,7 +120,7 @@ export function discoverFiles(projectPath: string, maxFiles: number = 100): Disc
         }
       }
     } catch (error) {
-      logError('discoverFiles:walk', error);
+      logError("discoverFiles:walk", error);
     }
   }
 
@@ -126,11 +154,7 @@ function chunkFileContent(content: string, filePath: string): string[] {
   return chunks;
 }
 
-export async function runAnalysis(
-  db: Database,
-  projectId: number,
-  projectPath: string
-): Promise<AnalysisResult> {
+export async function runAnalysis(db: Database, projectId: number, projectPath: string): Promise<AnalysisResult> {
   console.error("🔍 Analyzing project...\n");
 
   const { files, skippedLargeFiles } = discoverFiles(projectPath, 100);
@@ -149,9 +173,9 @@ export async function runAnalysis(
   const fileContents: string[] = [];
   let totalChunks = 0;
 
-  for (const file of files.filter(f => f.type === 'code').slice(0, 30)) {
+  for (const file of files.filter((f) => f.type === "code").slice(0, 30)) {
     try {
-      const content = readFileSync(join(projectPath, file.path), 'utf-8');
+      const content = readFileSync(join(projectPath, file.path), "utf-8");
       const chunks = chunkFileContent(content, file.path);
       fileContents.push(...chunks);
       totalChunks += chunks.length;
@@ -160,8 +184,10 @@ export async function runAnalysis(
     }
   }
 
-  if (totalChunks > files.filter(f => f.type === 'code').length) {
-    console.error(`📄 Processing ${totalChunks} chunks from ${files.filter(f => f.type === 'code').length} code files\n`);
+  if (totalChunks > files.filter((f) => f.type === "code").length) {
+    console.error(
+      `📄 Processing ${totalChunks} chunks from ${files.filter((f) => f.type === "code").length} code files\n`
+    );
   }
 
   // Determine project type and stack
@@ -180,43 +206,56 @@ export async function runAnalysis(
 
 function detectProjectType(projectPath: string): { type: string; stack: string[] } {
   const stack: string[] = [];
-  let type = 'unknown';
+  let type = "unknown";
 
   // Check package.json
   try {
-    const pkgPath = join(projectPath, 'package.json');
+    const pkgPath = join(projectPath, "package.json");
     if (existsSync(pkgPath)) {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
-      if (deps.next) { type = 'next'; stack.push('Next.js'); }
-      else if (deps.svelte) { type = 'svelte'; stack.push('SvelteKit'); }
-      else if (deps.astro) { type = 'astro'; stack.push('Astro'); }
-      else if (deps.react) { type = 'react'; stack.push('React'); }
-      else if (deps.vue) { type = 'vue'; stack.push('Vue'); }
-      else if (deps.express || deps.hono) { type = 'api'; stack.push(deps.hono ? 'Hono' : 'Express'); }
+      if (deps.next) {
+        type = "next";
+        stack.push("Next.js");
+      } else if (deps.svelte) {
+        type = "svelte";
+        stack.push("SvelteKit");
+      } else if (deps.astro) {
+        type = "astro";
+        stack.push("Astro");
+      } else if (deps.react) {
+        type = "react";
+        stack.push("React");
+      } else if (deps.vue) {
+        type = "vue";
+        stack.push("Vue");
+      } else if (deps.express || deps.hono) {
+        type = "api";
+        stack.push(deps.hono ? "Hono" : "Express");
+      }
 
-      if (deps.typescript) stack.push('TypeScript');
-      if (deps.tailwindcss) stack.push('Tailwind');
-      if (deps.drizzle) stack.push('Drizzle');
-      if (deps.prisma) stack.push('Prisma');
-      if (deps.zod) stack.push('Zod');
-      if (deps.vitest) stack.push('Vitest');
+      if (deps.typescript) stack.push("TypeScript");
+      if (deps.tailwindcss) stack.push("Tailwind");
+      if (deps.drizzle) stack.push("Drizzle");
+      if (deps.prisma) stack.push("Prisma");
+      if (deps.zod) stack.push("Zod");
+      if (deps.vitest) stack.push("Vitest");
     }
   } catch {
     // No package.json
   }
 
   // Check go.mod
-  if (existsSync(join(projectPath, 'go.mod'))) {
-    type = 'go';
-    stack.push('Go');
+  if (existsSync(join(projectPath, "go.mod"))) {
+    type = "go";
+    stack.push("Go");
   }
 
   // Check Cargo.toml
-  if (existsSync(join(projectPath, 'Cargo.toml'))) {
-    type = 'rust';
-    stack.push('Rust');
+  if (existsSync(join(projectPath, "Cargo.toml"))) {
+    type = "rust";
+    stack.push("Rust");
   }
 
   return { type, stack };
@@ -235,7 +274,7 @@ async function analyzeWithLLM(
       project: {
         type: projectInfo.type,
         stack: projectInfo.stack,
-        description: 'Project analysis requires ANTHROPIC_API_KEY',
+        description: "Project analysis requires ANTHROPIC_API_KEY",
       },
       files: [],
       decisions: [],
@@ -247,10 +286,10 @@ async function analyzeWithLLM(
   const prompt = `Analyze this codebase and provide a structured analysis.
 
 Project type: ${projectInfo.type}
-Stack: ${projectInfo.stack.join(', ')}
+Stack: ${projectInfo.stack.join(", ")}
 
 Sample files:
-${fileContents.join('\n\n').substring(0, 15000)}
+${fileContents.join("\n\n").substring(0, 15000)}
 
 Return a JSON object with this structure:
 {
@@ -297,27 +336,34 @@ Focus on:
       throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
     }
 
-    const data = await response.json() as { content: Array<{ text: string }> };
+    const data = (await response.json()) as { content: Array<{ text: string }> };
     const text = data.content[0]?.text || "";
 
     // Extract JSON from response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]) as AnalysisResult;
+      const parsed = JSON.parse(jsonMatch[0]) as Partial<AnalysisResult>;
+      // Ensure all required fields exist with defaults
+      return {
+        project: parsed.project || { type: projectInfo.type, stack: projectInfo.stack, description: "" },
+        files: parsed.files || [],
+        decisions: parsed.decisions || [],
+        architecture: parsed.architecture || { patterns: [], entry_points: [] },
+        potential_issues: parsed.potential_issues || [],
+        tech_debt: parsed.tech_debt || [],
+      };
     }
 
     throw new Error("No JSON in response");
   } catch (error) {
     // Ensure no key exposure in logs
-    const safeError = error instanceof Error
-      ? new Error(redactApiKeys(error.message))
-      : error;
-    logError('analyzeWithLLM', safeError);
+    const safeError = error instanceof Error ? new Error(redactApiKeys(error.message)) : error;
+    logError("analyzeWithLLM", safeError);
     return {
       project: {
         type: projectInfo.type,
         stack: projectInfo.stack,
-        description: 'Analysis failed',
+        description: "Analysis failed",
       },
       files: [],
       decisions: [],
@@ -335,17 +381,16 @@ function storeAnalysisResults(
   _discoveredFiles: DiscoveredFile[]
 ): void {
   // Update project info
-  db.run(`
+  db.run(
+    `
     UPDATE projects SET
       type = ?,
       stack = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [
-    analysis.project.type,
-    JSON.stringify(analysis.project.stack),
-    projectId,
-  ]);
+  `,
+    [analysis.project.type, JSON.stringify(analysis.project.stack), projectId]
+  );
 
   // Store file analysis
   for (const file of analysis.files) {
@@ -355,7 +400,7 @@ function storeAnalysisResults(
 
     if (existsSync(fullPath)) {
       try {
-        const content = readFileSync(fullPath, 'utf-8');
+        const content = readFileSync(fullPath, "utf-8");
         contentHash = computeContentHash(content);
         fsMtime = getFileMtime(fullPath);
       } catch {
@@ -363,7 +408,8 @@ function storeAnalysisResults(
       }
     }
 
-    db.run(`
+    db.run(
+      `
       INSERT INTO files (project_id, path, type, purpose, fragility, fragility_reason, exports, content_hash, fs_modified_at, last_analyzed)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(project_id, path) DO UPDATE SET
@@ -376,62 +422,54 @@ function storeAnalysisResults(
         fs_modified_at = excluded.fs_modified_at,
         last_analyzed = CURRENT_TIMESTAMP,
         updated_at = CURRENT_TIMESTAMP
-    `, [
-      projectId,
-      file.path,
-      file.type,
-      file.purpose,
-      file.fragility,
-      file.fragility_reason || null,
-      file.exports ? JSON.stringify(file.exports) : null,
-      contentHash,
-      fsMtime,
-    ]);
+    `,
+      [
+        projectId,
+        file.path,
+        file.type,
+        file.purpose,
+        file.fragility,
+        file.fragility_reason || null,
+        file.exports ? JSON.stringify(file.exports) : null,
+        contentHash,
+        fsMtime,
+      ]
+    );
   }
 
   // Store decisions
   for (const decision of analysis.decisions) {
-    db.run(`
+    db.run(
+      `
       INSERT INTO decisions (project_id, title, decision, reasoning, affects)
       VALUES (?, ?, ?, ?, ?)
-    `, [
-      projectId,
-      decision.title,
-      decision.decision,
-      decision.reasoning,
-      JSON.stringify(decision.affects),
-    ]);
+    `,
+      [projectId, decision.title, decision.decision, decision.reasoning, JSON.stringify(decision.affects)]
+    );
   }
 
   // Store issues
   for (const issue of analysis.potential_issues) {
-    db.run(`
+    db.run(
+      `
       INSERT INTO issues (project_id, title, description, type, severity, affected_files)
       VALUES (?, ?, ?, 'potential', ?, ?)
-    `, [
-      projectId,
-      issue.title,
-      issue.description,
-      issue.severity,
-      JSON.stringify(issue.affected_files),
-    ]);
+    `,
+      [projectId, issue.title, issue.description, issue.severity, JSON.stringify(issue.affected_files)]
+    );
   }
 
   // Store tech debt in global DB
   if (analysis.tech_debt && analysis.tech_debt.length > 0) {
     const globalDb = getGlobalDb();
     for (const debt of analysis.tech_debt) {
-      globalDb.run(`
+      globalDb.run(
+        `
         INSERT INTO tech_debt (project_path, title, description, severity, effort, affected_files)
         VALUES (?, ?, ?, ?, ?, ?)
-      `, [
-        projectPath,
-        debt.title,
-        debt.description,
-        debt.severity,
-        debt.effort,
-        JSON.stringify(debt.affected_files),
-      ]);
+      `,
+        [projectPath, debt.title, debt.description, debt.severity, debt.effort, JSON.stringify(debt.affected_files)]
+      );
     }
     closeGlobalDb();
   }
@@ -442,36 +480,44 @@ function storeAnalysisResults(
 // ============================================================================
 
 export function showStatus(db: Database, projectId: number): void {
-  const project = db.query<Record<string, unknown>, [number]>(`
+  const project = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT * FROM v_project_state WHERE id = ?
-  `).get(projectId);
+  `)
+    .get(projectId);
 
-  const fragileFiles = db.query<Record<string, unknown>, [number]>(`
+  const fragileFiles = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT path, fragility, fragility_reason FROM files
     WHERE project_id = ? AND fragility >= 5
     ORDER BY fragility DESC
     LIMIT 5
-  `).all(projectId);
+  `)
+    .all(projectId);
 
-  const openIssues = db.query<Record<string, unknown>, [number]>(`
+  const openIssues = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT id, title, severity, type FROM issues
     WHERE project_id = ? AND status = 'open'
     ORDER BY severity DESC
     LIMIT 5
-  `).all(projectId);
+  `)
+    .all(projectId);
 
-  const recentDecisions = db.query<Record<string, unknown>, [number]>(`
+  const recentDecisions = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT id, title, decided_at FROM decisions
     WHERE project_id = ? AND status = 'active'
     ORDER BY decided_at DESC
     LIMIT 3
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   // Display status
   if (project) {
     console.error("\n📊 Project Status:\n");
     console.error(`  Name: ${project.name}`);
-    console.error(`  Type: ${project.type || 'unknown'}`);
+    console.error(`  Type: ${project.type || "unknown"}`);
     console.error(`  Files: ${project.file_count || 0}`);
     console.error(`  Open Issues: ${project.open_issues || 0}`);
     console.error(`  Active Decisions: ${project.active_decisions || 0}`);
@@ -502,19 +548,21 @@ export function showStatus(db: Database, projectId: number): void {
 }
 
 export function showFragile(db: Database, projectId: number): void {
-  const files = db.query<Record<string, unknown>, [number]>(`
+  const files = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT path, type, fragility, fragility_reason, status
     FROM files
     WHERE project_id = ? AND (fragility >= 5 OR status = 'do-not-touch')
     ORDER BY fragility DESC
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (files.length === 0) {
     console.error("No fragile files detected.");
   } else {
     console.error("\n⚠️ Fragile Files (handle with care):\n");
     for (const f of files) {
-      const icon = (f.fragility as number) >= 8 ? '🔴' : (f.fragility as number) >= 6 ? '🟠' : '🟡';
+      const icon = (f.fragility as number) >= 8 ? "🔴" : (f.fragility as number) >= 6 ? "🟠" : "🟡";
       console.error(`  ${icon} ${f.path} [${f.fragility}/10]`);
       if (f.fragility_reason) {
         console.error(`     ${f.fragility_reason}`);
@@ -531,46 +579,58 @@ export function showFragile(db: Database, projectId: number): void {
 // ============================================================================
 
 export function generateBrief(db: Database, projectId: number, projectPath: string): string {
-  const project = db.query<{ name: string; type: string | null; stack: string | null }, [number]>(`
+  const project = db
+    .query<{ name: string; type: string | null; stack: string | null }, [number]>(`
     SELECT name, type, stack FROM projects WHERE id = ?
-  `).get(projectId);
+  `)
+    .get(projectId);
 
-  const lastSession = db.query<Record<string, unknown>, [number]>(`
+  const lastSession = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT goal, outcome, next_steps, ended_at, started_at
     FROM sessions
     WHERE project_id = ? AND ended_at IS NOT NULL
     ORDER BY ended_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
-  const fragileFiles = db.query<{ path: string; fragility: number; fragility_reason: string | null }, [number]>(`
+  const fragileFiles = db
+    .query<{ path: string; fragility: number; fragility_reason: string | null }, [number]>(`
     SELECT path, fragility, fragility_reason
     FROM files
     WHERE project_id = ? AND fragility >= 5
     ORDER BY fragility DESC
     LIMIT 5
-  `).all(projectId);
+  `)
+    .all(projectId);
 
-  const openIssues = db.query<{ id: number; title: string; severity: number }, [number]>(`
+  const openIssues = db
+    .query<{ id: number; title: string; severity: number }, [number]>(`
     SELECT id, title, severity
     FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 5
     ORDER BY severity DESC
     LIMIT 5
-  `).all(projectId);
+  `)
+    .all(projectId);
 
-  const activeDecisions = db.query<{ id: number; title: string; decision: string }, [number]>(`
+  const activeDecisions = db
+    .query<{ id: number; title: string; decision: string }, [number]>(`
     SELECT id, title, decision
     FROM decisions
     WHERE project_id = ? AND status = 'active'
     ORDER BY decided_at DESC
     LIMIT 5
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   const globalDb = getGlobalDb();
-  const patterns = globalDb.query<{ name: string; description: string }, []>(`
+  const patterns = globalDb
+    .query<{ name: string; description: string }, []>(`
     SELECT name, description FROM patterns LIMIT 5
-  `).all();
+  `)
+    .all();
   closeGlobalDb();
 
   return formatBrief({
@@ -579,14 +639,16 @@ export function generateBrief(db: Database, projectId: number, projectPath: stri
       type: project?.type || undefined,
       stack: project?.stack ? safeJsonParse(project.stack, []) : undefined,
     },
-    lastSession: lastSession ? {
-      goal: lastSession.goal as string,
-      outcome: lastSession.outcome as string | undefined,
-      next_steps: lastSession.next_steps as string | undefined,
-      ended_at: lastSession.ended_at as string | undefined,
-      started_at: lastSession.started_at as string,
-    } : undefined,
-    fragileFiles: fragileFiles.map(f => ({
+    lastSession: lastSession
+      ? {
+          goal: lastSession.goal as string,
+          outcome: lastSession.outcome as string | undefined,
+          next_steps: lastSession.next_steps as string | undefined,
+          ended_at: lastSession.ended_at as string | undefined,
+          started_at: lastSession.started_at as string,
+        }
+      : undefined,
+    fragileFiles: fragileFiles.map((f) => ({
       path: f.path,
       fragility: f.fragility,
       fragility_reason: f.fragility_reason || undefined,
@@ -605,13 +667,13 @@ export function showStack(): void {
   console.error("\n🛠️ Elite Stack:\n");
   console.error(`  Runtime:     ${ELITE_STACK.runtime}`);
   console.error(`  Language:    ${ELITE_STACK.language}`);
-  console.error(`  Frontend:    ${ELITE_STACK.frontend.join(', ')}`);
-  console.error(`  Backend:     ${ELITE_STACK.backend.join(', ')}`);
-  console.error(`  Database:    ${ELITE_STACK.database.join(', ')}`);
-  console.error(`  Styling:     ${ELITE_STACK.styling.join(', ')}`);
+  console.error(`  Frontend:    ${ELITE_STACK.frontend.join(", ")}`);
+  console.error(`  Backend:     ${ELITE_STACK.backend.join(", ")}`);
+  console.error(`  Database:    ${ELITE_STACK.database.join(", ")}`);
+  console.error(`  Styling:     ${ELITE_STACK.styling.join(", ")}`);
   console.error(`  Validation:  ${ELITE_STACK.validation}`);
-  console.error(`  Testing:     ${ELITE_STACK.testing.join(', ')}`);
-  console.error(`  Deployment:  ${ELITE_STACK.deployment.join(', ')}`);
+  console.error(`  Testing:     ${ELITE_STACK.testing.join(", ")}`);
+  console.error(`  Deployment:  ${ELITE_STACK.deployment.join(", ")}`);
   console.error("");
 
   outputJson(ELITE_STACK);

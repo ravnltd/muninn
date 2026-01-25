@@ -5,8 +5,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { parseArgs } from "node:util";
 import { outputJson, outputSuccess } from "../utils/format";
-import { parseArgs } from "util";
 
 // ============================================================================
 // Types
@@ -35,11 +35,7 @@ interface FocusSetOptions {
 // Set Focus
 // ============================================================================
 
-export function focusSet(
-  db: Database,
-  projectId: number,
-  options: FocusSetOptions
-): void {
+export function focusSet(db: Database, projectId: number, options: FocusSetOptions): void {
   const { area, description, files, keywords } = options;
 
   if (!area) {
@@ -52,22 +48,28 @@ export function focusSet(
   }
 
   // Clear any existing focus first
-  db.run(`
+  db.run(
+    `
     UPDATE focus SET cleared_at = CURRENT_TIMESTAMP
     WHERE project_id = ? AND cleared_at IS NULL
-  `, [projectId]);
+  `,
+    [projectId]
+  );
 
   // Set new focus
-  db.run(`
+  db.run(
+    `
     INSERT INTO focus (project_id, area, description, files, keywords)
     VALUES (?, ?, ?, ?, ?)
-  `, [
-    projectId,
-    area,
-    description || null,
-    files ? JSON.stringify(files) : null,
-    keywords ? JSON.stringify(keywords) : null,
-  ]);
+  `,
+    [
+      projectId,
+      area,
+      description || null,
+      files ? JSON.stringify(files) : null,
+      keywords ? JSON.stringify(keywords) : null,
+    ]
+  );
 
   console.error(`🎯 Focus set: ${area}`);
   if (description) {
@@ -88,12 +90,14 @@ export function focusSet(
 // ============================================================================
 
 export function focusGet(db: Database, projectId: number): Focus | null {
-  const focus = db.query<Focus, [number]>(`
+  const focus = db
+    .query<Focus, [number]>(`
     SELECT * FROM focus
     WHERE project_id = ? AND cleared_at IS NULL
     ORDER BY created_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   if (!focus) {
     console.error("🎯 No active focus set");
@@ -124,10 +128,13 @@ export function focusGet(db: Database, projectId: number): Focus | null {
 // ============================================================================
 
 export function focusClear(db: Database, projectId: number): boolean {
-  const result = db.run(`
+  const result = db.run(
+    `
     UPDATE focus SET cleared_at = CURRENT_TIMESTAMP
     WHERE project_id = ? AND cleared_at IS NULL
-  `, [projectId]);
+  `,
+    [projectId]
+  );
 
   if (result.changes === 0) {
     console.error("🎯 No active focus to clear");
@@ -145,12 +152,14 @@ export function focusClear(db: Database, projectId: number): boolean {
 // ============================================================================
 
 export function focusList(db: Database, projectId: number): Focus[] {
-  const history = db.query<Focus, [number]>(`
+  const history = db
+    .query<Focus, [number]>(`
     SELECT * FROM focus
     WHERE project_id = ?
     ORDER BY created_at DESC
     LIMIT 20
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (history.length === 0) {
     console.error("🎯 No focus history");
@@ -179,17 +188,22 @@ export function focusList(db: Database, projectId: number): Focus[] {
 // Get Focus for Query Boosting
 // ============================================================================
 
-export function getActiveFocus(db: Database, projectId: number): {
+export function getActiveFocus(
+  db: Database,
+  projectId: number
+): {
   area: string;
   files: string[];
   keywords: string[];
 } | null {
-  const focus = db.query<Focus, [number]>(`
+  const focus = db
+    .query<Focus, [number]>(`
     SELECT * FROM focus
     WHERE project_id = ? AND cleared_at IS NULL
     ORDER BY created_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   if (!focus) {
     return null;
@@ -206,11 +220,7 @@ export function getActiveFocus(db: Database, projectId: number): {
 // CLI Handler
 // ============================================================================
 
-export function handleFocusCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): void {
+export function handleFocusCommand(db: Database, projectId: number, args: string[]): void {
   const subCmd = args[0];
   const subArgs = args.slice(1);
 
@@ -228,7 +238,7 @@ export function handleFocusCommand(
       });
 
       // Allow area as positional argument
-      const area = values.area || subArgs.find(a => !a.startsWith("-"));
+      const area = values.area || subArgs.find((a) => !a.startsWith("-"));
 
       focusSet(db, projectId, {
         area: area || "",

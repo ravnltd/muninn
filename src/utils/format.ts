@@ -3,8 +3,8 @@
  * Provides consistent output formatting for CLI, JSON, and visual formats
  */
 
-import { statSync } from "fs";
-import type { Server, InfraStatus, ServerWithServices } from "../types";
+import { statSync } from "node:fs";
+import type { InfraStatus, Server, ServerWithServices } from "../types";
 
 // ============================================================================
 // Time Formatting
@@ -62,50 +62,48 @@ export function computeContentHash(content: string): string {
 
 export function getStatusIcon(status: string): string {
   switch (status) {
-    case 'online':
-    case 'healthy':
-    case 'running':
-    case 'success':
-    case 'pass':
-      return '🟢';
-    case 'offline':
-    case 'unhealthy':
-    case 'stopped':
-    case 'failed':
-    case 'fail':
-      return '🔴';
-    case 'degraded':
-    case 'warn':
-    case 'warning':
-      return '🟠';
-    case 'critical':
-      return '🔴';
-    case 'error':
-      return '🟠';
-    case 'info':
-      return '🔵';
-    case 'unknown':
-    case 'skip':
+    case "online":
+    case "healthy":
+    case "running":
+    case "success":
+    case "pass":
+      return "🟢";
+    case "offline":
+    case "unhealthy":
+    case "stopped":
+    case "failed":
+    case "fail":
+      return "🔴";
+    case "degraded":
+    case "warn":
+    case "warning":
+      return "🟠";
+    case "critical":
+      return "🔴";
+    case "error":
+      return "🟠";
+    case "info":
+      return "🔵";
     default:
-      return '⚪';
+      return "⚪";
   }
 }
 
 export function getSeverityIcon(severity: string): string {
   switch (severity) {
-    case 'critical':
-      return '🔴';
-    case 'high':
-    case 'error':
-      return '🟠';
-    case 'medium':
-    case 'warning':
-      return '🟡';
-    case 'low':
-    case 'info':
-      return '🔵';
+    case "critical":
+      return "🔴";
+    case "high":
+    case "error":
+      return "🟠";
+    case "medium":
+    case "warning":
+      return "🟡";
+    case "low":
+    case "info":
+      return "🔵";
     default:
-      return '⚪';
+      return "⚪";
   }
 }
 
@@ -131,24 +129,22 @@ export function outputError(error: string, details?: Record<string, unknown>): v
 
 export function formatTable(headers: string[], rows: string[][]): string {
   const colWidths = headers.map((h, i) => {
-    const maxRowWidth = Math.max(...rows.map(r => (r[i] || '').length));
+    const maxRowWidth = Math.max(...rows.map((r) => (r[i] || "").length));
     return Math.max(h.length, maxRowWidth);
   });
 
-  const separator = colWidths.map(w => '─'.repeat(w + 2)).join('┼');
-  const headerRow = headers.map((h, i) => ` ${h.padEnd(colWidths[i])} `).join('│');
+  const separator = colWidths.map((w) => "─".repeat(w + 2)).join("┼");
+  const headerRow = headers.map((h, i) => ` ${h.padEnd(colWidths[i])} `).join("│");
 
-  const dataRows = rows.map(row =>
-    row.map((cell, i) => ` ${(cell || '').padEnd(colWidths[i])} `).join('│')
-  );
+  const dataRows = rows.map((row) => row.map((cell, i) => ` ${(cell || "").padEnd(colWidths[i])} `).join("│"));
 
   return [
-    '┌' + separator.replace(/┼/g, '┬') + '┐',
-    '│' + headerRow + '│',
-    '├' + separator + '┤',
-    ...dataRows.map(r => '│' + r + '│'),
-    '└' + separator.replace(/┼/g, '┴') + '┘',
-  ].join('\n');
+    `┌${separator.replace(/┼/g, "┬")}┐`,
+    `│${headerRow}│`,
+    `├${separator}┤`,
+    ...dataRows.map((r) => `│${r}│`),
+    `└${separator.replace(/┼/g, "┴")}┘`,
+  ].join("\n");
 }
 
 // ============================================================================
@@ -203,7 +199,9 @@ export function formatInfraStatus(status: InfraStatus): void {
     console.error("");
   }
 
-  console.error(`Summary: ${status.summary.servers_online}/${status.summary.total_servers} servers online, ${status.summary.services_healthy}/${status.summary.total_services} services healthy`);
+  console.error(
+    `Summary: ${status.summary.servers_online}/${status.summary.total_servers} servers online, ${status.summary.services_healthy}/${status.summary.total_services} services healthy`
+  );
   console.error("");
 }
 
@@ -242,12 +240,12 @@ export function generateMermaidInfraMap(
 
 export function generateAsciiInfraMap(servers: ServerWithServices[]): void {
   console.error("\n🗺️  Infrastructure Map\n");
-  console.error("┌" + "─".repeat(60) + "┐");
+  console.error(`┌${"─".repeat(60)}┐`);
 
   for (const server of servers) {
     const statusIcon = server.status === "online" ? "🟢" : "🔴";
     console.error(`│ ${statusIcon} ${server.name.padEnd(54)} │`);
-    console.error("│" + "─".repeat(60) + "│");
+    console.error(`│${"─".repeat(60)}│`);
 
     for (const svc of server.services) {
       const domain = svc.primary_domain || "";
@@ -259,10 +257,10 @@ export function generateAsciiInfraMap(servers: ServerWithServices[]): void {
     if (server.services.length === 0) {
       console.error(`│   (no services)${" ".repeat(44)}│`);
     }
-    console.error("├" + "─".repeat(60) + "┤");
+    console.error(`├${"─".repeat(60)}┤`);
   }
 
-  console.error("└" + "─".repeat(60) + "┘\n");
+  console.error(`└${"─".repeat(60)}┘\n`);
 }
 
 // ============================================================================

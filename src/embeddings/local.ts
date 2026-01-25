@@ -15,21 +15,32 @@ const LOCAL_DIMENSIONS = 384;
 const MAX_TEXT_LENGTH = 512; // Model's max sequence length in tokens (~characters/1.3)
 
 // ============================================================================
+// Type Definitions
+// ============================================================================
+
+/** Tensor output from the feature extraction pipeline */
+interface EmbeddingTensor {
+  data: Float32Array;
+}
+
+/** Feature extraction pipeline callable interface */
+type FeatureExtractionPipeline = (
+  text: string,
+  options: { pooling: string; normalize: boolean }
+) => Promise<EmbeddingTensor>;
+
+// ============================================================================
 // Pipeline Management
 // ============================================================================
 
-// Use opaque type to avoid complex union type inference
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let extractor: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let loadingPromise: Promise<any> | null = null;
+let extractor: FeatureExtractionPipeline | null = null;
+let loadingPromise: Promise<FeatureExtractionPipeline> | null = null;
 
 /**
  * Lazily initialize the feature extraction pipeline
  * Reuses the same instance across calls
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function getExtractor(): Promise<any> {
+async function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (extractor) {
     return extractor;
   }
@@ -43,8 +54,9 @@ async function getExtractor(): Promise<any> {
     const pipe = await pipeline("feature-extraction", MODEL_NAME, {
       dtype: "fp32",
     });
-    extractor = pipe;
-    return pipe;
+    // Cast to our interface — the pipeline returns a callable with this shape
+    extractor = pipe as unknown as FeatureExtractionPipeline;
+    return extractor;
   })();
 
   return loadingPromise;
@@ -113,8 +125,7 @@ export async function embedBatch(texts: string[]): Promise<number[][] | null> {
     // Process individually to avoid memory issues with large batches
     for (const text of truncated) {
       const output = await pipe(text, { pooling: "mean", normalize: true });
-      // output is a Tensor — extract the underlying typed array
-      const data: Float32Array = output.data;
+      const data = output.data;
       const embedding = Array.from(data);
       results.push(embedding.slice(0, LOCAL_DIMENSIONS));
     }

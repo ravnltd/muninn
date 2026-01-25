@@ -4,12 +4,11 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { getAllServers, getServerByName, logInfraEvent } from "../../database/queries/infra";
 import type { Server } from "../../types";
-import { parseServerArgs, ServerAddInput } from "../../utils/validation";
 import { exitWithUsage } from "../../utils/errors";
-import { outputJson, outputSuccess, formatServerList, getStatusIcon } from "../../utils/format";
-import { getAllServers, getServerByName } from "../../database/queries/infra";
-import { logInfraEvent } from "../../database/queries/infra";
+import { formatServerList, getStatusIcon, outputJson, outputSuccess } from "../../utils/format";
+import { parseServerArgs, ServerAddInput } from "../../utils/validation";
 
 // ============================================================================
 // Server Add
@@ -19,7 +18,9 @@ export function serverAdd(db: Database, args: string[]): void {
   const { values } = parseServerArgs(args);
 
   if (!values.name) {
-    exitWithUsage("Usage: context infra server add <name> --ip <ip> [--role production|homelab] [--user root] [--port 22] [--key ~/.ssh/id_ed25519]");
+    exitWithUsage(
+      "Usage: context infra server add <name> --ip <ip> [--role production|homelab] [--user root] [--port 22] [--key ~/.ssh/id_ed25519]"
+    );
   }
 
   // Validate and extract values
@@ -39,30 +40,33 @@ export function serverAdd(db: Database, args: string[]): void {
   }
 
   const ipAddresses = input.ip ? JSON.stringify([input.ip]) : null;
-  const tags = input.tags ? JSON.stringify(input.tags.split(',').map(t => t.trim())) : null;
+  const tags = input.tags ? JSON.stringify(input.tags.split(",").map((t) => t.trim())) : null;
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO servers (name, hostname, ip_addresses, role, ssh_user, ssh_port, ssh_key_path, ssh_jump_host, os, tags, notes, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')
-  `, [
-    input.name,
-    input.hostname || null,
-    ipAddresses,
-    input.role || null,
-    input.user,
-    input.port,
-    input.key || null,
-    input.jump || null,
-    input.os || null,
-    tags,
-    input.notes || null,
-  ]);
+  `,
+    [
+      input.name,
+      input.hostname || null,
+      ipAddresses,
+      input.role || null,
+      input.user,
+      input.port,
+      input.key || null,
+      input.jump || null,
+      input.os || null,
+      tags,
+      input.notes || null,
+    ]
+  );
 
   logInfraEvent(db, {
-    eventType: 'server_added',
-    severity: 'info',
+    eventType: "server_added",
+    severity: "info",
     title: `Server ${input.name} added`,
-    description: `IP: ${input.ip || 'none'}, Role: ${input.role || 'unset'}`,
+    description: `IP: ${input.ip || "none"}, Role: ${input.role || "unset"}`,
   });
 
   console.error(`✅ Server '${input.name}' added`);
@@ -95,20 +99,20 @@ export function serverRemove(db: Database, name: string | undefined): void {
   }
 
   // Get service count for logging
-  const serviceCount = db.query<{ count: number }, [number]>(
-    "SELECT COUNT(*) as count FROM services WHERE server_id = ?"
-  ).get(server.id)?.count || 0;
+  const serviceCount =
+    db.query<{ count: number }, [number]>("SELECT COUNT(*) as count FROM services WHERE server_id = ?").get(server.id)
+      ?.count || 0;
 
   db.run("DELETE FROM servers WHERE name = ?", [name]);
 
   logInfraEvent(db, {
-    eventType: 'server_removed',
-    severity: 'warning',
+    eventType: "server_removed",
+    severity: "warning",
     title: `Server ${name} removed`,
     description: serviceCount > 0 ? `${serviceCount} services were also removed` : undefined,
   });
 
-  console.error(`✅ Server '${name}' removed${serviceCount > 0 ? ` (and ${serviceCount} services)` : ''}`);
+  console.error(`✅ Server '${name}' removed${serviceCount > 0 ? ` (and ${serviceCount} services)` : ""}`);
   outputSuccess({ name, servicesRemoved: serviceCount });
 }
 
@@ -117,21 +121,21 @@ export function serverRemove(db: Database, name: string | undefined): void {
 // ============================================================================
 
 export async function serverCheck(db: Database, targetName?: string): Promise<void> {
-  const servers = targetName
-    ? [getServerByName(db, targetName)].filter(Boolean) as Server[]
-    : getAllServers(db);
+  const servers = targetName ? ([getServerByName(db, targetName)].filter(Boolean) as Server[]) : getAllServers(db);
 
   if (servers.length === 0) {
-    console.error(targetName
-      ? `❌ Server '${targetName}' not found`
-      : "No servers to check. Add one with: context infra server add <name> --ip <ip>");
+    console.error(
+      targetName
+        ? `❌ Server '${targetName}' not found`
+        : "No servers to check. Add one with: context infra server add <name> --ip <ip>"
+    );
     outputJson({ checked: 0, online: 0, offline: 0 });
     return;
   }
 
   console.error("\n🔍 Checking server connectivity...\n");
 
-  const results: Array<{ name: string; status: 'online' | 'offline'; latency?: number; error?: string }> = [];
+  const results: Array<{ name: string; status: "online" | "offline"; latency?: number; error?: string }> = [];
 
   for (const server of servers) {
     const startTime = Date.now();
@@ -148,10 +152,14 @@ export async function serverCheck(db: Database, targetName?: string): Promise<vo
     }
 
     sshArgs.push(
-      "-o", "ConnectTimeout=5",
-      "-o", "StrictHostKeyChecking=no",
-      "-o", "BatchMode=yes",
-      "-p", String(server.ssh_port),
+      "-o",
+      "ConnectTimeout=5",
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "BatchMode=yes",
+      "-p",
+      String(server.ssh_port),
       `${server.ssh_user}@${server.ip_addresses ? JSON.parse(server.ip_addresses)[0] : server.hostname}`,
       "echo ok"
     );
@@ -161,46 +169,52 @@ export async function serverCheck(db: Database, targetName?: string): Promise<vo
       const latency = Date.now() - startTime;
 
       if (result.exitCode === 0) {
-        console.error(`  ${getStatusIcon('online')} ${server.name} - online (${latency}ms)`);
-        results.push({ name: server.name, status: 'online', latency });
+        console.error(`  ${getStatusIcon("online")} ${server.name} - online (${latency}ms)`);
+        results.push({ name: server.name, status: "online", latency });
 
         // Update server status in DB
-        db.run(`
+        db.run(
+          `
           UPDATE servers SET status = 'online', last_seen = CURRENT_TIMESTAMP, last_health_check = CURRENT_TIMESTAMP
           WHERE id = ?
-        `, [server.id]);
+        `,
+          [server.id]
+        );
       } else {
         const errorOutput = result.stderr.toString().trim();
-        console.error(`  ${getStatusIcon('offline')} ${server.name} - offline`);
+        console.error(`  ${getStatusIcon("offline")} ${server.name} - offline`);
         if (errorOutput) {
           console.error(`     ${errorOutput.substring(0, 100)}`);
         }
-        results.push({ name: server.name, status: 'offline', error: errorOutput });
+        results.push({ name: server.name, status: "offline", error: errorOutput });
 
-        db.run(`
+        db.run(
+          `
           UPDATE servers SET status = 'offline', last_health_check = CURRENT_TIMESTAMP
           WHERE id = ?
-        `, [server.id]);
+        `,
+          [server.id]
+        );
 
         logInfraEvent(db, {
           serverId: server.id,
-          eventType: 'server_check_failed',
-          severity: 'error',
+          eventType: "server_check_failed",
+          severity: "error",
           title: `Server ${server.name} check failed`,
-          description: errorOutput || 'SSH connection failed',
+          description: errorOutput || "SSH connection failed",
         });
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`  ${getStatusIcon('offline')} ${server.name} - error: ${errorMessage}`);
-      results.push({ name: server.name, status: 'offline', error: errorMessage });
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error(`  ${getStatusIcon("offline")} ${server.name} - error: ${errorMessage}`);
+      results.push({ name: server.name, status: "offline", error: errorMessage });
     }
   }
 
   console.error("");
 
-  const online = results.filter(r => r.status === 'online').length;
-  const offline = results.filter(r => r.status === 'offline').length;
+  const online = results.filter((r) => r.status === "online").length;
+  const offline = results.filter((r) => r.status === "offline").length;
 
   console.error(`Summary: ${online}/${results.length} servers online`);
   if (offline > 0) {

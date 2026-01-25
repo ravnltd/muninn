@@ -7,9 +7,9 @@
  * 2. Local Transformers.js — 384 dimensions, offline, always available
  */
 
-import * as voyage from "./voyage";
-import * as local from "./local";
 import { logError } from "../utils/errors";
+import * as local from "./local";
+import * as voyage from "./voyage";
 
 // ============================================================================
 // Types
@@ -190,52 +190,34 @@ export function fileToText(path: string, purpose: string | null): string {
 /**
  * Create text representation for decision embedding
  */
-export function decisionToText(
-  title: string,
-  decision: string,
-  reasoning: string | null
-): string {
+export function decisionToText(title: string, decision: string, reasoning: string | null): string {
   return `${title} ${decision} ${reasoning || ""}`.trim();
 }
 
 /**
  * Create text representation for issue embedding
  */
-export function issueToText(
-  title: string,
-  description: string | null,
-  workaround: string | null
-): string {
+export function issueToText(title: string, description: string | null, workaround: string | null): string {
   return `${title} ${description || ""} ${workaround || ""}`.trim();
 }
 
 /**
  * Create text representation for learning embedding
  */
-export function learningToText(
-  title: string,
-  content: string,
-  context: string | null
-): string {
+export function learningToText(title: string, content: string, context: string | null): string {
   return `${title} ${content} ${context || ""}`.trim();
 }
 
 /**
  * Create text representation for observation embedding
  */
-export function observationToText(
-  content: string,
-  type: string
-): string {
+export function observationToText(content: string, type: string): string {
   return `${type}: ${content}`.trim();
 }
 
 /**
  * Create text representation for open question embedding
  */
-export function questionToText(
-  question: string,
-  context: string | null
-): string {
+export function questionToText(question: string, context: string | null): string {
   return `${question} ${context || ""}`.trim();
 }

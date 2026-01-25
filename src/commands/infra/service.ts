@@ -4,12 +4,17 @@
  */
 
 import type { Database } from "bun:sqlite";
+import {
+  getAllServicesWithServerName,
+  getServerByName,
+  getServiceByName,
+  getServiceByNameAndServer,
+  logInfraEvent,
+} from "../../database/queries/infra";
 import type { Service } from "../../types";
-import { parseServiceArgs, ServiceAddInput } from "../../utils/validation";
 import { exitWithUsage } from "../../utils/errors";
-import { outputJson, outputSuccess, getStatusIcon } from "../../utils/format";
-import { getServerByName, getServiceByName, getServiceByNameAndServer, getAllServicesWithServerName } from "../../database/queries/infra";
-import { logInfraEvent } from "../../database/queries/infra";
+import { getStatusIcon, outputJson, outputSuccess } from "../../utils/format";
+import { parseServiceArgs, ServiceAddInput } from "../../utils/validation";
 
 // ============================================================================
 // Service Add
@@ -19,7 +24,9 @@ export function serviceAdd(db: Database, args: string[]): void {
   const { values } = parseServiceArgs(args);
 
   if (!values.name || !values.server) {
-    exitWithUsage("Usage: context infra service add <name> --server <server> [--port 3000] [--type app|database|cache]");
+    exitWithUsage(
+      "Usage: context infra service add <name> --server <server> [--port 3000] [--type app|database|cache]"
+    );
   }
 
   const parsed = ServiceAddInput.safeParse(values);
@@ -44,34 +51,37 @@ export function serviceAdd(db: Database, args: string[]): void {
     process.exit(1);
   }
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO services (
       name, server_id, type, runtime, port, health_endpoint,
       project_path, git_repo, git_branch,
       deploy_command, restart_command, stop_command, log_command, env_file
     )
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    input.name,
-    server.id,
-    input.type || null,
-    input.runtime || null,
-    input.port || null,
-    input.health || null,
-    input.project || null,
-    input.repo || null,
-    input.branch,
-    input.deploy || null,
-    input.restart || null,
-    input.stop || null,
-    input.logs || null,
-    input.env || null,
-  ]);
+  `,
+    [
+      input.name,
+      server.id,
+      input.type || null,
+      input.runtime || null,
+      input.port || null,
+      input.health || null,
+      input.project || null,
+      input.repo || null,
+      input.branch,
+      input.deploy || null,
+      input.restart || null,
+      input.stop || null,
+      input.logs || null,
+      input.env || null,
+    ]
+  );
 
   logInfraEvent(db, {
     serverId: server.id,
-    eventType: 'service_added',
-    severity: 'info',
+    eventType: "service_added",
+    severity: "info",
     title: `Service ${input.name} added to ${input.server}`,
     description: input.port ? `Port: ${input.port}` : undefined,
   });
@@ -88,16 +98,18 @@ export function serviceList(db: Database, serverFilter?: string): void {
   const services = getAllServicesWithServerName(db, serverFilter);
 
   if (services.length === 0) {
-    console.error(serverFilter
-      ? `No services found on server '${serverFilter}'`
-      : "No services registered. Add one with: context infra service add <name> --server <server>");
+    console.error(
+      serverFilter
+        ? `No services found on server '${serverFilter}'`
+        : "No services registered. Add one with: context infra service add <name> --server <server>"
+    );
     outputJson([]);
     return;
   }
 
   console.error("\n📦 Registered Services:\n");
 
-  let currentServer = '';
+  let currentServer = "";
   for (const svc of services) {
     if (svc.server_name !== currentServer) {
       if (currentServer) console.error("");
@@ -106,8 +118,8 @@ export function serviceList(db: Database, serverFilter?: string): void {
     }
 
     const healthIcon = getStatusIcon(svc.health_status);
-    const port = svc.port ? `:${svc.port}` : '';
-    const type = svc.type ? ` (${svc.type})` : '';
+    const port = svc.port ? `:${svc.port}` : "";
+    const type = svc.type ? ` (${svc.type})` : "";
 
     console.error(`     ${healthIcon} ${svc.name}${port}${type}`);
     if (svc.git_repo) {
@@ -142,33 +154,33 @@ export function serviceRemove(db: Database, name: string | undefined, serverFilt
     service = getServiceByName(db, name);
     if (service) {
       // Get server name for logging
-      const server = db.query<{ name: string }, [number]>(
-        "SELECT name FROM servers WHERE id = ?"
-      ).get(service.server_id);
+      const server = db
+        .query<{ name: string }, [number]>("SELECT name FROM servers WHERE id = ?")
+        .get(service.server_id);
       serverName = server?.name;
     }
   }
 
   if (!service) {
-    console.error(`❌ Service '${name}' not found${serverFilter ? ` on server '${serverFilter}'` : ''}`);
+    console.error(`❌ Service '${name}' not found${serverFilter ? ` on server '${serverFilter}'` : ""}`);
     process.exit(1);
   }
 
   // Get route count for logging
-  const routeCount = db.query<{ count: number }, [number]>(
-    "SELECT COUNT(*) as count FROM routes WHERE service_id = ?"
-  ).get(service.id)?.count || 0;
+  const routeCount =
+    db.query<{ count: number }, [number]>("SELECT COUNT(*) as count FROM routes WHERE service_id = ?").get(service.id)
+      ?.count || 0;
 
   db.run("DELETE FROM services WHERE id = ?", [service.id]);
 
   logInfraEvent(db, {
-    eventType: 'service_removed',
-    severity: 'warning',
-    title: `Service ${name} removed from ${serverName || 'unknown'}`,
+    eventType: "service_removed",
+    severity: "warning",
+    title: `Service ${name} removed from ${serverName || "unknown"}`,
     description: routeCount > 0 ? `${routeCount} routes were also removed` : undefined,
   });
 
-  console.error(`✅ Service '${name}' removed${routeCount > 0 ? ` (and ${routeCount} routes)` : ''}`);
+  console.error(`✅ Service '${name}' removed${routeCount > 0 ? ` (and ${routeCount} routes)` : ""}`);
   outputSuccess({ name, server: serverName, routesRemoved: routeCount });
 }
 
@@ -183,9 +195,19 @@ export async function serviceStatus(db: Database, serviceName: string): Promise<
     process.exit(1);
   }
 
-  const server = db.query<{ name: string; ssh_user: string; ssh_port: number; ssh_key_path: string | null; ip_addresses: string | null; hostname: string | null }, [number]>(
-    "SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?"
-  ).get(service.server_id);
+  const server = db
+    .query<
+      {
+        name: string;
+        ssh_user: string;
+        ssh_port: number;
+        ssh_key_path: string | null;
+        ip_addresses: string | null;
+        hostname: string | null;
+      },
+      [number]
+    >("SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?")
+    .get(service.server_id);
 
   if (!server) {
     console.error(`❌ Server not found for service '${serviceName}'`);
@@ -203,9 +225,12 @@ export async function serviceStatus(db: Database, serviceName: string): Promise<
   }
 
   sshArgs.push(
-    "-o", "ConnectTimeout=5",
-    "-o", "StrictHostKeyChecking=no",
-    "-p", String(server.ssh_port),
+    "-o",
+    "ConnectTimeout=5",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-p",
+    String(server.ssh_port),
     `${server.ssh_user}@${sshTarget}`
   );
 
@@ -236,20 +261,26 @@ export async function serviceStatus(db: Database, serviceName: string): Promise<
 
     if (result.exitCode === 0) {
       const httpCode = result.stdout.toString().trim();
-      const healthy = httpCode === '200' || httpCode === '204';
-      console.error(`  ${healthy ? '🟢' : '🔴'} ${healthUrl} - HTTP ${httpCode}`);
+      const healthy = httpCode === "200" || httpCode === "204";
+      console.error(`  ${healthy ? "🟢" : "🔴"} ${healthUrl} - HTTP ${httpCode}`);
 
       // Update health status
-      db.run(`
+      db.run(
+        `
         UPDATE services SET health_status = ?, last_health_check = CURRENT_TIMESTAMP
         WHERE id = ?
-      `, [healthy ? 'healthy' : 'unhealthy', service.id]);
+      `,
+        [healthy ? "healthy" : "unhealthy", service.id]
+      );
     } else {
       console.error(`  🔴 ${healthUrl} - unreachable`);
-      db.run(`
+      db.run(
+        `
         UPDATE services SET health_status = 'unhealthy', last_health_check = CURRENT_TIMESTAMP
         WHERE id = ?
-      `, [service.id]);
+      `,
+        [service.id]
+      );
     }
   }
 
@@ -268,9 +299,19 @@ export async function serviceLogs(db: Database, serviceName: string, lines: numb
     process.exit(1);
   }
 
-  const server = db.query<{ name: string; ssh_user: string; ssh_port: number; ssh_key_path: string | null; ip_addresses: string | null; hostname: string | null }, [number]>(
-    "SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?"
-  ).get(service.server_id);
+  const server = db
+    .query<
+      {
+        name: string;
+        ssh_user: string;
+        ssh_port: number;
+        ssh_key_path: string | null;
+        ip_addresses: string | null;
+        hostname: string | null;
+      },
+      [number]
+    >("SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?")
+    .get(service.server_id);
 
   if (!server) {
     console.error(`❌ Server not found for service '${serviceName}'`);
@@ -286,14 +327,19 @@ export async function serviceLogs(db: Database, serviceName: string, lines: numb
   }
 
   sshArgs.push(
-    "-o", "ConnectTimeout=5",
-    "-o", "StrictHostKeyChecking=no",
-    "-p", String(server.ssh_port),
+    "-o",
+    "ConnectTimeout=5",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-p",
+    String(server.ssh_port),
     `${server.ssh_user}@${sshTarget}`
   );
 
   // Use custom log command if available, otherwise try common patterns
-  const logCmd = service.log_command || `journalctl -u ${serviceName} -n ${lines} --no-pager 2>/dev/null || docker logs --tail ${lines} ${serviceName} 2>/dev/null || tail -n ${lines} /var/log/${serviceName}.log 2>/dev/null`;
+  const logCmd =
+    service.log_command ||
+    `journalctl -u ${serviceName} -n ${lines} --no-pager 2>/dev/null || docker logs --tail ${lines} ${serviceName} 2>/dev/null || tail -n ${lines} /var/log/${serviceName}.log 2>/dev/null`;
 
   console.error(`📋 Logs for ${serviceName}@${server.name}:\n`);
 

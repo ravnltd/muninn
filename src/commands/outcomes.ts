@@ -5,8 +5,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { outputJson, outputSuccess } from "../utils/format";
 import type { OutcomeStatus } from "../types";
+import { outputJson, outputSuccess } from "../utils/format";
 
 // ============================================================================
 // Record Outcome
@@ -19,21 +19,26 @@ export function recordOutcome(
   status: OutcomeStatus,
   notes?: string
 ): void {
-  const decision = db.query<{ id: number; title: string; project_id: number }, [number, number]>(
-    "SELECT id, title, project_id FROM decisions WHERE id = ? AND project_id = ?"
-  ).get(decisionId, projectId);
+  const decision = db
+    .query<{ id: number; title: string; project_id: number }, [number, number]>(
+      "SELECT id, title, project_id FROM decisions WHERE id = ? AND project_id = ?"
+    )
+    .get(decisionId, projectId);
 
   if (!decision) {
     throw new Error(`Decision #${decisionId} not found`);
   }
 
-  db.run(`
+  db.run(
+    `
     UPDATE decisions SET
       outcome_status = ?,
       outcome_notes = ?,
       outcome_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [status, notes ?? null, decisionId]);
+  `,
+    [status, notes ?? null, decisionId]
+  );
 }
 
 // ============================================================================
@@ -52,14 +57,18 @@ export function getDecisionsDue(
   decided_at: string;
 }> {
   try {
-    return db.query<{
-      id: number;
-      title: string;
-      decision: string;
-      sessions_since: number;
-      check_after_sessions: number;
-      decided_at: string;
-    }, [number]>(`
+    return db
+      .query<
+        {
+          id: number;
+          title: string;
+          decision: string;
+          sessions_since: number;
+          check_after_sessions: number;
+          decided_at: string;
+        },
+        [number]
+      >(`
       SELECT id, title, decision, sessions_since, check_after_sessions, decided_at
       FROM decisions
       WHERE project_id = ?
@@ -68,7 +77,8 @@ export function getDecisionsDue(
         AND sessions_since >= check_after_sessions
       ORDER BY sessions_since DESC
       LIMIT 10
-    `).all(projectId);
+    `)
+      .all(projectId);
   } catch {
     return []; // Columns might not exist yet
   }
@@ -80,12 +90,15 @@ export function getDecisionsDue(
 
 export function incrementSessionsSince(db: Database, projectId: number): void {
   try {
-    db.run(`
+    db.run(
+      `
       UPDATE decisions SET sessions_since = sessions_since + 1
       WHERE project_id = ?
         AND status = 'active'
         AND outcome_status = 'pending'
-    `, [projectId]);
+    `,
+      [projectId]
+    );
   } catch {
     // Column might not exist yet
   }
@@ -101,11 +114,11 @@ export function handleOutcomeCommand(db: Database, projectId: number, args: stri
   switch (subCmd) {
     case "record":
     case "set": {
-      const id = parseInt(args[1]);
+      const id = parseInt(args[1], 10);
       const status = args[2] as OutcomeStatus;
       const notes = args.slice(3).join(" ") || undefined;
 
-      if (!id || !status || !['succeeded', 'failed', 'revised', 'unknown'].includes(status)) {
+      if (!id || !status || !["succeeded", "failed", "revised", "unknown"].includes(status)) {
         console.error("Usage: muninn outcome record <decision_id> <succeeded|failed|revised|unknown> [notes]");
         return;
       }

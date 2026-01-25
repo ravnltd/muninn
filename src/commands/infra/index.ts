@@ -2,7 +2,7 @@
  * Infrastructure commands barrel export
  */
 
-export { serverAdd, serverList, serverRemove, serverCheck } from "./server";
-export { serviceAdd, serviceList, serviceRemove, serviceStatus, serviceLogs } from "./service";
-export { routeAdd, routeList, routeRemove, routeCheck } from "./route";
-export { infraStatus, infraMap, infraEvents, depAdd, depsList, handleInfraCommand } from "./status";
+export { routeAdd, routeCheck, routeList, routeRemove } from "./route";
+export { serverAdd, serverCheck, serverList, serverRemove } from "./server";
+export { serviceAdd, serviceList, serviceLogs, serviceRemove, serviceStatus } from "./service";
+export { depAdd, depsList, handleInfraCommand, infraEvents, infraMap, infraStatus } from "./status";

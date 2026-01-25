@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 /**
  * Muninn — MCP Server (Optimized)
  *
@@ -7,13 +8,10 @@
  * - 1 passthrough tool for all other commands (saves ~8k tokens)
  */
 
+import { execSync } from "node:child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
-import { execSync } from "child_process";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 function log(msg: string): void {
   process.stderr.write(`[muninn-mcp] ${msg}\n`);
@@ -35,10 +33,7 @@ function runContext(args: string, cwd?: string): string {
   }
 }
 
-const server = new Server(
-  { name: "muninn", version: "2.0.0" },
-  { capabilities: { tools: {} } }
-);
+const server = new Server({ name: "muninn", version: "2.0.0" }, { capabilities: { tools: {} } });
 
 // ============================================================================
 // Tool Definitions - 8 Core + 1 Passthrough
@@ -169,7 +164,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
       {
         name: "muninn_predict",
-        description: "Bundle all context for a task: files, co-changers, decisions, issues, learnings. Uses FTS (keyword matching).",
+        description:
+          "Bundle all context for a task: files, co-changers, decisions, issues, learnings. Uses FTS (keyword matching).",
         inputSchema: {
           type: "object",
           properties: {
@@ -183,7 +179,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
       {
         name: "muninn_suggest",
-        description: "Suggest files for a task using semantic search. Finds conceptually related files (e.g., 'fix auth bug' finds login, session, token files).",
+        description:
+          "Suggest files for a task using semantic search. Finds conceptually related files (e.g., 'fix auth bug' finds login, session, token files).",
         inputSchema: {
           type: "object",
           properties: {
@@ -246,7 +243,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           typedArgs.smart ? "--smart" : "",
           typedArgs.vector ? "--vector" : "",
           typedArgs.fts ? "--fts" : "",
-        ].filter(Boolean).join(" ");
+        ]
+          .filter(Boolean)
+          .join(" ");
         result = runContext(`query "${query}" ${flags}`.trim(), cwd);
         break;
       }
@@ -256,7 +255,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!files || files.length === 0) {
           throw new Error("Files array required");
         }
-        result = runContext(`check ${files.map(f => `"${f}"`).join(" ")}`, cwd);
+        result = runContext(`check ${files.map((f) => `"${f}"`).join(" ")}`, cwd);
         break;
       }
 
@@ -264,9 +263,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const path = typedArgs.path as string;
         const purpose = typedArgs.purpose as string;
         const fragility = typedArgs.fragility as number;
-        const fragReason = typedArgs.fragility_reason
-          ? `--fragility-reason "${typedArgs.fragility_reason}"`
-          : "";
+        const fragReason = typedArgs.fragility_reason ? `--fragility-reason "${typedArgs.fragility_reason}"` : "";
         const fileType = typedArgs.type ? `--type ${typedArgs.type}` : "";
         result = runContext(
           `file add "${path}" --purpose "${purpose}" --fragility ${fragility} ${fragReason} ${fileType}`.trim(),
@@ -305,13 +302,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const action = typedArgs.action as string;
         if (action === "add") {
           const title = typedArgs.title as string;
-          const severity = typedArgs.severity as number || 5;
+          const severity = (typedArgs.severity as number) || 5;
           const desc = typedArgs.description ? `--description "${typedArgs.description}"` : "";
           const issueType = typedArgs.type ? `--type ${typedArgs.type}` : "";
-          result = runContext(
-            `issue add --title "${title}" --severity ${severity} ${desc} ${issueType}`.trim(),
-            cwd
-          );
+          result = runContext(`issue add --title "${title}" --severity ${severity} ${desc} ${issueType}`.trim(), cwd);
         } else if (action === "resolve") {
           const id = typedArgs.id as number;
           const resolution = typedArgs.resolution as string;
@@ -334,7 +328,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (prev && !prev.ended_at) {
               runContext(`session end ${prev.id} --outcome "Replaced by new session"`, cwd);
             }
-          } catch { /* no previous session */ }
+          } catch {
+            /* no previous session */
+          }
           result = runContext(`session start "${goal.replace(/"/g, '\\"')}"`, cwd);
         } else if (action === "end") {
           const lastSession = runContext("session last --json", cwd);
@@ -342,7 +338,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           try {
             const parsed = JSON.parse(lastSession);
             if (parsed && !parsed.ended_at) sessionId = parsed.id;
-          } catch { /* no active session */ }
+          } catch {
+            /* no active session */
+          }
 
           if (!sessionId) {
             return { content: [{ type: "text", text: JSON.stringify({ error: "No active session" }) }] };

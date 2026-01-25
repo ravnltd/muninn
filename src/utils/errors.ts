@@ -8,18 +8,18 @@
 // ============================================================================
 
 export type ErrorCode =
-  | 'DB_CONNECTION_ERROR'
-  | 'DB_QUERY_ERROR'
-  | 'FILE_NOT_FOUND'
-  | 'FILE_READ_ERROR'
-  | 'INVALID_ARGUMENT'
-  | 'MISSING_REQUIRED_ARGUMENT'
-  | 'API_ERROR'
-  | 'SSH_ERROR'
-  | 'VALIDATION_ERROR'
-  | 'PARSE_ERROR'
-  | 'COMMAND_NOT_FOUND'
-  | 'UNKNOWN_ERROR';
+  | "DB_CONNECTION_ERROR"
+  | "DB_QUERY_ERROR"
+  | "FILE_NOT_FOUND"
+  | "FILE_READ_ERROR"
+  | "INVALID_ARGUMENT"
+  | "MISSING_REQUIRED_ARGUMENT"
+  | "API_ERROR"
+  | "SSH_ERROR"
+  | "VALIDATION_ERROR"
+  | "PARSE_ERROR"
+  | "COMMAND_NOT_FOUND"
+  | "UNKNOWN_ERROR";
 
 export class ContextError extends Error {
   constructor(
@@ -28,7 +28,7 @@ export class ContextError extends Error {
     public readonly context?: Record<string, unknown>
   ) {
     super(message);
-    this.name = 'ContextError';
+    this.name = "ContextError";
     Object.setPrototypeOf(this, ContextError.prototype);
   }
 
@@ -47,46 +47,42 @@ export class ContextError extends Error {
 // ============================================================================
 
 export function dbError(message: string, context?: Record<string, unknown>): ContextError {
-  return new ContextError(message, 'DB_QUERY_ERROR', context);
+  return new ContextError(message, "DB_QUERY_ERROR", context);
 }
 
 export function fileNotFoundError(path: string): ContextError {
-  return new ContextError(`File not found: ${path}`, 'FILE_NOT_FOUND', { path });
+  return new ContextError(`File not found: ${path}`, "FILE_NOT_FOUND", { path });
 }
 
 export function invalidArgumentError(message: string, context?: Record<string, unknown>): ContextError {
-  return new ContextError(message, 'INVALID_ARGUMENT', context);
+  return new ContextError(message, "INVALID_ARGUMENT", context);
 }
 
 export function missingArgumentError(argument: string): ContextError {
-  return new ContextError(
-    `Missing required argument: ${argument}`,
-    'MISSING_REQUIRED_ARGUMENT',
-    { argument }
-  );
+  return new ContextError(`Missing required argument: ${argument}`, "MISSING_REQUIRED_ARGUMENT", { argument });
 }
 
 export function apiError(message: string, status?: number): ContextError {
-  return new ContextError(message, 'API_ERROR', { status });
+  return new ContextError(message, "API_ERROR", { status });
 }
 
 export function sshError(message: string, server?: string): ContextError {
-  return new ContextError(message, 'SSH_ERROR', { server });
+  return new ContextError(message, "SSH_ERROR", { server });
 }
 
 export function validationError(message: string, field?: string): ContextError {
-  return new ContextError(message, 'VALIDATION_ERROR', { field });
+  return new ContextError(message, "VALIDATION_ERROR", { field });
 }
 
 export function parseError(message: string, source?: string): ContextError {
-  return new ContextError(message, 'PARSE_ERROR', { source });
+  return new ContextError(message, "PARSE_ERROR", { source });
 }
 
 // ============================================================================
 // Error Logging
 // ============================================================================
 
-const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
+const DEBUG = process.env.DEBUG === "1" || process.env.DEBUG === "true";
 
 export function logError(source: string, error: unknown): void {
   if (DEBUG) {
@@ -126,7 +122,7 @@ export function safeJsonParse<T>(json: string, defaultValue: T): T {
 export function safeParseInt(value: string | undefined, defaultValue: number): number {
   if (!value) return defaultValue;
   const parsed = parseInt(value, 10);
-  return isNaN(parsed) ? defaultValue : parsed;
+  return Number.isNaN(parsed) ? defaultValue : parsed;
 }
 
 export async function tryCatch<T>(
@@ -141,8 +137,8 @@ export async function tryCatch<T>(
     if (error instanceof ContextError) {
       return { ok: false, error };
     }
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return { ok: false, error: new ContextError(message, 'UNKNOWN_ERROR') };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return { ok: false, error: new ContextError(message, "UNKNOWN_ERROR") };
   }
 }
 
@@ -158,8 +154,8 @@ export function tryCatchSync<T>(
     if (error instanceof ContextError) {
       return { ok: false, error };
     }
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return { ok: false, error: new ContextError(message, 'UNKNOWN_ERROR') };
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return { ok: false, error: new ContextError(message, "UNKNOWN_ERROR") };
   }
 }
 
@@ -181,9 +177,7 @@ export function exitWithUsage(usage: string): never {
 // Result Type Helpers
 // ============================================================================
 
-export type Result<T, E = ContextError> =
-  | { ok: true; value: T }
-  | { ok: false; error: E };
+export type Result<T, E = ContextError> = { ok: true; value: T } | { ok: false; error: E };
 
 export function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };

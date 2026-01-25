@@ -6,7 +6,7 @@
  * If any of these tests fail, static file serving is broken.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createApp } from "./web-server";
 
 describe("Static File Serving", () => {
@@ -24,7 +24,9 @@ describe("Static File Serving", () => {
 
     const contentLength = res.headers.get("content-length");
     expect(contentLength).not.toBeNull();
-    expect(parseInt(contentLength!, 10)).toBeGreaterThan(0);
+    if (contentLength) {
+      expect(parseInt(contentLength, 10)).toBeGreaterThan(0);
+    }
 
     const body = await res.text();
     expect(body.length).toBeGreaterThan(0);
@@ -50,7 +52,9 @@ describe("Static File Serving", () => {
 
     const contentLength = res.headers.get("content-length");
     expect(contentLength).not.toBeNull();
-    expect(parseInt(contentLength!, 10)).toBeGreaterThan(0);
+    if (contentLength) {
+      expect(parseInt(contentLength, 10)).toBeGreaterThan(0);
+    }
 
     // Verify it's actually JavaScript
     const contentType = res.headers.get("content-type");
@@ -76,7 +80,9 @@ describe("Static File Serving", () => {
 
     const contentLength = res.headers.get("content-length");
     expect(contentLength).not.toBeNull();
-    expect(parseInt(contentLength!, 10)).toBeGreaterThan(0);
+    if (contentLength) {
+      expect(parseInt(contentLength, 10)).toBeGreaterThan(0);
+    }
 
     // Verify it's actually CSS
     const contentType = res.headers.get("content-type");

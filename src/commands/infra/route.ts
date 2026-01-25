@@ -4,11 +4,10 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { parseRouteArgs, RouteAddInput } from "../../utils/validation";
+import { getAllRoutes, getServiceByName, logInfraEvent } from "../../database/queries/infra";
 import { exitWithUsage } from "../../utils/errors";
 import { outputJson, outputSuccess } from "../../utils/format";
-import { getAllRoutes, getServiceByName } from "../../database/queries/infra";
-import { logInfraEvent } from "../../database/queries/infra";
+import { parseRouteArgs, RouteAddInput } from "../../utils/validation";
 
 // ============================================================================
 // Route Add
@@ -37,31 +36,27 @@ export function routeAdd(db: Database, args: string[]): void {
   }
 
   // Check if route already exists
-  const existing = db.query<{ id: number }, [string, string]>(
-    "SELECT id FROM routes WHERE domain = ? AND path = ?"
-  ).get(input.domain, input.path);
+  const existing = db
+    .query<{ id: number }, [string, string]>("SELECT id FROM routes WHERE domain = ? AND path = ?")
+    .get(input.domain, input.path);
 
   if (existing) {
     console.error(`❌ Route for ${input.domain}${input.path} already exists`);
     process.exit(1);
   }
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO routes (domain, path, service_id, proxy_type, ssl_type, notes)
     VALUES (?, ?, ?, ?, ?, ?)
-  `, [
-    input.domain,
-    input.path,
-    service.id,
-    input.proxy || null,
-    input.ssl || null,
-    input.notes || null,
-  ]);
+  `,
+    [input.domain, input.path, service.id, input.proxy || null, input.ssl || null, input.notes || null]
+  );
 
   logInfraEvent(db, {
     serviceId: service.id,
-    eventType: 'route_added',
-    severity: 'info',
+    eventType: "route_added",
+    severity: "info",
     title: `Route ${input.domain}${input.path} → ${input.service}`,
     description: input.ssl ? `SSL: ${input.ssl}` : undefined,
   });
@@ -86,8 +81,8 @@ export function routeList(db: Database): void {
   console.error("\n🌐 Registered Routes:\n");
 
   for (const route of routes) {
-    const ssl = route.ssl_type ? ` [${route.ssl_type}]` : '';
-    const path = route.path !== '/' ? route.path : '';
+    const ssl = route.ssl_type ? ` [${route.ssl_type}]` : "";
+    const path = route.path !== "/" ? route.path : "";
     console.error(`  ${route.domain}${path}${ssl}`);
     console.error(`     → ${route.service_name} @ ${route.server_name}`);
   }
@@ -105,9 +100,11 @@ export function routeRemove(db: Database, domain: string | undefined): void {
     exitWithUsage("Usage: context infra route remove <domain>");
   }
 
-  const route = db.query<{ id: number; domain: string; path: string; service_id: number }, [string]>(
-    "SELECT id, domain, path, service_id FROM routes WHERE domain = ?"
-  ).get(domain);
+  const route = db
+    .query<{ id: number; domain: string; path: string; service_id: number }, [string]>(
+      "SELECT id, domain, path, service_id FROM routes WHERE domain = ?"
+    )
+    .get(domain);
 
   if (!route) {
     console.error(`❌ Route for '${domain}' not found`);
@@ -118,8 +115,8 @@ export function routeRemove(db: Database, domain: string | undefined): void {
 
   logInfraEvent(db, {
     serviceId: route.service_id,
-    eventType: 'route_removed',
-    severity: 'warning',
+    eventType: "route_removed",
+    severity: "warning",
     title: `Route ${route.domain}${route.path} removed`,
   });
 
@@ -133,56 +130,52 @@ export function routeRemove(db: Database, domain: string | undefined): void {
 
 export async function routeCheck(db: Database, domain?: string): Promise<void> {
   const routes = domain
-    ? db.query<{ domain: string; path: string; service_id: number }, [string]>(
-        "SELECT domain, path, service_id FROM routes WHERE domain = ?"
-      ).all(domain)
+    ? db
+        .query<{ domain: string; path: string; service_id: number }, [string]>(
+          "SELECT domain, path, service_id FROM routes WHERE domain = ?"
+        )
+        .all(domain)
     : getAllRoutes(db);
 
   if (routes.length === 0) {
-    console.error(domain
-      ? `❌ No routes found for domain '${domain}'`
-      : "No routes to check");
+    console.error(domain ? `❌ No routes found for domain '${domain}'` : "No routes to check");
     outputJson({ checked: 0, reachable: 0, unreachable: 0 });
     return;
   }
 
   console.error("\n🔍 Checking route connectivity...\n");
 
-  const results: Array<{ domain: string; path: string; status: 'ok' | 'error'; httpCode?: string; error?: string }> = [];
+  const results: Array<{ domain: string; path: string; status: "ok" | "error"; httpCode?: string; error?: string }> =
+    [];
 
   for (const route of routes) {
     const url = `https://${route.domain}${route.path}`;
 
     try {
       const startTime = Date.now();
-      const result = Bun.spawnSync([
-        "curl", "-sf", "-o", "/dev/null",
-        "-w", "%{http_code}",
-        "--max-time", "10",
-        url
-      ]);
+      const result = Bun.spawnSync(["curl", "-sf", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", url]);
 
       const latency = Date.now() - startTime;
       const httpCode = result.stdout.toString().trim();
 
-      if (result.exitCode === 0 && httpCode.startsWith('2') || httpCode.startsWith('3')) {
+      if ((result.exitCode === 0 && httpCode.startsWith("2")) || httpCode.startsWith("3")) {
         console.error(`  🟢 ${route.domain}${route.path} - HTTP ${httpCode} (${latency}ms)`);
-        results.push({ domain: route.domain, path: route.path, status: 'ok', httpCode });
+        results.push({ domain: route.domain, path: route.path, status: "ok", httpCode });
       } else {
-        console.error(`  🔴 ${route.domain}${route.path} - HTTP ${httpCode || 'failed'}`);
-        results.push({ domain: route.domain, path: route.path, status: 'error', httpCode: httpCode || 'timeout' });
+        console.error(`  🔴 ${route.domain}${route.path} - HTTP ${httpCode || "failed"}`);
+        results.push({ domain: route.domain, path: route.path, status: "error", httpCode: httpCode || "timeout" });
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
       console.error(`  🔴 ${route.domain}${route.path} - ${errorMessage}`);
-      results.push({ domain: route.domain, path: route.path, status: 'error', error: errorMessage });
+      results.push({ domain: route.domain, path: route.path, status: "error", error: errorMessage });
     }
   }
 
   console.error("");
 
-  const reachable = results.filter(r => r.status === 'ok').length;
-  const unreachable = results.filter(r => r.status === 'error').length;
+  const reachable = results.filter((r) => r.status === "ok").length;
+  const unreachable = results.filter((r) => r.status === "error").length;
 
   console.error(`Summary: ${reachable}/${results.length} routes reachable`);
   if (unreachable > 0) {

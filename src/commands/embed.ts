@@ -4,19 +4,15 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { backfillAll, backfillTable, getEmbeddingStats } from "../database/queries/vector";
+import { generateEmbedding, getDimensions, getProvider, isEmbeddingAvailable } from "../embeddings";
 import { outputJson, outputSuccess } from "../utils/format";
-import { getProvider, isEmbeddingAvailable, generateEmbedding, getDimensions } from "../embeddings";
-import { getEmbeddingStats, backfillAll, backfillTable } from "../database/queries/vector";
 
 // ============================================================================
 // Main Command Handler
 // ============================================================================
 
-export async function handleEmbedCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): Promise<void> {
+export async function handleEmbedCommand(db: Database, projectId: number, args: string[]): Promise<void> {
   const subCommand = args[0];
   const subArgs = args.slice(1);
 
@@ -75,16 +71,16 @@ function showEmbedStatus(db: Database, projectId: number): void {
 
     for (const stat of stats) {
       const bar = createProgressBar(stat.coverage, 20);
-      console.error(
-        `  ${stat.table.padEnd(12)} ${bar} ${stat.withEmbedding}/${stat.total} (${stat.coverage}%)`
-      );
+      console.error(`  ${stat.table.padEnd(12)} ${bar} ${stat.withEmbedding}/${stat.total} (${stat.coverage}%)`);
       totalRecords += stat.total;
       totalWithEmb += stat.withEmbedding;
     }
 
     console.error("─".repeat(45));
     const totalCoverage = totalRecords > 0 ? Math.round((totalWithEmb / totalRecords) * 100) : 0;
-    console.error(`  ${"Total".padEnd(12)} ${createProgressBar(totalCoverage, 20)} ${totalWithEmb}/${totalRecords} (${totalCoverage}%)`);
+    console.error(
+      `  ${"Total".padEnd(12)} ${createProgressBar(totalCoverage, 20)} ${totalWithEmb}/${totalRecords} (${totalCoverage}%)`
+    );
   }
 
   console.error("");
@@ -109,7 +105,7 @@ function showEmbedStatus(db: Database, projectId: number): void {
 function createProgressBar(percent: number, width: number): string {
   const filled = Math.round((percent / 100) * width);
   const empty = width - filled;
-  return "[" + "█".repeat(filled) + "░".repeat(empty) + "]";
+  return `[${"█".repeat(filled)}${"░".repeat(empty)}]`;
 }
 
 // ============================================================================
@@ -171,7 +167,7 @@ async function runBackfill(db: Database, projectId: number, args: string[]): Pro
 
 async function testEmbedding(text: string): Promise<void> {
   if (!text) {
-    console.error("Usage: muninn embed test \"your text here\"");
+    console.error('Usage: muninn embed test "your text here"');
     process.exit(1);
   }
 
@@ -196,10 +192,16 @@ async function testEmbedding(text: string): Promise<void> {
   console.error(`✅ Embedding generated successfully`);
   console.error(`   Dimensions: ${embedding.length}`);
   console.error(`   Duration: ${duration}ms`);
-  console.error(`   First 5 values: [${Array.from(embedding.slice(0, 5)).map(v => v.toFixed(4)).join(", ")}...]`);
+  console.error(
+    `   First 5 values: [${Array.from(embedding.slice(0, 5))
+      .map((v) => v.toFixed(4))
+      .join(", ")}...]`
+  );
 
   // Calculate some stats
-  let min = Infinity, max = -Infinity, sum = 0;
+  let min = Infinity,
+    max = -Infinity,
+    sum = 0;
   for (const v of embedding) {
     if (v < min) min = v;
     if (v > max) max = v;

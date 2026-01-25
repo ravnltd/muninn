@@ -4,12 +4,12 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { closeGlobalDb, getGlobalDb } from "../database/connection";
+import { searchGlobalLearnings, semanticQuery } from "../database/queries/search";
 import type { QueryResult } from "../types";
-import { semanticQuery, searchGlobalLearnings } from "../database/queries/search";
-import { getGlobalDb, closeGlobalDb } from "../database/connection";
-import { outputJson } from "../utils/format";
-import { logError } from "../utils/errors";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
+import { logError } from "../utils/errors";
+import { outputJson } from "../utils/format";
 
 // ============================================================================
 // Semantic Query with Global Learning Integration
@@ -20,7 +20,7 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
   const useVectorOnly = args.includes("--vector");
   const useFtsOnly = args.includes("--fts");
   const useBrief = args.includes("--brief");
-  const queryTerms = args.filter(a => !a.startsWith("--")).join(" ");
+  const queryTerms = args.filter((a) => !a.startsWith("--")).join(" ");
 
   if (!queryTerms) {
     console.error("Usage: muninn query <text> [--smart] [--vector] [--fts] [--brief]");
@@ -34,12 +34,12 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
   }
 
   // Determine search mode
-  let mode: 'auto' | 'fts' | 'vector' | 'hybrid' = 'auto';
+  let mode: "auto" | "fts" | "vector" | "hybrid" = "auto";
   if (useVectorOnly) {
-    mode = 'vector';
+    mode = "vector";
     console.error("🔍 Using vector similarity search...\n");
   } else if (useFtsOnly) {
-    mode = 'fts';
+    mode = "fts";
     console.error("🔍 Using full-text search...\n");
   }
 
@@ -50,7 +50,7 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
       displayQueryResults(results, useBrief);
       outputJson(useBrief ? toBriefResults(results) : results);
     } catch (error) {
-      logError('smartQuery', error);
+      logError("smartQuery", error);
       // Fall back to regular query
       const results = await performSemanticQuery(db, queryTerms, projectId, mode);
       displayQueryResults(results, useBrief);
@@ -71,31 +71,31 @@ async function performSemanticQuery(
   db: Database,
   query: string,
   projectId: number,
-  mode: 'auto' | 'fts' | 'vector' | 'hybrid' = 'auto'
+  mode: "auto" | "fts" | "vector" | "hybrid" = "auto"
 ): Promise<QueryResult[]> {
   const results = await semanticQuery(db, query, projectId, { mode });
 
   // Also search global learnings (only for fts/auto modes)
-  if (mode !== 'vector') {
+  if (mode !== "vector") {
     try {
       const globalDb = getGlobalDb();
       const globalLearnings = searchGlobalLearnings(globalDb, query);
-      results.push(...globalLearnings.map(l => ({
-        id: l.id,
-        title: l.title,
-        content: l.content,
-        relevance: -0.5, // Boost global learnings
-        type: "global-learning" as const,
-      })));
+      results.push(
+        ...globalLearnings.map((l) => ({
+          id: l.id,
+          title: l.title,
+          content: l.content,
+          relevance: -0.5, // Boost global learnings
+          type: "global-learning" as const,
+        }))
+      );
       closeGlobalDb();
     } catch (error) {
-      logError('performSemanticQuery:global', error);
+      logError("performSemanticQuery:global", error);
     }
   }
 
-  return results
-    .sort((a, b) => a.relevance - b.relevance)
-    .slice(0, 10);
+  return results.sort((a, b) => a.relevance - b.relevance).slice(0, 10);
 }
 
 // ============================================================================
@@ -119,14 +119,14 @@ function displayQueryResults(results: QueryResult[], brief = false): void {
       console.error(`${typeIcon} ${result.title} — ${summary}`);
     } else {
       // Full mode: show content preview
-      const content = result.content?.substring(0, 100) || '';
-      const ellipsis = (result.content?.length || 0) > 100 ? '...' : '';
+      const content = result.content?.substring(0, 100) || "";
+      const ellipsis = (result.content?.length || 0) > 100 ? "..." : "";
 
       console.error(`${typeIcon} [${result.type}] ${result.title}`);
       if (content) {
         console.error(`   ${content}${ellipsis}`);
       }
-      console.error('');
+      console.error("");
     }
   }
 }
@@ -144,22 +144,22 @@ interface BriefResult {
 
 function getBriefSummary(result: QueryResult): string {
   switch (result.type) {
-    case 'file':
-      return `fragility ${result.relevance ? Math.abs(result.relevance * 10).toFixed(0) : '?'}`;
-    case 'decision':
-      return result.content?.substring(0, 40) || 'decision';
-    case 'issue':
-      return result.content?.substring(0, 40) || 'issue';
-    case 'learning':
-    case 'global-learning':
-      return result.content?.substring(0, 40) || 'learning';
+    case "file":
+      return `fragility ${result.relevance ? Math.abs(result.relevance * 10).toFixed(0) : "?"}`;
+    case "decision":
+      return result.content?.substring(0, 40) || "decision";
+    case "issue":
+      return result.content?.substring(0, 40) || "issue";
+    case "learning":
+    case "global-learning":
+      return result.content?.substring(0, 40) || "learning";
     default:
-      return result.content?.substring(0, 40) || '';
+      return result.content?.substring(0, 40) || "";
   }
 }
 
 function toBriefResults(results: QueryResult[]): BriefResult[] {
-  return results.map(r => ({
+  return results.map((r) => ({
     type: r.type,
     id: r.id,
     title: r.title,
@@ -169,17 +169,17 @@ function toBriefResults(results: QueryResult[]): BriefResult[] {
 
 function getTypeIcon(type: string): string {
   switch (type) {
-    case 'file':
-      return '📁';
-    case 'decision':
-      return '📋';
-    case 'issue':
-      return '🐛';
-    case 'learning':
-    case 'global-learning':
-      return '💡';
+    case "file":
+      return "📁";
+    case "decision":
+      return "📋";
+    case "issue":
+      return "🐛";
+    case "learning":
+    case "global-learning":
+      return "💡";
     default:
-      return '📄';
+      return "📄";
   }
 }
 
@@ -187,13 +187,9 @@ function getTypeIcon(type: string): string {
 // Smart Query with LLM Re-ranking
 // ============================================================================
 
-async function semanticQueryWithReranking(
-  db: Database,
-  query: string,
-  projectId: number
-): Promise<QueryResult[]> {
+async function semanticQueryWithReranking(db: Database, query: string, projectId: number): Promise<QueryResult[]> {
   // Stage 1: Get candidates using FTS5
-  const candidates = await performSemanticQuery(db, query, projectId, 'fts');
+  const candidates = await performSemanticQuery(db, query, projectId, "fts");
 
   if (candidates.length <= 3) {
     return candidates; // Not enough to rerank
@@ -201,9 +197,9 @@ async function semanticQueryWithReranking(
 
   // Stage 2: Use LLM to rerank
   try {
-    const candidateList = candidates.map((c: QueryResult, i: number) =>
-      `[${i}] ${c.type}: ${c.title} - ${c.content?.substring(0, 100) || ""}...`
-    ).join("\n");
+    const candidateList = candidates
+      .map((c: QueryResult, i: number) => `[${i}] ${c.type}: ${c.title} - ${c.content?.substring(0, 100) || ""}...`)
+      .join("\n");
 
     const prompt = `You are ranking search results for relevance to a query.
 
@@ -234,7 +230,7 @@ Example: [3, 0, 2, 1, 4]`;
       return reranked;
     }
   } catch (error) {
-    logError('semanticQueryWithReranking', error);
+    logError("semanticQueryWithReranking", error);
   }
 
   return candidates;
@@ -270,7 +266,7 @@ async function callLLM(prompt: string, maxTokens: number = 2000): Promise<string
       throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
     }
 
-    const data = await response.json() as { content: Array<{ type: string; text: string }> };
+    const data = (await response.json()) as { content: Array<{ type: string; text: string }> };
     return data.content[0]?.text || "";
   } catch (error) {
     // Ensure no key exposure in error messages

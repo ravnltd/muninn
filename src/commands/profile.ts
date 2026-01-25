@@ -5,8 +5,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { DeveloperProfileEntry, ProfileCategory, ProfileSource } from "../types";
 import { outputJson, outputSuccess } from "../utils/format";
-import type { ProfileCategory, ProfileSource, DeveloperProfileEntry } from "../types";
 
 // ============================================================================
 // Profile Show
@@ -17,18 +17,18 @@ export function profileShow(
   projectId: number,
   options?: { category?: ProfileCategory }
 ): DeveloperProfileEntry[] {
-  const categoryFilter = options?.category
-    ? "AND category = ?"
-    : "";
+  const categoryFilter = options?.category ? "AND category = ?" : "";
 
   const params: (number | string)[] = [projectId];
   if (options?.category) params.push(options.category);
 
-  const entries = db.query<DeveloperProfileEntry, (number | string)[]>(`
+  const entries = db
+    .query<DeveloperProfileEntry, (number | string)[]>(`
     SELECT * FROM developer_profile
     WHERE project_id = ? ${categoryFilter}
     ORDER BY confidence DESC, times_confirmed DESC
-  `).all(...params);
+  `)
+    .all(...params);
 
   return entries;
 }
@@ -46,7 +46,8 @@ export function profileAdd(
   isGlobal: boolean = false
 ): void {
   if (isGlobal) {
-    db.run(`
+    db.run(
+      `
       INSERT INTO global_developer_profile (key, value, category, source, confidence)
       VALUES (?, ?, ?, 'declared', 0.9)
       ON CONFLICT(key) DO UPDATE SET
@@ -56,9 +57,12 @@ export function profileAdd(
         confidence = MAX(confidence, 0.9),
         times_confirmed = times_confirmed + 1,
         last_updated_at = CURRENT_TIMESTAMP
-    `, [key, value, category]);
+    `,
+      [key, value, category]
+    );
   } else {
-    db.run(`
+    db.run(
+      `
       INSERT INTO developer_profile (project_id, key, value, category, source, confidence)
       VALUES (?, ?, ?, ?, 'declared', 0.9)
       ON CONFLICT(project_id, key) DO UPDATE SET
@@ -68,7 +72,9 @@ export function profileAdd(
         confidence = MAX(confidence, 0.9),
         times_confirmed = times_confirmed + 1,
         last_updated_at = CURRENT_TIMESTAMP
-    `, [projectId, key, value, category]);
+    `,
+      [projectId, key, value, category]
+    );
   }
 }
 
@@ -93,7 +99,8 @@ export function profileInfer(db: Database, projectId: number): DeveloperProfileE
 
   // Persist inferred entries
   for (const entry of inferred) {
-    db.run(`
+    db.run(
+      `
       INSERT INTO developer_profile (project_id, key, value, evidence, confidence, category, source)
       VALUES (?, ?, ?, ?, ?, ?, 'inferred')
       ON CONFLICT(project_id, key) DO UPDATE SET
@@ -103,7 +110,9 @@ export function profileInfer(db: Database, projectId: number): DeveloperProfileE
                          ELSE MIN(1.0, confidence + 0.1) END,
         times_confirmed = times_confirmed + 1,
         last_updated_at = CURRENT_TIMESTAMP
-    `, [projectId, entry.key, entry.value, entry.evidence, entry.confidence, entry.category]);
+    `,
+      [projectId, entry.key, entry.value, entry.evidence, entry.confidence, entry.category]
+    );
   }
 
   return inferred;
@@ -111,17 +120,19 @@ export function profileInfer(db: Database, projectId: number): DeveloperProfileE
 
 function inferFromObservations(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
   try {
-    const patterns = db.query<{ content: string; frequency: number; type: string }, [number]>(`
+    const patterns = db
+      .query<{ content: string; frequency: number; type: string }, [number]>(`
       SELECT content, frequency, type FROM observations
       WHERE (project_id = ? OR project_id IS NULL)
         AND type IN ('preference', 'pattern', 'behavior')
         AND frequency >= 2
       ORDER BY frequency DESC
       LIMIT 10
-    `).all(projectId);
+    `)
+      .all(projectId);
 
     for (const p of patterns) {
-      const confidence = Math.min(0.9, 0.4 + (p.frequency * 0.1));
+      const confidence = Math.min(0.9, 0.4 + p.frequency * 0.1);
       results.push({
         id: 0,
         project_id: projectId,
@@ -129,8 +140,8 @@ function inferFromObservations(db: Database, projectId: number, results: Develop
         value: p.content.slice(0, 200),
         evidence: JSON.stringify([`Observed ${p.frequency}x`]),
         confidence,
-        category: p.type === 'preference' ? 'coding_style' : 'workflow',
-        source: 'inferred' as ProfileSource,
+        category: p.type === "preference" ? "coding_style" : "workflow",
+        source: "inferred" as ProfileSource,
         times_confirmed: p.frequency,
         last_updated_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -144,13 +155,15 @@ function inferFromObservations(db: Database, projectId: number, results: Develop
 function inferFromDecisions(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
   try {
     // Find decisions with successful outcomes
-    const successfulDecisions = db.query<{ title: string; decision: string; reasoning: string | null }, [number]>(`
+    const successfulDecisions = db
+      .query<{ title: string; decision: string; reasoning: string | null }, [number]>(`
       SELECT title, decision, reasoning FROM decisions
       WHERE project_id = ? AND status = 'active'
         AND outcome_status = 'succeeded'
       ORDER BY decided_at DESC
       LIMIT 5
-    `).all(projectId);
+    `)
+      .all(projectId);
 
     for (const d of successfulDecisions) {
       results.push({
@@ -160,8 +173,8 @@ function inferFromDecisions(db: Database, projectId: number, results: DeveloperP
         value: d.decision.slice(0, 200),
         evidence: JSON.stringify([`Decision: ${d.title}`, d.reasoning?.slice(0, 100)]),
         confidence: 0.7,
-        category: 'architecture',
-        source: 'inferred' as ProfileSource,
+        category: "architecture",
+        source: "inferred" as ProfileSource,
         times_confirmed: 1,
         last_updated_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -174,27 +187,29 @@ function inferFromDecisions(db: Database, projectId: number, results: DeveloperP
 
 function inferFromLearnings(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
   try {
-    const learnings = db.query<{ title: string; content: string; category: string; times_applied: number }, [number]>(`
+    const learnings = db
+      .query<{ title: string; content: string; category: string; times_applied: number }, [number]>(`
       SELECT title, content, category, times_applied FROM learnings
       WHERE (project_id = ? OR project_id IS NULL)
         AND category IN ('preference', 'convention', 'pattern')
         AND times_applied >= 2
       ORDER BY times_applied DESC
       LIMIT 5
-    `).all(projectId);
+    `)
+      .all(projectId);
 
     for (const l of learnings) {
-      const confidence = Math.min(0.9, 0.5 + (l.times_applied * 0.05));
-      const category: ProfileCategory = l.category === 'convention' ? 'coding_style' : 'workflow';
+      const confidence = Math.min(0.9, 0.5 + l.times_applied * 0.05);
+      const category: ProfileCategory = l.category === "convention" ? "coding_style" : "workflow";
       results.push({
         id: 0,
         project_id: projectId,
-        key: `learning_${l.title.replace(/\s+/g, '_').slice(0, 30)}`,
+        key: `learning_${l.title.replace(/\s+/g, "_").slice(0, 30)}`,
         value: l.content.slice(0, 200),
         evidence: JSON.stringify([`Learning applied ${l.times_applied}x`]),
         confidence,
         category,
-        source: 'inferred' as ProfileSource,
+        source: "inferred" as ProfileSource,
         times_confirmed: l.times_applied,
         last_updated_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -207,13 +222,15 @@ function inferFromLearnings(db: Database, projectId: number, results: DeveloperP
 
 function inferFromWorkflows(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
   try {
-    const workflows = db.query<{ task_type: string; approach: string; times_used: number }, [number]>(`
+    const workflows = db
+      .query<{ task_type: string; approach: string; times_used: number }, [number]>(`
       SELECT task_type, approach, times_used FROM workflow_patterns
       WHERE (project_id = ? OR project_id IS NULL)
         AND times_used >= 2
       ORDER BY times_used DESC
       LIMIT 5
-    `).all(projectId);
+    `)
+      .all(projectId);
 
     for (const w of workflows) {
       results.push({
@@ -222,9 +239,9 @@ function inferFromWorkflows(db: Database, projectId: number, results: DeveloperP
         key: `workflow_${w.task_type}`,
         value: w.approach.slice(0, 200),
         evidence: JSON.stringify([`Used ${w.times_used}x for ${w.task_type}`]),
-        confidence: Math.min(0.9, 0.5 + (w.times_used * 0.1)),
-        category: 'workflow',
-        source: 'inferred' as ProfileSource,
+        confidence: Math.min(0.9, 0.5 + w.times_used * 0.1),
+        category: "workflow",
+        source: "inferred" as ProfileSource,
         times_confirmed: w.times_used,
         last_updated_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -242,22 +259,28 @@ function inferFromWorkflows(db: Database, projectId: number, results: DeveloperP
 export function profileEvolve(db: Database, projectId: number): void {
   try {
     // Decay confidence for entries not recently confirmed
-    db.run(`
+    db.run(
+      `
       UPDATE developer_profile
       SET confidence = MAX(0.1, confidence - 0.05)
       WHERE project_id = ?
         AND source = 'inferred'
         AND last_updated_at < datetime('now', '-30 days')
-    `, [projectId]);
+    `,
+      [projectId]
+    );
 
     // Boost confidence for frequently confirmed entries
-    db.run(`
+    db.run(
+      `
       UPDATE developer_profile
       SET confidence = MIN(1.0, confidence + 0.05)
       WHERE project_id = ?
         AND times_confirmed >= 5
         AND confidence < 0.95
-    `, [projectId]);
+    `,
+      [projectId]
+    );
   } catch {
     // Table might not exist
   }
@@ -274,24 +297,40 @@ export function getTopProfileEntries(
 ): Array<{ key: string; value: string; confidence: number; category: string }> {
   try {
     // Get project-specific entries
-    const projectEntries = db.query<{
-      key: string; value: string; confidence: number; category: string;
-    }, [number, number]>(`
+    const projectEntries = db
+      .query<
+        {
+          key: string;
+          value: string;
+          confidence: number;
+          category: string;
+        },
+        [number, number]
+      >(`
       SELECT key, value, confidence, category FROM developer_profile
       WHERE project_id = ?
       ORDER BY confidence DESC, times_confirmed DESC
       LIMIT ?
-    `).all(projectId, limit);
+    `)
+      .all(projectId, limit);
 
     // If not enough, supplement with global entries
     if (projectEntries.length < limit) {
-      const globalEntries = db.query<{
-        key: string; value: string; confidence: number; category: string;
-      }, [number]>(`
+      const globalEntries = db
+        .query<
+          {
+            key: string;
+            value: string;
+            confidence: number;
+            category: string;
+          },
+          [number]
+        >(`
         SELECT key, value, confidence, category FROM global_developer_profile
         ORDER BY confidence DESC, times_confirmed DESC
         LIMIT ?
-      `).all(limit - projectEntries.length);
+      `)
+        .all(limit - projectEntries.length);
 
       return [...projectEntries, ...globalEntries];
     }
@@ -313,7 +352,9 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
     case "show":
     case "list":
     case undefined: {
-      const category = args.find(a => ['coding_style', 'architecture', 'tooling', 'workflow', 'communication'].includes(a)) as ProfileCategory | undefined;
+      const category = args.find((a) =>
+        ["coding_style", "architecture", "tooling", "workflow", "communication"].includes(a)
+      ) as ProfileCategory | undefined;
       const entries = profileShow(db, projectId, { category });
 
       if (entries.length === 0) {

@@ -5,8 +5,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { parseArgs } from "node:util";
 import { outputJson, outputSuccess } from "../utils/format";
-import { parseArgs } from "util";
 
 // ============================================================================
 // Types
@@ -39,11 +39,7 @@ interface BookmarkAddOptions {
 // Add Bookmark
 // ============================================================================
 
-export function bookmarkAdd(
-  db: Database,
-  projectId: number,
-  options: BookmarkAddOptions
-): void {
+export function bookmarkAdd(db: Database, projectId: number, options: BookmarkAddOptions): void {
   const { label, content, source, contentType, priority, tags } = options;
 
   if (!label || !content) {
@@ -56,7 +52,8 @@ export function bookmarkAdd(
     process.exit(1);
   }
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO bookmarks (project_id, label, content, source, content_type, priority, tags)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id, label) DO UPDATE SET
@@ -66,15 +63,17 @@ export function bookmarkAdd(
       priority = excluded.priority,
       tags = excluded.tags,
       created_at = CURRENT_TIMESTAMP
-  `, [
-    projectId,
-    label,
-    content,
-    source || null,
-    contentType || "text",
-    priority || 3,
-    tags ? JSON.stringify(tags) : null,
-  ]);
+  `,
+    [
+      projectId,
+      label,
+      content,
+      source || null,
+      contentType || "text",
+      priority || 3,
+      tags ? JSON.stringify(tags) : null,
+    ]
+  );
 
   console.error(`📌 Bookmark '${label}' saved`);
   outputSuccess({ label, saved: true });
@@ -84,20 +83,18 @@ export function bookmarkAdd(
 // Get Bookmark
 // ============================================================================
 
-export function bookmarkGet(
-  db: Database,
-  projectId: number,
-  label: string
-): Bookmark | null {
+export function bookmarkGet(db: Database, projectId: number, label: string): Bookmark | null {
   if (!label) {
     console.error("Usage: muninn bookmark get <label>");
     process.exit(1);
   }
 
-  const bookmark = db.query<Bookmark, [number, string]>(`
+  const bookmark = db
+    .query<Bookmark, [number, string]>(`
     SELECT * FROM bookmarks
     WHERE project_id = ? AND label = ?
-  `).get(projectId, label);
+  `)
+    .get(projectId, label);
 
   if (!bookmark) {
     console.error(`❌ Bookmark '${label}' not found`);
@@ -123,11 +120,13 @@ export function bookmarkGet(
 // ============================================================================
 
 export function bookmarkList(db: Database, projectId: number): Bookmark[] {
-  const bookmarks = db.query<Bookmark, [number]>(`
+  const bookmarks = db
+    .query<Bookmark, [number]>(`
     SELECT * FROM bookmarks
     WHERE project_id = ?
     ORDER BY priority ASC, created_at DESC
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (bookmarks.length === 0) {
     console.error("📌 No bookmarks found");
@@ -153,20 +152,19 @@ export function bookmarkList(db: Database, projectId: number): Bookmark[] {
 // Delete Bookmark
 // ============================================================================
 
-export function bookmarkDelete(
-  db: Database,
-  projectId: number,
-  label: string
-): boolean {
+export function bookmarkDelete(db: Database, projectId: number, label: string): boolean {
   if (!label) {
     console.error("Usage: muninn bookmark delete <label>");
     process.exit(1);
   }
 
-  const result = db.run(`
+  const result = db.run(
+    `
     DELETE FROM bookmarks
     WHERE project_id = ? AND label = ?
-  `, [projectId, label]);
+  `,
+    [projectId, label]
+  );
 
   if (result.changes === 0) {
     console.error(`❌ Bookmark '${label}' not found`);
@@ -184,9 +182,12 @@ export function bookmarkDelete(
 // ============================================================================
 
 export function bookmarkClear(db: Database, projectId: number): number {
-  const result = db.run(`
+  const result = db.run(
+    `
     DELETE FROM bookmarks WHERE project_id = ?
-  `, [projectId]);
+  `,
+    [projectId]
+  );
 
   console.error(`🗑️  Cleared ${result.changes} bookmark(s)`);
   outputSuccess({ cleared: result.changes });
@@ -197,11 +198,7 @@ export function bookmarkClear(db: Database, projectId: number): number {
 // CLI Handler
 // ============================================================================
 
-export function handleBookmarkCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): void {
+export function handleBookmarkCommand(db: Database, projectId: number, args: string[]): void {
   const subCmd = args[0];
   const subArgs = args.slice(1);
 
@@ -225,7 +222,7 @@ export function handleBookmarkCommand(
         content: values.content || "",
         source: values.source,
         contentType: values.type,
-        priority: values.priority ? parseInt(values.priority) : undefined,
+        priority: values.priority ? parseInt(values.priority, 10) : undefined,
         tags: values.tags ? JSON.parse(values.tags) : undefined,
       });
       break;

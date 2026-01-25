@@ -4,8 +4,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { getSchemaVersion, getLatestVersion, checkIntegrity, getProjectDbPath } from "../database/connection";
-import { getRecentErrors, optimizeDatabase, getPendingMigrations, runMigrations } from "../database/migrations";
+import { checkIntegrity, getLatestVersion, getProjectDbPath, getSchemaVersion } from "../database/connection";
+import { getPendingMigrations, getRecentErrors, optimizeDatabase, runMigrations } from "../database/migrations";
 import { outputSuccess } from "../utils/format";
 
 /**
@@ -19,24 +19,24 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
       const integrity = checkIntegrity(db);
       console.error(`\n🔍 Database Integrity Check\n`);
       console.error(`Version: ${integrity.version}/${getLatestVersion()}`);
-      console.error(`Status: ${integrity.valid ? '✅ Valid' : '❌ Issues Found'}\n`);
+      console.error(`Status: ${integrity.valid ? "✅ Valid" : "❌ Issues Found"}\n`);
 
       if (integrity.issues.length > 0) {
-        console.error('Issues:');
+        console.error("Issues:");
         for (const issue of integrity.issues) {
           console.error(`  ⚠️  ${issue}`);
         }
-        console.error('');
+        console.error("");
       }
 
-      const missingTables = integrity.tables.filter(t => !t.exists);
+      const missingTables = integrity.tables.filter((t) => !t.exists);
       if (missingTables.length > 0) {
-        console.error(`Missing tables: ${missingTables.map(t => t.name).join(', ')}`);
+        console.error(`Missing tables: ${missingTables.map((t) => t.name).join(", ")}`);
       }
 
-      const missingIndexes = integrity.indexes.filter(i => !i.exists);
+      const missingIndexes = integrity.indexes.filter((i) => !i.exists);
       if (missingIndexes.length > 0) {
-        console.error(`Missing indexes: ${missingIndexes.map(i => i.name).join(', ')}`);
+        console.error(`Missing indexes: ${missingIndexes.map((i) => i.name).join(", ")}`);
       }
 
       outputSuccess({ ...integrity });
@@ -59,11 +59,11 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
     }
 
     case "migrate": {
-      console.error('Running migrations...');
+      console.error("Running migrations...");
       const result = runMigrations(db, getProjectDbPath());
       if (result.ok) {
         if (result.value.applied.length === 0) {
-          console.error('✅ Already up to date');
+          console.error("✅ Already up to date");
         } else {
           console.error(`✅ Applied ${result.value.applied.length} migration(s)`);
           for (const m of result.value.applied) {
@@ -79,10 +79,10 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
     }
 
     case "errors": {
-      const limit = parseInt(subArgs[1]) || 20;
+      const limit = parseInt(subArgs[1], 10) || 20;
       const errors = getRecentErrors(db, limit);
       if (errors.length === 0) {
-        console.error('No recent errors');
+        console.error("No recent errors");
       } else {
         console.error(`\n📋 Recent Errors (${errors.length})\n`);
         for (const err of errors) {
@@ -94,9 +94,9 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
     }
 
     case "optimize": {
-      console.error('Optimizing database...');
+      console.error("Optimizing database...");
       optimizeDatabase(db);
-      console.error('✅ Database optimized');
+      console.error("✅ Database optimized");
       outputSuccess({ optimized: true });
       break;
     }

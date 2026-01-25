@@ -4,10 +4,10 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { join, dirname, extname, relative } from "path";
-import { outputJson } from "../utils/format";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, join, relative } from "node:path";
 import { logError, safeJsonParse } from "../utils/errors";
+import { outputJson } from "../utils/format";
 
 // ============================================================================
 // Types
@@ -47,19 +47,30 @@ const PYTHON_IMPORT_PATTERNS = [
   /^import\s+([\w.]+)(?:\s+as\s+\w+)?$/gm,
 ];
 
-const CODE_EXTENSIONS = new Set([
-  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
-  ".vue", ".svelte", ".astro",
-  ".py",
-]);
+const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro", ".py"]);
 
 const IGNORE_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", ".next", ".svelte-kit",
-  "__pycache__", ".pytest_cache", "target", "vendor",
-  ".claude", ".vscode", ".idea", "coverage",
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  ".svelte-kit",
+  "__pycache__",
+  ".pytest_cache",
+  "target",
+  "vendor",
+  ".claude",
+  ".vscode",
+  ".idea",
+  "coverage",
 ]);
 
-function parseImports(content: string, filePath: string, projectPath: string): {
+function parseImports(
+  content: string,
+  filePath: string,
+  projectPath: string
+): {
   localImports: string[];
   externalDeps: string[];
 } {
@@ -72,7 +83,11 @@ function parseImports(content: string, filePath: string, projectPath: string): {
   return parseJsImports(content, filePath, projectPath);
 }
 
-function parseJsImports(content: string, filePath: string, projectPath: string): {
+function parseJsImports(
+  content: string,
+  filePath: string,
+  projectPath: string
+): {
   localImports: string[];
   externalDeps: string[];
 } {
@@ -82,7 +97,7 @@ function parseJsImports(content: string, filePath: string, projectPath: string):
 
   for (const pattern of JS_IMPORT_PATTERNS) {
     pattern.lastIndex = 0; // Reset regex state
-    let match;
+    let match: RegExpExecArray | null = null;
     while ((match = pattern.exec(content)) !== null) {
       const importPath = match[1];
       if (seen.has(importPath)) continue;
@@ -116,7 +131,11 @@ function parseJsImports(content: string, filePath: string, projectPath: string):
   return { localImports, externalDeps };
 }
 
-function parsePythonImports(content: string, filePath: string, projectPath: string): {
+function parsePythonImports(
+  content: string,
+  filePath: string,
+  projectPath: string
+): {
   localImports: string[];
   externalDeps: string[];
 } {
@@ -126,7 +145,7 @@ function parsePythonImports(content: string, filePath: string, projectPath: stri
 
   for (const pattern of PYTHON_IMPORT_PATTERNS) {
     pattern.lastIndex = 0;
-    let match;
+    let match: RegExpExecArray | null = null;
     while ((match = pattern.exec(content)) !== null) {
       const modulePath = match[1];
       if (seen.has(modulePath)) continue;
@@ -157,11 +176,7 @@ function parsePythonImports(content: string, filePath: string, projectPath: stri
   return { localImports, externalDeps };
 }
 
-function resolvePythonRelativeImport(
-  fromFile: string,
-  modulePath: string,
-  projectPath: string
-): string | null {
+function resolvePythonRelativeImport(fromFile: string, modulePath: string, projectPath: string): string | null {
   const fromDir = dirname(fromFile);
 
   // Count leading dots for directory traversal
@@ -181,10 +196,7 @@ function resolvePythonRelativeImport(
   return resolvePythonPath(basePath, projectPath);
 }
 
-function resolvePythonAbsoluteImport(
-  modulePath: string,
-  projectPath: string
-): string | null {
+function resolvePythonAbsoluteImport(modulePath: string, projectPath: string): string | null {
   // Convert dots to path separators: foo.bar.baz -> foo/bar/baz
   const fsPath = modulePath.replace(/\./g, "/");
   return resolvePythonPath(fsPath, projectPath);
@@ -192,10 +204,7 @@ function resolvePythonAbsoluteImport(
 
 function resolvePythonPath(basePath: string, projectPath: string): string | null {
   // Try as direct .py file, then as package (__init__.py)
-  const candidates = [
-    basePath + ".py",
-    join(basePath, "__init__.py"),
-  ];
+  const candidates = [`${basePath}.py`, join(basePath, "__init__.py")];
 
   for (const candidate of candidates) {
     const fullPath = join(projectPath, candidate);
@@ -207,11 +216,7 @@ function resolvePythonPath(basePath: string, projectPath: string): string | null
   return null;
 }
 
-function resolveRelativeImport(
-  fromFile: string,
-  importPath: string,
-  projectPath: string
-): string | null {
+function resolveRelativeImport(fromFile: string, importPath: string, projectPath: string): string | null {
   const fromDir = dirname(fromFile);
   const basePath = join(fromDir, importPath);
 
@@ -313,20 +318,20 @@ export function buildDependencyGraph(projectPath: string, maxFiles: number = 500
 // Dependency Commands
 // ============================================================================
 
-export function showDependencies(
-  db: Database,
-  projectId: number,
-  projectPath: string,
-  filePath: string
-): void {
+export function showDependencies(db: Database, projectId: number, projectPath: string, filePath: string): void {
   // First check if we have cached dependencies in DB
-  const fileRecord = db.query<{
-    dependencies: string | null;
-    dependents: string | null;
-  }, [number, string]>(`
+  const fileRecord = db
+    .query<
+      {
+        dependencies: string | null;
+        dependents: string | null;
+      },
+      [number, string]
+    >(`
     SELECT dependencies, dependents FROM files
     WHERE project_id = ? AND path = ?
-  `).get(projectId, filePath);
+  `)
+    .get(projectId, filePath);
 
   let imports: string[] = [];
   let dependents: string[] = [];
@@ -460,7 +465,8 @@ export function refreshDependencies(
       const fileType = inferFileType(filePath);
       const fragility = computeFragilityFromGraph(info.dependents.length, info.imports.length);
 
-      db.run(`
+      db.run(
+        `
         INSERT INTO files (project_id, path, type, fragility, dependencies, dependents, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(project_id, path) DO UPDATE SET
@@ -469,14 +475,9 @@ export function refreshDependencies(
           dependencies = excluded.dependencies,
           dependents = excluded.dependents,
           updated_at = CURRENT_TIMESTAMP
-      `, [
-        projectId,
-        filePath,
-        fileType,
-        fragility,
-        JSON.stringify(info.imports),
-        JSON.stringify(info.dependents),
-      ]);
+      `,
+        [projectId, filePath, fileType, fragility, JSON.stringify(info.imports), JSON.stringify(info.dependents)]
+      );
       updated++;
     } catch (error) {
       logError("refreshDependencies:update", error);
@@ -529,8 +530,8 @@ export function generateDependencyGraph(
     relevantFiles.add(focusFile);
     const info = graph.files.get(focusFile);
     if (info) {
-      info.imports.forEach(f => relevantFiles.add(f));
-      info.dependents.forEach(f => relevantFiles.add(f));
+      for (const f of info.imports) relevantFiles.add(f);
+      for (const f of info.dependents) relevantFiles.add(f);
     }
   } else {
     // Show all files (limited)
@@ -547,9 +548,11 @@ export function generateDependencyGraph(
     const id = nodeId(path);
 
     // Get fragility from DB for styling
-    const fileRecord = db.query<{ fragility: number }, [number, string]>(`
+    const fileRecord = db
+      .query<{ fragility: number }, [number, string]>(`
       SELECT fragility FROM files WHERE project_id = ? AND path = ?
-    `).get(projectId, path);
+    `)
+      .get(projectId, path);
 
     const fragility = fileRecord?.fragility || 0;
 
@@ -586,9 +589,7 @@ export function generateDependencyGraph(
 // Find Circular Dependencies
 // ============================================================================
 
-export function findCircularDependencies(
-  projectPath: string
-): Array<string[]> {
+export function findCircularDependencies(projectPath: string): Array<string[]> {
   const graph = buildDependencyGraph(projectPath, 300);
   const cycles: Array<string[]> = [];
   const visited = new Set<string>();
@@ -603,7 +604,7 @@ export function findCircularDependencies(
 
       // Check if this cycle is already recorded
       const cycleKey = cycle.sort().join("|");
-      const existing = cycles.some(c => c.sort().join("|") === cycleKey);
+      const existing = cycles.some((c) => c.sort().join("|") === cycleKey);
       if (!existing) {
         cycles.push(cycle);
       }

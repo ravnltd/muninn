@@ -4,22 +4,18 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync } from "fs";
-import { join } from "path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { closeGlobalDb, getGlobalDb } from "../database/connection";
 import type { ShipCheck } from "../types";
-import { outputJson, formatShipCheck } from "../utils/format";
 import { logError } from "../utils/errors";
-import { getGlobalDb, closeGlobalDb } from "../database/connection";
+import { formatShipCheck, outputJson } from "../utils/format";
 
 // ============================================================================
 // Ship Checklist
 // ============================================================================
 
-export async function runShipChecklist(
-  db: Database,
-  projectId: number,
-  projectPath: string
-): Promise<ShipCheck[]> {
+export async function runShipChecklist(db: Database, projectId: number, projectPath: string): Promise<ShipCheck[]> {
   const checks: ShipCheck[] = [];
 
   // Check 1: TypeScript compilation
@@ -76,23 +72,22 @@ async function checkTypeScript(projectPath: string): Promise<ShipCheck> {
       };
     }
   } catch (error) {
-    logError('checkTypeScript', error);
+    logError("checkTypeScript", error);
     return { name: "TypeScript", status: "warn", message: "Could not run tsc" };
   }
 }
 
 async function checkTests(projectPath: string): Promise<ShipCheck> {
   // Check for test runner
-  const hasVitest = existsSync(join(projectPath, "vitest.config.ts")) ||
-                    existsSync(join(projectPath, "vitest.config.js"));
-  const hasJest = existsSync(join(projectPath, "jest.config.js")) ||
-                  existsSync(join(projectPath, "jest.config.ts"));
+  const hasVitest =
+    existsSync(join(projectPath, "vitest.config.ts")) || existsSync(join(projectPath, "vitest.config.js"));
+  const hasJest = existsSync(join(projectPath, "jest.config.js")) || existsSync(join(projectPath, "jest.config.ts"));
 
   if (!hasVitest && !hasJest) {
     // Check package.json for test script
     try {
       const pkgJson = Bun.file(join(projectPath, "package.json"));
-      const pkg = await pkgJson.json() as { scripts?: Record<string, string> };
+      const pkg = (await pkgJson.json()) as { scripts?: Record<string, string> };
       if (!pkg.scripts?.test || pkg.scripts.test.includes("no test")) {
         return { name: "Tests", status: "skip", message: "No test runner configured" };
       }
@@ -114,15 +109,16 @@ async function checkTests(projectPath: string): Promise<ShipCheck> {
       return { name: "Tests", status: "fail", message: "Tests failed" };
     }
   } catch (error) {
-    logError('checkTests', error);
+    logError("checkTests", error);
     return { name: "Tests", status: "warn", message: "Could not run tests" };
   }
 }
 
 async function checkLint(projectPath: string): Promise<ShipCheck> {
-  const hasEslint = existsSync(join(projectPath, ".eslintrc.js")) ||
-                    existsSync(join(projectPath, ".eslintrc.json")) ||
-                    existsSync(join(projectPath, "eslint.config.js"));
+  const hasEslint =
+    existsSync(join(projectPath, ".eslintrc.js")) ||
+    existsSync(join(projectPath, ".eslintrc.json")) ||
+    existsSync(join(projectPath, "eslint.config.js"));
   const hasBiome = existsSync(join(projectPath, "biome.json"));
 
   if (!hasEslint && !hasBiome) {
@@ -130,9 +126,7 @@ async function checkLint(projectPath: string): Promise<ShipCheck> {
   }
 
   try {
-    const lintCmd = hasBiome
-      ? ["bun", "x", "biome", "check", "."]
-      : ["bun", "x", "eslint", "."];
+    const lintCmd = hasBiome ? ["bun", "x", "biome", "check", "."] : ["bun", "x", "eslint", "."];
 
     const result = Bun.spawnSync(lintCmd, {
       cwd: projectPath,
@@ -151,16 +145,19 @@ async function checkLint(projectPath: string): Promise<ShipCheck> {
       };
     }
   } catch (error) {
-    logError('checkLint', error);
+    logError("checkLint", error);
     return { name: "Lint", status: "warn", message: "Could not run linter" };
   }
 }
 
 function checkCriticalIssues(db: Database, projectId: number): ShipCheck {
-  const criticalCount = db.query<{ count: number }, [number]>(`
+  const criticalCount =
+    db
+      .query<{ count: number }, [number]>(`
     SELECT COUNT(*) as count FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 8
-  `).get(projectId)?.count || 0;
+  `)
+      .get(projectId)?.count || 0;
 
   if (criticalCount > 0) {
     return {
@@ -170,10 +167,13 @@ function checkCriticalIssues(db: Database, projectId: number): ShipCheck {
     };
   }
 
-  const highCount = db.query<{ count: number }, [number]>(`
+  const highCount =
+    db
+      .query<{ count: number }, [number]>(`
     SELECT COUNT(*) as count FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 6
-  `).get(projectId)?.count || 0;
+  `)
+      .get(projectId)?.count || 0;
 
   if (highCount > 0) {
     return {
@@ -194,10 +194,11 @@ function checkFragileFiles(db: Database, projectId: number, projectPath: string)
     return { name: "Fragile Files", status: "skip", message: "Not a git repo" };
   }
 
-  const modifiedFiles = gitResult.stdout.toString()
+  const modifiedFiles = gitResult.stdout
+    .toString()
     .split("\n")
-    .filter(line => line.startsWith(" M") || line.startsWith("M "))
-    .map(line => line.substring(3));
+    .filter((line) => line.startsWith(" M") || line.startsWith("M "))
+    .map((line) => line.substring(3));
 
   if (modifiedFiles.length === 0) {
     return { name: "Fragile Files", status: "pass" };
@@ -205,16 +206,18 @@ function checkFragileFiles(db: Database, projectId: number, projectPath: string)
 
   // Check if any modified files are fragile
   const placeholders = modifiedFiles.map(() => "?").join(",");
-  const fragileModified = db.query<{ path: string; fragility: number }, (number | string)[]>(`
+  const fragileModified = db
+    .query<{ path: string; fragility: number }, (number | string)[]>(`
     SELECT path, fragility FROM files
     WHERE project_id = ? AND fragility >= 7 AND path IN (${placeholders})
-  `).all(projectId, ...modifiedFiles);
+  `)
+    .all(projectId, ...modifiedFiles);
 
   if (fragileModified.length > 0) {
     return {
       name: "Fragile Files",
       status: "warn",
-      message: `${fragileModified.length} fragile file(s) modified: ${fragileModified.map(f => f.path).join(", ")}`,
+      message: `${fragileModified.length} fragile file(s) modified: ${fragileModified.map((f) => f.path).join(", ")}`,
     };
   }
 
@@ -225,7 +228,7 @@ async function checkBuild(projectPath: string): Promise<ShipCheck> {
   // Check for build script in package.json
   try {
     const pkgJson = Bun.file(join(projectPath, "package.json"));
-    const pkg = await pkgJson.json() as { scripts?: Record<string, string> };
+    const pkg = (await pkgJson.json()) as { scripts?: Record<string, string> };
 
     if (!pkg.scripts?.build) {
       return { name: "Build", status: "skip", message: "No build script" };
@@ -246,7 +249,7 @@ async function checkBuild(projectPath: string): Promise<ShipCheck> {
       return { name: "Build", status: "fail", message: "Build failed" };
     }
   } catch (error) {
-    logError('checkBuild', error);
+    logError("checkBuild", error);
     return { name: "Build", status: "warn", message: "Could not run build" };
   }
 }
@@ -284,8 +287,8 @@ async function checkSecurityBasic(projectPath: string): Promise<ShipCheck> {
       const criticalMatch = output.match(/(\d+)\s+critical/i);
       const highMatch = output.match(/(\d+)\s+high/i);
 
-      const criticalCount = criticalMatch ? parseInt(criticalMatch[1]) : 0;
-      const highCount = highMatch ? parseInt(highMatch[1]) : 0;
+      const criticalCount = criticalMatch ? parseInt(criticalMatch[1], 10) : 0;
+      const highCount = highMatch ? parseInt(highMatch[1], 10) : 0;
 
       if (criticalCount > 0) {
         return {
@@ -306,7 +309,7 @@ async function checkSecurityBasic(projectPath: string): Promise<ShipCheck> {
       return { name: "Security Audit", status: "pass" };
     }
   } catch (error) {
-    logError('checkSecurityBasic', error);
+    logError("checkSecurityBasic", error);
     return { name: "Security Audit", status: "skip", message: "Could not run audit" };
   }
 }
@@ -315,18 +318,14 @@ async function checkSecurityBasic(projectPath: string): Promise<ShipCheck> {
 // Ship Command Handler
 // ============================================================================
 
-export async function handleShipCommand(
-  db: Database,
-  projectId: number,
-  projectPath: string
-): Promise<void> {
+export async function handleShipCommand(db: Database, projectId: number, projectPath: string): Promise<void> {
   console.error("🚀 Running ship checklist...\n");
 
   const checks = await runShipChecklist(db, projectId, projectPath);
 
-  const passed = checks.filter(c => c.status === "pass").length;
-  const failed = checks.filter(c => c.status === "fail").length;
-  const warned = checks.filter(c => c.status === "warn").length;
+  const passed = checks.filter((c) => c.status === "pass").length;
+  const failed = checks.filter((c) => c.status === "fail").length;
+  const warned = checks.filter((c) => c.status === "warn").length;
 
   for (const check of checks) {
     console.error(formatShipCheck(check));
@@ -344,15 +343,20 @@ export async function handleShipCommand(
 
   // Log to global DB
   const globalDb = getGlobalDb();
-  globalDb.run(`
+  globalDb.run(
+    `
     INSERT INTO ship_history (project_path, checks_passed, checks_failed, notes)
     VALUES (?, ?, ?, ?)
-  `, [
-    projectPath,
-    JSON.stringify(checks.filter(c => c.status === "pass").map(c => c.name)),
-    JSON.stringify(checks.filter(c => c.status !== "pass").map(c => ({ name: c.name, status: c.status, message: c.message }))),
-    failed > 0 ? "blocked" : warned > 0 ? "shipped with warnings" : "clean ship",
-  ]);
+  `,
+    [
+      projectPath,
+      JSON.stringify(checks.filter((c) => c.status === "pass").map((c) => c.name)),
+      JSON.stringify(
+        checks.filter((c) => c.status !== "pass").map((c) => ({ name: c.name, status: c.status, message: c.message }))
+      ),
+      failed > 0 ? "blocked" : warned > 0 ? "shipped with warnings" : "clean ship",
+    ]
+  );
   closeGlobalDb();
 
   outputJson({ passed, failed, warned, checks });

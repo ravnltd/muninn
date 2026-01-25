@@ -11,20 +11,20 @@
  */
 
 import { Database } from "bun:sqlite";
-import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import * as schema from "./schema";
-import { existsSync, readFileSync } from "fs";
-import { join, resolve } from "path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import {
-  runMigrations,
   applyReliabilityPragmas,
-  getSchemaVersion,
-  getLatestVersion,
   checkIntegrity,
+  getLatestVersion,
+  getSchemaVersion,
+  type IntegrityCheck,
   logDbError,
   type MigrationState,
-  type IntegrityCheck,
+  runMigrations,
 } from "./migrations";
+import * as schema from "./schema";
 
 // ============================================================================
 // Configuration
@@ -443,15 +443,13 @@ function migrateProjectDb(db: Database): void {
 // Project Management
 // ============================================================================
 
-import { basename } from "path";
+import { basename } from "node:path";
 
 export function ensureProject(db: Database, projectPath?: string): number {
   const path = projectPath || process.cwd();
   const name = basename(path);
 
-  const existing = db.query<{ id: number }, [string]>(
-    "SELECT id FROM projects WHERE path = ?"
-  ).get(path);
+  const existing = db.query<{ id: number }, [string]>("SELECT id FROM projects WHERE path = ?").get(path);
 
   if (existing) {
     syncProjectToGlobal(path, name);
@@ -462,35 +460,36 @@ export function ensureProject(db: Database, projectPath?: string): number {
   // with the most data that likely IS this project under an old path.
   // This DB is project-local (.claude/memory.db inside the project dir),
   // so any existing project with a stale path is a rename candidate.
-  const renamed = db.query<{ id: number; path: string }, []>(`
+  const renamed = db
+    .query<{ id: number; path: string }, []>(`
     SELECT p.id, p.path FROM projects p
     LEFT JOIN files f ON f.project_id = p.id
     GROUP BY p.id
     ORDER BY COUNT(f.id) DESC
     LIMIT 1
-  `).get();
+  `)
+    .get();
 
   if (renamed && renamed.path !== path) {
     // Preserve old path in rename history
-    const prev = db.query<{ previous_paths: string | null }, [number]>(
-      "SELECT previous_paths FROM projects WHERE id = ?"
-    ).get(renamed.id);
+    const prev = db
+      .query<{ previous_paths: string | null }, [number]>("SELECT previous_paths FROM projects WHERE id = ?")
+      .get(renamed.id);
     const history: string[] = prev?.previous_paths ? JSON.parse(prev.previous_paths) : [];
     if (!history.includes(renamed.path)) {
       history.push(renamed.path);
     }
-    db.run(
-      "UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?",
-      [path, name, JSON.stringify(history), renamed.id]
-    );
+    db.run("UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?", [
+      path,
+      name,
+      JSON.stringify(history),
+      renamed.id,
+    ]);
     syncProjectToGlobal(path, name);
     return renamed.id;
   }
 
-  const result = db.run(
-    "INSERT INTO projects (path, name) VALUES (?, ?)",
-    [path, name]
-  );
+  const result = db.run("INSERT INTO projects (path, name) VALUES (?, ?)", [path, name]);
 
   syncProjectToGlobal(path, name);
   return Number(result.lastInsertRowid);
@@ -508,28 +507,25 @@ function syncProjectToGlobal(projectPath: string, projectName: string): void {
     const globalDb = getGlobalDb();
 
     // Skip if this path is a subdirectory of an existing project
-    const parentProject = globalDb.query<{ path: string }, [string]>(
-      "SELECT path FROM projects WHERE ? LIKE path || '/%'"
-    ).get(projectPath);
+    const parentProject = globalDb
+      .query<{ path: string }, [string]>("SELECT path FROM projects WHERE ? LIKE path || '/%'")
+      .get(projectPath);
     if (parentProject) {
       syncedProjects.add(projectPath); // Don't check again
       return;
     }
 
-    const existing = globalDb.query<{ id: number; name: string }, [string]>(
-      "SELECT id, name FROM projects WHERE path = ?"
-    ).get(projectPath);
+    const existing = globalDb
+      .query<{ id: number; name: string }, [string]>("SELECT id, name FROM projects WHERE path = ?")
+      .get(projectPath);
 
     if (!existing) {
-      globalDb.run(
-        "INSERT INTO projects (path, name, status) VALUES (?, ?, 'active')",
-        [projectPath, projectName]
-      );
+      globalDb.run("INSERT INTO projects (path, name, status) VALUES (?, ?, 'active')", [projectPath, projectName]);
     } else if (existing.name !== projectName) {
-      globalDb.run(
-        "UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        [projectName, existing.id]
-      );
+      globalDb.run("UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [
+        projectName,
+        existing.id,
+      ]);
     }
     syncedProjects.add(projectPath);
   } catch {

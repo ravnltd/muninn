@@ -4,40 +4,74 @@
  * Main CLI entry point
  */
 
-import { getGlobalDb, getProjectDb, initProjectDb, ensureProject, closeAll, getProjectDbPath, LOCAL_DB_DIR, LOCAL_DB_NAME } from "./database/connection";
-import { handleInfraCommand } from "./commands/infra";
-import { handleQueryCommand } from "./commands/query";
-import { runAnalysis, showStatus, showFragile, generateBrief } from "./commands/analysis";
-import { fileAdd, fileGet, fileList, decisionAdd, decisionList, issueAdd, issueResolve, issueList, learnAdd, learnList } from "./commands/memory";
-import { HELP_TEXT } from "./help";
-import { handleDatabaseCommand } from "./commands/database";
-import { handlePatternCommand, handleDebtCommand, handleStackCommand } from "./commands/global";
-import { sessionStart, sessionLast, sessionList, sessionCount, generateResume, sessionEndEnhanced, handleCorrelationCommand } from "./commands/session";
-import { handleShipCommand } from "./commands/ship";
-import { handleEmbedCommand } from "./commands/embed";
-import { checkFiles, analyzeImpact, getSmartStatus, checkConflicts } from "./commands/intelligence";
-import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
-import { showDependencies, refreshDependencies, generateDependencyGraph, findCircularDependencies } from "./commands/deps";
+import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { generateBrief, runAnalysis, showFragile, showStatus } from "./commands/analysis";
 import { computeBlastRadius, showBlastRadius, showHighImpactFiles } from "./commands/blast";
 import { handleBookmarkCommand } from "./commands/bookmark";
-import { handleFocusCommand } from "./commands/focus";
-import { hookCheck, hookInit, hookPostEdit, hookBrain } from "./commands/hooks";
 import { handleChunkCommand } from "./commands/chunk";
-import { handleObserveCommand } from "./commands/observe";
-import { handleQuestionsCommand } from "./commands/questions";
-import { handleWorkflowCommand } from "./commands/workflow";
-import { handleProfileCommand } from "./commands/profile";
-import { handleOutcomeCommand, incrementSessionsSince } from "./commands/outcomes";
-import { handleTemporalCommand, updateFileVelocity, assignSessionNumber } from "./commands/temporal";
-import { handlePredictCommand } from "./commands/predict";
-import { handleSuggestCommand } from "./commands/suggest";
-import { handleInsightsCommand, generateInsights } from "./commands/insights";
-import { handleRelationshipCommand } from "./commands/relationships";
 import { handleConsolidationCommand } from "./commands/consolidation";
-import { outputSuccess, outputJson } from "./utils/format";
-import { CLAUDE_MD_TEMPLATE, getMuninnSection, MUNINN_SECTION_START, MUNINN_SECTION_END } from "./templates/claude-md";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { handleDatabaseCommand } from "./commands/database";
+import {
+  findCircularDependencies,
+  generateDependencyGraph,
+  refreshDependencies,
+  showDependencies,
+} from "./commands/deps";
+import { handleEmbedCommand } from "./commands/embed";
+import { handleFocusCommand } from "./commands/focus";
+import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
+import { handleDebtCommand, handlePatternCommand, handleStackCommand } from "./commands/global";
+import { hookBrain, hookCheck, hookInit, hookPostEdit } from "./commands/hooks";
+import { handleInfraCommand } from "./commands/infra";
+import { generateInsights, handleInsightsCommand } from "./commands/insights";
+import { analyzeImpact, checkConflicts, checkFiles, getSmartStatus } from "./commands/intelligence";
+import {
+  decisionAdd,
+  decisionList,
+  fileAdd,
+  fileGet,
+  fileList,
+  issueAdd,
+  issueList,
+  issueResolve,
+  learnAdd,
+  learnList,
+} from "./commands/memory";
+import { handleObserveCommand } from "./commands/observe";
+import { handleOutcomeCommand, incrementSessionsSince } from "./commands/outcomes";
+import { handlePredictCommand } from "./commands/predict";
+import { handleProfileCommand } from "./commands/profile";
+import { handleQueryCommand } from "./commands/query";
+import { handleQuestionsCommand } from "./commands/questions";
+import { handleRelationshipCommand } from "./commands/relationships";
+import {
+  generateResume,
+  handleCorrelationCommand,
+  sessionCount,
+  sessionEndEnhanced,
+  sessionLast,
+  sessionList,
+  sessionStart,
+} from "./commands/session";
+import { handleShipCommand } from "./commands/ship";
+import { handleSuggestCommand } from "./commands/suggest";
+import { assignSessionNumber, handleTemporalCommand, updateFileVelocity } from "./commands/temporal";
+import { handleWorkflowCommand } from "./commands/workflow";
+import {
+  closeAll,
+  ensureProject,
+  getGlobalDb,
+  getProjectDb,
+  getProjectDbPath,
+  initProjectDb,
+  LOCAL_DB_DIR,
+  LOCAL_DB_NAME,
+} from "./database/connection";
+import { HELP_TEXT } from "./help";
+import { CLAUDE_MD_TEMPLATE, getMuninnSection, MUNINN_SECTION_END, MUNINN_SECTION_START } from "./templates/claude-md";
+import { outputJson, outputSuccess } from "./utils/format";
 
 // ============================================================================
 // Main CLI Router
@@ -89,7 +123,7 @@ async function main(): Promise<void> {
       const existing = readFileSync(claudeMdPath, "utf-8");
       if (!existing.includes(MUNINN_SECTION_START)) {
         // Append muninn section
-        const updated = existing.trimEnd() + "\n" + getMuninnSection();
+        const updated = `${existing.trimEnd()}\n${getMuninnSection()}`;
         writeFileSync(claudeMdPath, updated);
         claudeMdAction = "updated";
         console.error(`📄 Added muninn section to existing CLAUDE.md`);
@@ -97,7 +131,7 @@ async function main(): Promise<void> {
         // Already has muninn section - update it
         const before = existing.split(MUNINN_SECTION_START)[0];
         const after = existing.split(MUNINN_SECTION_END)[1] || "";
-        const updated = before.trimEnd() + "\n" + getMuninnSection() + after.trimStart();
+        const updated = `${before.trimEnd()}\n${getMuninnSection()}${after.trimStart()}`;
         if (updated !== existing) {
           writeFileSync(claudeMdPath, updated);
           claudeMdAction = "updated";
@@ -146,7 +180,7 @@ async function main(): Promise<void> {
   }
 
   // All other commands need project DB
-  let db;
+  let db: Database;
   const dbPath = getProjectDbPath();
 
   // Auto-init if no DB exists
@@ -178,7 +212,7 @@ async function main(): Promise<void> {
         break;
 
       case "file":
-      case "f":
+      case "f": {
         const fileCmd = subArgs[0];
         switch (fileCmd) {
           case "add":
@@ -194,9 +228,10 @@ async function main(): Promise<void> {
             console.error("Usage: muninn file <add|get|list> [args]");
         }
         break;
+      }
 
       case "decision":
-      case "d":
+      case "d": {
         const decCmd = subArgs[0];
         switch (decCmd) {
           case "add":
@@ -209,16 +244,17 @@ async function main(): Promise<void> {
             console.error("Usage: muninn decision <add|list> [args]");
         }
         break;
+      }
 
       case "issue":
-      case "i":
+      case "i": {
         const issueCmd = subArgs[0];
         switch (issueCmd) {
           case "add":
             await issueAdd(db, projectId, subArgs.slice(1));
             break;
           case "resolve":
-            issueResolve(db, parseInt(subArgs[1]), subArgs.slice(2).join(" "));
+            issueResolve(db, parseInt(subArgs[1], 10), subArgs.slice(2).join(" "));
             break;
           case "list":
             issueList(db, projectId, subArgs[1]);
@@ -227,9 +263,10 @@ async function main(): Promise<void> {
             console.error("Usage: muninn issue <add|resolve|list> [args]");
         }
         break;
+      }
 
       case "learn":
-      case "l":
+      case "l": {
         const learnCmd = subArgs[0];
         switch (learnCmd) {
           case "add":
@@ -242,6 +279,7 @@ async function main(): Promise<void> {
             console.error("Usage: muninn learn <add|list> [args]");
         }
         break;
+      }
 
       // Continuity commands
       case "observe":
@@ -300,7 +338,7 @@ async function main(): Promise<void> {
         break;
 
       case "session":
-      case "s":
+      case "s": {
         const sessCmd = subArgs[0];
         switch (sessCmd) {
           case "start": {
@@ -311,19 +349,25 @@ async function main(): Promise<void> {
           }
           case "end": {
             // Use enhanced session end with auto-learning extraction
-            await sessionEndEnhanced(db, projectId, parseInt(subArgs[1]), subArgs.slice(2));
+            await sessionEndEnhanced(db, projectId, parseInt(subArgs[1], 10), subArgs.slice(2));
             // Update file velocities from session
-            const endedSession = db.query<{ files_touched: string | null }, [number]>(
-              "SELECT files_touched FROM sessions WHERE id = ?"
-            ).get(parseInt(subArgs[1]));
+            const endedSession = db
+              .query<{ files_touched: string | null }, [number]>("SELECT files_touched FROM sessions WHERE id = ?")
+              .get(parseInt(subArgs[1], 10));
             if (endedSession?.files_touched) {
               try {
                 const touchedFiles = JSON.parse(endedSession.files_touched);
                 updateFileVelocity(db, projectId, touchedFiles);
-              } catch { /* invalid JSON */ }
+              } catch {
+                /* invalid JSON */
+              }
             }
             // Generate insights non-blocking (best effort)
-            try { generateInsights(db, projectId); } catch { /* optional */ }
+            try {
+              generateInsights(db, projectId);
+            } catch {
+              /* optional */
+            }
             break;
           }
           case "last":
@@ -346,6 +390,7 @@ async function main(): Promise<void> {
             console.error("Usage: muninn session <start|end|last|list|count|correlations> [args]");
         }
         break;
+      }
 
       case "status":
         showStatus(db, projectId);
@@ -355,19 +400,21 @@ async function main(): Promise<void> {
         showFragile(db, projectId);
         break;
 
-      case "brief":
+      case "brief": {
         const brief = generateBrief(db, projectId, process.cwd());
         console.error(brief);
         outputSuccess({ markdown: brief });
         break;
+      }
 
-      case "resume":
+      case "resume": {
         const resume = generateResume(db, projectId);
         console.error(resume);
         outputSuccess({ markdown: resume });
         break;
+      }
 
-      case "analyze":
+      case "analyze": {
         const analysis = await runAnalysis(db, projectId, process.cwd());
         outputSuccess({
           project: analysis.project,
@@ -377,6 +424,7 @@ async function main(): Promise<void> {
           techDebtFound: analysis.tech_debt?.length || 0,
         });
         break;
+      }
 
       case "ship":
         await handleShipCommand(db, projectId, process.cwd());
@@ -429,7 +477,7 @@ async function main(): Promise<void> {
         if (subArgs.includes("--refresh")) {
           refreshDependencies(db, projectId, process.cwd());
         } else if (subArgs.includes("--graph")) {
-          const focusFile = subArgs.find(a => !a.startsWith("--"));
+          const focusFile = subArgs.find((a) => !a.startsWith("--"));
           generateDependencyGraph(db, projectId, process.cwd(), focusFile);
         } else if (subArgs.includes("--cycles")) {
           findCircularDependencies(process.cwd());
@@ -470,13 +518,13 @@ async function main(): Promise<void> {
         break;
 
       // Hook commands (for automation)
-      case "hook":
+      case "hook": {
         const hookCmd = subArgs[0];
         switch (hookCmd) {
           case "check": {
-            const hookFiles = subArgs.slice(1).filter(a => !a.startsWith("--"));
+            const hookFiles = subArgs.slice(1).filter((a) => !a.startsWith("--"));
             const thresholdIdx = subArgs.indexOf("--threshold");
-            const threshold = thresholdIdx !== -1 ? parseInt(subArgs[thresholdIdx + 1]) : 7;
+            const threshold = thresholdIdx !== -1 ? parseInt(subArgs[thresholdIdx + 1], 10) : 7;
             if (hookFiles.length === 0) {
               console.error("Usage: muninn hook check <file1> [file2] [--threshold N]");
               process.exit(1);
@@ -502,6 +550,7 @@ async function main(): Promise<void> {
             process.exit(1);
         }
         break;
+      }
 
       case "dashboard": {
         const portIdx = subArgs.indexOf("--port");
@@ -517,7 +566,7 @@ async function main(): Promise<void> {
         Bun.serve({ fetch: app.fetch, port });
 
         if (shouldOpen) {
-          const { exec } = await import("child_process");
+          const { exec } = await import("node:child_process");
           const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
           exec(`${openCmd} http://localhost:${port}`);
         }
@@ -539,7 +588,7 @@ async function main(): Promise<void> {
 // Entry Point
 // ============================================================================
 
-main().catch(error => {
+main().catch((error) => {
   console.error(`❌ Error: ${error.message}`);
   process.exit(1);
 });

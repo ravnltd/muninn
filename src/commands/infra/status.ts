@@ -4,11 +4,25 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { parseArgs } from "util";
-import { getInfraStatus, getMapData, getRecentEvents, getAllDependencies, getServiceDependencies, getServiceDependents } from "../../database/queries/infra";
-import { getServiceByName } from "../../database/queries/infra";
-import { outputJson, formatInfraStatus, generateMermaidInfraMap, generateAsciiInfraMap, getTimeAgo, getSeverityIcon } from "../../utils/format";
+import { parseArgs } from "node:util";
+import {
+  getAllDependencies,
+  getInfraStatus,
+  getMapData,
+  getRecentEvents,
+  getServiceByName,
+  getServiceDependencies,
+  getServiceDependents,
+} from "../../database/queries/infra";
 import { exitWithUsage } from "../../utils/errors";
+import {
+  formatInfraStatus,
+  generateAsciiInfraMap,
+  generateMermaidInfraMap,
+  getSeverityIcon,
+  getTimeAgo,
+  outputJson,
+} from "../../utils/format";
 
 // ============================================================================
 // Infrastructure Status
@@ -24,22 +38,22 @@ export function infraStatus(db: Database): void {
 // Infrastructure Map
 // ============================================================================
 
-export function infraMap(db: Database, format: 'ascii' | 'mermaid' = 'ascii'): void {
+export function infraMap(db: Database, format: "ascii" | "mermaid" = "ascii"): void {
   const mapData = getMapData(db);
 
   if (mapData.servers.length === 0) {
     console.error("No infrastructure to map.");
-    outputJson({ format, diagram: '' });
+    outputJson({ format, diagram: "" });
     return;
   }
 
-  if (format === 'mermaid') {
+  if (format === "mermaid") {
     const mermaid = generateMermaidInfraMap(mapData.servers, mapData.deps, mapData.routes);
     console.error(mermaid);
-    outputJson({ format: 'mermaid', diagram: mermaid });
+    outputJson({ format: "mermaid", diagram: mermaid });
   } else {
     generateAsciiInfraMap(mapData.servers);
-    outputJson({ format: 'ascii', servers: mapData.servers });
+    outputJson({ format: "ascii", servers: mapData.servers });
   }
 }
 
@@ -62,7 +76,9 @@ export function depAdd(db: Database, args: string[]): void {
 
   const serviceName = positionals[0];
   if (!serviceName || (!values.depends && !values.external)) {
-    exitWithUsage("Usage: context infra dep add <service> --depends <other-service> [--type database|cache|api]\n   or: context infra dep add <service> --external stripe [--type api]");
+    exitWithUsage(
+      "Usage: context infra dep add <service> --depends <other-service> [--type database|cache|api]\n   or: context infra dep add <service> --external stripe [--type api]"
+    );
   }
 
   const service = getServiceByName(db, serviceName);
@@ -81,17 +97,13 @@ export function depAdd(db: Database, args: string[]): void {
     dependsOnId = depService.id;
   }
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO service_deps (service_id, depends_on_service_id, depends_on_external, dependency_type, connection_env_var, required)
     VALUES (?, ?, ?, ?, ?, ?)
-  `, [
-    service.id,
-    dependsOnId,
-    values.external || null,
-    values.type || null,
-    values.env || null,
-    values.optional ? 0 : 1,
-  ]);
+  `,
+    [service.id, dependsOnId, values.external || null, values.type || null, values.env || null, values.optional ? 0 : 1]
+  );
 
   const target = values.depends || values.external;
   console.error(`✅ ${serviceName} → ${target} dependency added`);
@@ -159,9 +171,7 @@ export function infraEvents(db: Database, limit: number = 20): void {
 
   for (const e of events) {
     const severityIcon = getSeverityIcon(e.severity);
-    const target = e.service_name
-      ? `${e.service_name}@${e.server_name}`
-      : e.server_name || "system";
+    const target = e.service_name ? `${e.service_name}@${e.server_name}` : e.server_name || "system";
     const time = getTimeAgo(e.created_at);
 
     console.error(`  ${severityIcon} [${time}] ${e.title}`);
@@ -183,9 +193,9 @@ export function infraEvents(db: Database, limit: number = 20): void {
 // Infrastructure Handler
 // ============================================================================
 
-import { serverAdd, serverList, serverRemove, serverCheck } from "./server";
-import { serviceAdd, serviceList, serviceRemove, serviceStatus, serviceLogs } from "./service";
-import { routeAdd, routeList, routeRemove, routeCheck } from "./route";
+import { routeAdd, routeCheck, routeList, routeRemove } from "./route";
+import { serverAdd, serverCheck, serverList, serverRemove } from "./server";
+import { serviceAdd, serviceList, serviceLogs, serviceRemove, serviceStatus } from "./service";
 
 export async function handleInfraCommand(db: Database, args: string[]): Promise<void> {
   const subCmd = args[0];
@@ -227,13 +237,17 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
           break;
         case "remove":
         case "rm":
-          serviceRemove(db, restArgs[0], restArgs.includes("--server") ? restArgs[restArgs.indexOf("--server") + 1] : undefined);
+          serviceRemove(
+            db,
+            restArgs[0],
+            restArgs.includes("--server") ? restArgs[restArgs.indexOf("--server") + 1] : undefined
+          );
           break;
         case "status":
           await serviceStatus(db, restArgs[0]);
           break;
         case "logs":
-          await serviceLogs(db, restArgs[0], parseInt(restArgs[restArgs.indexOf("--lines") + 1] || "50"));
+          await serviceLogs(db, restArgs[0], parseInt(restArgs[restArgs.indexOf("--lines") + 1] || "50", 10));
           break;
         default:
           console.error("Usage: context infra service <add|list|remove|status|logs> [args]");
@@ -276,17 +290,19 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
       infraStatus(db);
       break;
 
-    case "map":
+    case "map": {
       const format = args.includes("--mermaid") ? "mermaid" : "ascii";
       infraMap(db, format);
       break;
+    }
 
     case "events":
-    case "log":
+    case "log": {
       const limitIdx = args.indexOf("--limit");
-      const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1]) : 20;
+      const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1], 10) : 20;
       infraEvents(db, limit);
       break;
+    }
 
     case "check":
       await serverCheck(db);

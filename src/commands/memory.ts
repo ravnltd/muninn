@@ -4,25 +4,39 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
-import { parseFileArgs, parseDecisionArgs, parseIssueArgs, parseLearnArgs, parsePatternArgs, parseDebtArgs } from "../utils/validation";
-import { outputJson, outputSuccess, computeContentHash, getFileMtime } from "../utils/format";
-import { logError, exitWithUsage } from "../utils/errors";
-import { getGlobalDb, closeGlobalDb } from "../database/connection";
-import { addGlobalLearning, addPattern, searchPatterns, getAllPatterns, listTechDebt, addTechDebt, resolveTechDebt } from "../database/queries/search";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { closeGlobalDb, getGlobalDb } from "../database/connection";
 import {
-  generateEmbedding,
-  serializeEmbedding,
-  isEmbeddingAvailable,
-  fileToText,
+  addGlobalLearning,
+  addPattern,
+  addTechDebt,
+  getAllPatterns,
+  listTechDebt,
+  resolveTechDebt,
+  searchPatterns,
+} from "../database/queries/search";
+import {
   decisionToText,
+  fileToText,
+  generateEmbedding,
+  isEmbeddingAvailable,
   issueToText,
   learningToText,
+  serializeEmbedding,
 } from "../embeddings";
+import { exitWithUsage, logError, safeJsonParse } from "../utils/errors";
+import { computeContentHash, getFileMtime, outputJson, outputSuccess } from "../utils/format";
+import {
+  parseDebtArgs,
+  parseDecisionArgs,
+  parseFileArgs,
+  parseIssueArgs,
+  parseLearnArgs,
+  parsePatternArgs,
+} from "../utils/validation";
 import { autoRelateIssueFiles, autoRelateLearningFiles } from "./relationships";
 import { trackDecisionMade } from "./session";
-import { safeJsonParse } from "../utils/errors";
 
 // ============================================================================
 // File Commands
@@ -45,11 +59,12 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
       contentHash = computeContentHash(content);
       fsMtime = getFileMtime(fullPath);
     } catch (error) {
-      logError('fileAdd:readFile', error);
+      logError("fileAdd:readFile", error);
     }
   }
 
-  db.run(`
+  db.run(
+    `
     INSERT INTO files (project_id, path, type, purpose, fragility, fragility_reason, status, content_hash, fs_modified_at, last_analyzed)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(project_id, path) DO UPDATE SET
@@ -62,17 +77,19 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
       fs_modified_at = excluded.fs_modified_at,
       last_analyzed = CURRENT_TIMESTAMP,
       updated_at = CURRENT_TIMESTAMP
-  `, [
-    projectId,
-    values.path,
-    values.type || null,
-    values.purpose || null,
-    values.fragility || 0,
-    values.fragilityReason || null,
-    values.status || "active",
-    contentHash,
-    fsMtime,
-  ]);
+  `,
+    [
+      projectId,
+      values.path,
+      values.type || null,
+      values.purpose || null,
+      values.fragility || 0,
+      values.fragilityReason || null,
+      values.status || "active",
+      contentHash,
+      fsMtime,
+    ]
+  );
 
   // Generate embedding if Voyage API is available
   if (isEmbeddingAvailable()) {
@@ -81,14 +98,11 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
       const embedding = await generateEmbedding(text);
       if (embedding) {
         // Get the ID (either new insert or existing record)
-        const file = db.query<{ id: number }, [number, string]>(
-          "SELECT id FROM files WHERE project_id = ? AND path = ?"
-        ).get(projectId, values.path);
+        const file = db
+          .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
+          .get(projectId, values.path);
         if (file) {
-          db.run("UPDATE files SET embedding = ? WHERE id = ?", [
-            serializeEmbedding(embedding),
-            file.id,
-          ]);
+          db.run("UPDATE files SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), file.id]);
         }
       }
     } catch (error) {
@@ -105,18 +119,22 @@ export function fileGet(db: Database, projectId: number, path: string): void {
     exitWithUsage("Usage: muninn file get <path>");
   }
 
-  const file = db.query<Record<string, unknown>, [number, string]>(`
+  const file = db
+    .query<Record<string, unknown>, [number, string]>(`
     SELECT * FROM files WHERE project_id = ? AND path = ?
-  `).get(projectId, path);
+  `)
+    .get(projectId, path);
 
   if (!file) {
     outputJson({ found: false });
     return;
   }
 
-  const symbols = db.query<Record<string, unknown>, [number]>(`
+  const symbols = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT id, name, type, purpose, signature FROM symbols WHERE file_id = ?
-  `).all(file.id as number);
+  `)
+    .all(file.id as number);
 
   outputJson({ found: true, ...file, symbols });
 }
@@ -142,19 +160,18 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
   const { values } = parseDecisionArgs(args);
 
   if (!values.title || !values.decision) {
-    exitWithUsage("Usage: muninn decision add --title <title> --decision <decision> [--reasoning <why>] [--affects <files>]");
+    exitWithUsage(
+      "Usage: muninn decision add --title <title> --decision <decision> [--reasoning <why>] [--affects <files>]"
+    );
   }
 
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO decisions (project_id, title, decision, reasoning, affects)
     VALUES (?, ?, ?, ?, ?)
-  `, [
-    projectId,
-    values.title,
-    values.decision,
-    values.reasoning || null,
-    values.affects || null,
-  ]);
+  `,
+    [projectId, values.title, values.decision, values.reasoning || null, values.affects || null]
+  );
 
   const insertedId = Number(result.lastInsertRowid);
 
@@ -167,10 +184,7 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
       const text = decisionToText(values.title, values.decision, values.reasoning || null);
       const embedding = await generateEmbedding(text);
       if (embedding) {
-        db.run("UPDATE decisions SET embedding = ? WHERE id = ?", [
-          serializeEmbedding(embedding),
-          insertedId,
-        ]);
+        db.run("UPDATE decisions SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
       }
     } catch (error) {
       logError("decisionAdd:embedding", error);
@@ -185,12 +199,14 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
 }
 
 export function decisionList(db: Database, projectId: number): void {
-  const decisions = db.query<Record<string, unknown>, [number]>(`
+  const decisions = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT id, title, decision, reasoning, affects, status, decided_at
     FROM decisions
     WHERE project_id = ? AND status = 'active'
     ORDER BY decided_at DESC
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (decisions.length === 0) {
     console.error("No active decisions recorded.");
@@ -217,18 +233,21 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
     exitWithUsage("Usage: muninn issue add --title <title> [--severity 1-10] [--type bug|tech-debt] [--files <files>]");
   }
 
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO issues (project_id, title, description, type, severity, affected_files, workaround)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [
-    projectId,
-    values.title,
-    values.description || null,
-    values.type || "bug",
-    values.severity || 5,
-    values.files || null,
-    values.workaround || null,
-  ]);
+  `,
+    [
+      projectId,
+      values.title,
+      values.description || null,
+      values.type || "bug",
+      values.severity || 5,
+      values.files || null,
+      values.workaround || null,
+    ]
+  );
 
   const insertedId = Number(result.lastInsertRowid);
 
@@ -238,10 +257,7 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
       const text = issueToText(values.title, values.description || null, values.workaround || null);
       const embedding = await generateEmbedding(text);
       if (embedding) {
-        db.run("UPDATE issues SET embedding = ? WHERE id = ?", [
-          serializeEmbedding(embedding),
-          insertedId,
-        ]);
+        db.run("UPDATE issues SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
       }
     } catch (error) {
       logError("issueAdd:embedding", error);
@@ -268,11 +284,14 @@ export function issueResolve(db: Database, issueId: number, resolution: string):
     exitWithUsage("Usage: muninn issue resolve <id> <resolution>");
   }
 
-  db.run(`
+  db.run(
+    `
     UPDATE issues
     SET status = 'resolved', resolution = ?, resolved_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [resolution, issueId]);
+  `,
+    [resolution, issueId]
+  );
 
   console.error(`✅ Issue #${issueId} resolved`);
   outputSuccess({ id: issueId });
@@ -291,7 +310,7 @@ export function issueList(db: Database, projectId: number, status?: string): voi
   } else {
     console.error("\n🐛 Issues:\n");
     for (const i of issues) {
-      const sevIcon = (i.severity as number) >= 8 ? '🔴' : (i.severity as number) >= 5 ? '🟠' : '🟡';
+      const sevIcon = (i.severity as number) >= 8 ? "🔴" : (i.severity as number) >= 5 ? "🟠" : "🟡";
       console.error(`  ${sevIcon} #${i.id}: ${i.title} (sev ${i.severity})`);
     }
     console.error("");
@@ -330,16 +349,13 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
       global: true,
     });
   } else {
-    const result = db.run(`
+    const result = db.run(
+      `
       INSERT INTO learnings (project_id, category, title, content, context)
       VALUES (?, ?, ?, ?, ?)
-    `, [
-      projectId,
-      values.category || "pattern",
-      values.title,
-      values.content,
-      values.context || null,
-    ]);
+    `,
+      [projectId, values.category || "pattern", values.title, values.content, values.context || null]
+    );
 
     const insertedId = Number(result.lastInsertRowid);
 
@@ -349,10 +365,7 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
         const text = learningToText(values.title, values.content, values.context || null);
         const embedding = await generateEmbedding(text);
         if (embedding) {
-          db.run("UPDATE learnings SET embedding = ? WHERE id = ?", [
-            serializeEmbedding(embedding),
-            insertedId,
-          ]);
+          db.run("UPDATE learnings SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
         }
       } catch (error) {
         logError("learnAdd:embedding", error);
@@ -377,19 +390,23 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
 }
 
 export function learnList(db: Database, projectId: number): void {
-  const learnings = db.query<Record<string, unknown>, [number]>(`
+  const learnings = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT * FROM learnings
     WHERE project_id = ? OR project_id IS NULL
     ORDER BY times_applied DESC, confidence DESC
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   // Also get global learnings
   const globalDb = getGlobalDb();
-  const globalLearnings = globalDb.query<Record<string, unknown>, []>(`
+  const globalLearnings = globalDb
+    .query<Record<string, unknown>, []>(`
     SELECT *, 'global' as scope FROM global_learnings
     ORDER BY times_applied DESC
     LIMIT 20
-  `).all();
+  `)
+    .all();
   closeGlobalDb();
 
   console.error("\n💡 Learnings:\n");
@@ -414,7 +431,9 @@ export function patternAdd(_db: Database, args: string[]): void {
   const { values } = parsePatternArgs(args);
 
   if (!values.name || !values.description) {
-    exitWithUsage("Usage: muninn pattern add --name <name> --description <desc> [--example <code>] [--anti <antipattern>]");
+    exitWithUsage(
+      "Usage: muninn pattern add --name <name> --description <desc> [--example <code>] [--anti <antipattern>]"
+    );
   }
 
   const globalDb = getGlobalDb();
@@ -473,7 +492,9 @@ export function debtAdd(args: string[]): void {
   const { values } = parseDebtArgs(args);
 
   if (!values.title) {
-    exitWithUsage("Usage: muninn debt add --title <title> [--severity 1-10] [--effort small|medium|large] [--files <files>]");
+    exitWithUsage(
+      "Usage: muninn debt add --title <title> [--severity 1-10] [--effort small|medium|large] [--files <files>]"
+    );
   }
 
   const globalDb = getGlobalDb();
@@ -502,8 +523,8 @@ export function debtList(projectOnly: boolean): void {
   } else {
     console.error("\n📋 Tech Debt:\n");
     for (const d of debt) {
-      const sevIcon = d.severity >= 8 ? '🔴' : d.severity >= 5 ? '🟠' : '🟡';
-      console.error(`  ${sevIcon} #${d.id}: ${d.title} (${d.effort || 'medium'})`);
+      const sevIcon = d.severity >= 8 ? "🔴" : d.severity >= 5 ? "🟠" : "🟡";
+      console.error(`  ${sevIcon} #${d.id}: ${d.title} (${d.effort || "medium"})`);
     }
     console.error("");
   }

@@ -8,19 +8,19 @@
 
 import type { Database } from "bun:sqlite";
 import { eq } from "drizzle-orm";
-import type { DrizzleDb } from "../connection";
-import { servers, services, routes, infraEvents } from "../schema";
 import type {
-  Server,
-  Service,
-  Route,
-  ServiceWithDomain,
-  RouteWithService,
-  ServerWithServices,
-  InfraStatus,
   InfraEventWithNames,
+  InfraStatus,
+  Route,
+  RouteWithService,
+  Server,
+  ServerWithServices,
+  Service,
+  ServiceWithDomain,
 } from "../../types";
 import { logError } from "../../utils/errors";
+import type { DrizzleDb } from "../connection";
+import { infraEvents, routes, servers, services } from "../schema";
 
 // ============================================================================
 // Drizzle ORM Queries (Type-Safe)
@@ -106,21 +106,31 @@ export const drizzleInfra = {
 // ============================================================================
 
 export function getAllServers(db: Database): Server[] {
-  return db.query<Server, []>(`
+  return db
+    .query<Server, []>(`
     SELECT * FROM servers ORDER BY name
-  `).all();
+  `)
+    .all();
 }
 
 export function getServerByName(db: Database, name: string): Server | null {
-  return db.query<Server, [string]>(`
+  return (
+    db
+      .query<Server, [string]>(`
     SELECT * FROM servers WHERE name = ?
-  `).get(name) ?? null;
+  `)
+      .get(name) ?? null
+  );
 }
 
 export function getServerById(db: Database, id: number): Server | null {
-  return db.query<Server, [number]>(`
+  return (
+    db
+      .query<Server, [number]>(`
     SELECT * FROM servers WHERE id = ?
-  `).get(id) ?? null;
+  `)
+      .get(id) ?? null
+  );
 }
 
 // ============================================================================
@@ -128,44 +138,61 @@ export function getServerById(db: Database, id: number): Server | null {
 // ============================================================================
 
 export function getServicesByServerId(db: Database, serverId: number): ServiceWithDomain[] {
-  return db.query<ServiceWithDomain, [number]>(`
+  return db
+    .query<ServiceWithDomain, [number]>(`
     SELECT sv.*,
       (SELECT domain FROM routes WHERE service_id = sv.id LIMIT 1) as primary_domain
     FROM services sv
     WHERE sv.server_id = ?
     ORDER BY sv.name
-  `).all(serverId);
+  `)
+    .all(serverId);
 }
 
 export function getServiceByName(db: Database, name: string): Service | null {
-  return db.query<Service, [string]>(`
+  return (
+    db
+      .query<Service, [string]>(`
     SELECT * FROM services WHERE name = ?
-  `).get(name) ?? null;
+  `)
+      .get(name) ?? null
+  );
 }
 
 export function getServiceByNameAndServer(db: Database, name: string, serverId: number): Service | null {
-  return db.query<Service, [string, number]>(`
+  return (
+    db
+      .query<Service, [string, number]>(`
     SELECT * FROM services WHERE name = ? AND server_id = ?
-  `).get(name, serverId) ?? null;
+  `)
+      .get(name, serverId) ?? null
+  );
 }
 
-export function getAllServicesWithServerName(db: Database, serverFilter?: string): Array<Service & { server_name: string }> {
+export function getAllServicesWithServerName(
+  db: Database,
+  serverFilter?: string
+): Array<Service & { server_name: string }> {
   if (serverFilter) {
-    return db.query<Service & { server_name: string }, [string]>(`
+    return db
+      .query<Service & { server_name: string }, [string]>(`
       SELECT sv.*, s.name as server_name
       FROM services sv
       JOIN servers s ON sv.server_id = s.id
       WHERE s.name = ?
       ORDER BY sv.name
-    `).all(serverFilter);
+    `)
+      .all(serverFilter);
   }
 
-  return db.query<Service & { server_name: string }, []>(`
+  return db
+    .query<Service & { server_name: string }, []>(`
     SELECT sv.*, s.name as server_name
     FROM services sv
     JOIN servers s ON sv.server_id = s.id
     ORDER BY s.name, sv.name
-  `).all();
+  `)
+    .all();
 }
 
 // ============================================================================
@@ -173,19 +200,23 @@ export function getAllServicesWithServerName(db: Database, serverFilter?: string
 // ============================================================================
 
 export function getAllRoutes(db: Database): RouteWithService[] {
-  return db.query<RouteWithService, []>(`
+  return db
+    .query<RouteWithService, []>(`
     SELECT r.*, sv.name as service_name, s.name as server_name
     FROM routes r
     JOIN services sv ON r.service_id = sv.id
     JOIN servers s ON sv.server_id = s.id
     ORDER BY r.domain, r.path
-  `).all();
+  `)
+    .all();
 }
 
 export function getRoutesByServiceId(db: Database, serviceId: number): Route[] {
-  return db.query<Route, [number]>(`
+  return db
+    .query<Route, [number]>(`
     SELECT * FROM routes WHERE service_id = ?
-  `).all(serviceId);
+  `)
+    .all(serviceId);
 }
 
 // ============================================================================
@@ -225,7 +256,8 @@ interface InfraStatusRow {
  * Get full infrastructure status in a single query (fixes N+1)
  */
 export function getInfraStatus(db: Database): InfraStatus {
-  const rows = db.query<InfraStatusRow, []>(`
+  const rows = db
+    .query<InfraStatusRow, []>(`
     SELECT
       s.id as server_id,
       s.name as server_name,
@@ -256,7 +288,8 @@ export function getInfraStatus(db: Database): InfraStatus {
     FROM servers s
     LEFT JOIN services sv ON sv.server_id = s.id
     ORDER BY s.name, sv.name
-  `).all();
+  `)
+    .all();
 
   // Group by server in memory (O(n) instead of N+1 queries)
   const serverMap = new Map<number, ServerWithServices>();
@@ -271,7 +304,7 @@ export function getInfraStatus(db: Database): InfraStatus {
         name: row.server_name,
         hostname: row.server_hostname,
         ip_addresses: row.server_ip_addresses,
-        role: row.server_role as Server['role'],
+        role: row.server_role as Server["role"],
         ssh_user: row.server_ssh_user,
         ssh_port: row.server_ssh_port,
         ssh_key_path: row.server_ssh_key_path,
@@ -279,7 +312,7 @@ export function getInfraStatus(db: Database): InfraStatus {
         os: row.server_os,
         resources: row.server_resources,
         tags: row.server_tags,
-        status: row.server_status as Server['status'],
+        status: row.server_status as Server["status"],
         last_seen: row.server_last_seen,
         last_health_check: null,
         notes: row.server_notes,
@@ -289,44 +322,44 @@ export function getInfraStatus(db: Database): InfraStatus {
       };
       serverMap.set(row.server_id, server);
 
-      if (server.status === 'online') {
+      if (server.status === "online") {
         serversOnline++;
       }
     }
 
-    if (row.service_id !== null) {
+    if (row.service_id !== null && row.service_name !== null) {
       const service: ServiceWithDomain = {
         id: row.service_id,
-        name: row.service_name!,
+        name: row.service_name,
         server_id: row.server_id,
         type: row.service_type,
         runtime: row.service_runtime,
         port: row.service_port,
         health_endpoint: null,
-        health_status: (row.service_health_status || 'unknown') as Service['health_status'],
+        health_status: (row.service_health_status || "unknown") as Service["health_status"],
         last_health_check: null,
         response_time_ms: null,
         config: null,
         env_file: null,
         project_path: null,
         git_repo: null,
-        git_branch: 'main',
+        git_branch: "main",
         current_version: row.service_current_version,
         deploy_command: null,
         restart_command: null,
         stop_command: null,
         log_command: null,
-        status: (row.service_status || 'unknown') as Service['status'],
+        status: (row.service_status || "unknown") as Service["status"],
         auto_restart: 1,
-        created_at: '',
-        updated_at: '',
+        created_at: "",
+        updated_at: "",
         primary_domain: row.primary_domain ?? undefined,
       };
 
-      serverMap.get(row.server_id)!.services.push(service);
+      serverMap.get(row.server_id)?.services.push(service);
       totalServices++;
 
-      if (service.health_status === 'healthy') {
+      if (service.health_status === "healthy") {
         servicesHealthy++;
       }
     }
@@ -347,18 +380,25 @@ export function getInfraStatus(db: Database): InfraStatus {
 // Dependency Queries
 // ============================================================================
 
-export function getServiceDependencies(db: Database, serviceId: number): Array<{
+export function getServiceDependencies(
+  db: Database,
+  serviceId: number
+): Array<{
   depends_on: string;
   location: string;
   dependency_type: string | null;
   required: number;
 }> {
-  return db.query<{
-    depends_on: string;
-    location: string;
-    dependency_type: string | null;
-    required: number;
-  }, [number]>(`
+  return db
+    .query<
+      {
+        depends_on: string;
+        location: string;
+        dependency_type: string | null;
+        required: number;
+      },
+      [number]
+    >(`
     SELECT
       COALESCE(s2.name, sd.depends_on_external) as depends_on,
       CASE WHEN s2.id IS NOT NULL THEN srv.name ELSE 'external' END as location,
@@ -368,25 +408,34 @@ export function getServiceDependencies(db: Database, serviceId: number): Array<{
     LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
     LEFT JOIN servers srv ON s2.server_id = srv.id
     WHERE sd.service_id = ?
-  `).all(serviceId);
+  `)
+    .all(serviceId);
 }
 
-export function getServiceDependents(db: Database, serviceId: number): Array<{
+export function getServiceDependents(
+  db: Database,
+  serviceId: number
+): Array<{
   service_name: string;
   server_name: string;
   dependency_type: string | null;
 }> {
-  return db.query<{
-    service_name: string;
-    server_name: string;
-    dependency_type: string | null;
-  }, [number]>(`
+  return db
+    .query<
+      {
+        service_name: string;
+        server_name: string;
+        dependency_type: string | null;
+      },
+      [number]
+    >(`
     SELECT s1.name as service_name, srv.name as server_name, sd.dependency_type
     FROM service_deps sd
     JOIN services s1 ON sd.service_id = s1.id
     JOIN servers srv ON s1.server_id = srv.id
     WHERE sd.depends_on_service_id = ?
-  `).all(serviceId);
+  `)
+    .all(serviceId);
 }
 
 export function getAllDependencies(db: Database): Array<{
@@ -396,13 +445,17 @@ export function getAllDependencies(db: Database): Array<{
   depends_on_location: string;
   dependency_type: string | null;
 }> {
-  return db.query<{
-    service_name: string;
-    server_name: string;
-    depends_on: string;
-    depends_on_location: string;
-    dependency_type: string | null;
-  }, []>(`
+  return db
+    .query<
+      {
+        service_name: string;
+        server_name: string;
+        depends_on: string;
+        depends_on_location: string;
+        dependency_type: string | null;
+      },
+      []
+    >(`
     SELECT
       s1.name as service_name,
       srv1.name as server_name,
@@ -415,7 +468,8 @@ export function getAllDependencies(db: Database): Array<{
     LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
     LEFT JOIN servers srv2 ON s2.server_id = srv2.id
     ORDER BY s1.name
-  `).all();
+  `)
+    .all();
 }
 
 // ============================================================================
@@ -423,14 +477,16 @@ export function getAllDependencies(db: Database): Array<{
 // ============================================================================
 
 export function getRecentEvents(db: Database, limit: number = 20): InfraEventWithNames[] {
-  return db.query<InfraEventWithNames, [number]>(`
+  return db
+    .query<InfraEventWithNames, [number]>(`
     SELECT e.*, s.name as server_name, sv.name as service_name
     FROM infra_events e
     LEFT JOIN servers s ON e.server_id = s.id
     LEFT JOIN services sv ON e.service_id = sv.id
     ORDER BY e.created_at DESC
     LIMIT ?
-  `).all(limit);
+  `)
+    .all(limit);
 }
 
 export function logInfraEvent(
@@ -439,27 +495,30 @@ export function logInfraEvent(
     serverId?: number;
     serviceId?: number;
     eventType: string;
-    severity: 'info' | 'warning' | 'error' | 'critical';
+    severity: "info" | "warning" | "error" | "critical";
     title: string;
     description?: string;
     metadata?: Record<string, unknown>;
   }
 ): void {
   try {
-    db.run(`
+    db.run(
+      `
       INSERT INTO infra_events (server_id, service_id, event_type, severity, title, description, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [
-      params.serverId ?? null,
-      params.serviceId ?? null,
-      params.eventType,
-      params.severity,
-      params.title,
-      params.description ?? null,
-      params.metadata ? JSON.stringify(params.metadata) : null,
-    ]);
+    `,
+      [
+        params.serverId ?? null,
+        params.serviceId ?? null,
+        params.eventType,
+        params.severity,
+        params.title,
+        params.description ?? null,
+        params.metadata ? JSON.stringify(params.metadata) : null,
+      ]
+    );
   } catch (error) {
-    logError('logInfraEvent', error);
+    logError("logInfraEvent", error);
   }
 }
 
@@ -474,25 +533,35 @@ export function getMapData(db: Database): {
 } {
   const status = getInfraStatus(db);
 
-  const deps = db.query<{
-    from_svc: string;
-    to_svc: string | null;
-    dependency_type: string | null;
-  }, []>(`
+  const deps = db
+    .query<
+      {
+        from_svc: string;
+        to_svc: string | null;
+        dependency_type: string | null;
+      },
+      []
+    >(`
     SELECT s1.name as from_svc, s2.name as to_svc, sd.dependency_type
     FROM service_deps sd
     JOIN services s1 ON sd.service_id = s1.id
     LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
-  `).all();
+  `)
+    .all();
 
-  const routes = db.query<{
-    domain: string;
-    service_name: string;
-  }, []>(`
+  const routes = db
+    .query<
+      {
+        domain: string;
+        service_name: string;
+      },
+      []
+    >(`
     SELECT r.domain, sv.name as service_name
     FROM routes r
     JOIN services sv ON r.service_id = sv.id
-  `).all();
+  `)
+    .all();
 
   return {
     servers: status.servers,

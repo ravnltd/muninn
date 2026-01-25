@@ -10,9 +10,9 @@ import { outputSuccess } from "../utils/format";
 // Types
 // ============================================================================
 
-type TaskType = 'code_review' | 'debugging' | 'feature_build' | 'creative' | 'research' | 'refactor';
+type TaskType = "code_review" | "debugging" | "feature_build" | "creative" | "research" | "refactor";
 
-const VALID_TASK_TYPES: TaskType[] = ['code_review', 'debugging', 'feature_build', 'creative', 'research', 'refactor'];
+const VALID_TASK_TYPES: TaskType[] = ["code_review", "debugging", "feature_build", "creative", "research", "refactor"];
 
 // ============================================================================
 // Set Workflow (UPSERT)
@@ -31,7 +31,7 @@ export function workflowSet(
   }
 
   if (!VALID_TASK_TYPES.includes(taskType)) {
-    console.error(`Invalid task type. Must be one of: ${VALID_TASK_TYPES.join(', ')}`);
+    console.error(`Invalid task type. Must be one of: ${VALID_TASK_TYPES.join(", ")}`);
     process.exit(1);
   }
 
@@ -40,30 +40,38 @@ export function workflowSet(
   }
 
   // UPSERT: update if exists, insert if not
-  const existing = db.query<{ id: number; times_used: number }, [number | null, string]>(`
+  const existing = db
+    .query<{ id: number; times_used: number }, [number | null, string]>(`
     SELECT id, times_used FROM workflow_patterns
     WHERE project_id = ? AND task_type = ?
-  `).get(projectId, taskType);
+  `)
+    .get(projectId, taskType);
 
   if (existing) {
-    db.run(`
+    db.run(
+      `
       UPDATE workflow_patterns
       SET approach = ?, preferences = ?, examples = ?,
           times_used = times_used + 1,
           last_used_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [approach, options.preferences ?? null, options.examples ?? null, existing.id]);
+    `,
+      [approach, options.preferences ?? null, options.examples ?? null, existing.id]
+    );
 
     console.error(`\n🔄 Workflow updated for "${taskType}" (used ${existing.times_used + 1}x)`);
     outputSuccess({ id: existing.id, taskType, approach, updated: true });
     return existing.id;
   }
 
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO workflow_patterns (project_id, task_type, approach, preferences, examples, last_used_at)
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `, [projectId, taskType, approach, options.preferences ?? null, options.examples ?? null]);
+  `,
+    [projectId, taskType, approach, options.preferences ?? null, options.examples ?? null]
+  );
 
   const id = Number(result.lastInsertRowid);
   console.error(`\n🔄 Workflow set for "${taskType}"`);
@@ -81,29 +89,37 @@ function workflowSetGlobal(
   examples?: string
 ): number {
   // UPSERT on global table
-  const existing = db.query<{ id: number; times_used: number }, [string]>(`
+  const existing = db
+    .query<{ id: number; times_used: number }, [string]>(`
     SELECT id, times_used FROM global_workflow_patterns WHERE task_type = ?
-  `).get(taskType);
+  `)
+    .get(taskType);
 
   if (existing) {
-    db.run(`
+    db.run(
+      `
       UPDATE global_workflow_patterns
       SET approach = ?, preferences = ?, examples = ?,
           times_used = times_used + 1,
           last_used_at = CURRENT_TIMESTAMP,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [approach, preferences ?? null, examples ?? null, existing.id]);
+    `,
+      [approach, preferences ?? null, examples ?? null, existing.id]
+    );
 
     console.error(`\n🔄 Global workflow updated for "${taskType}"`);
     outputSuccess({ id: existing.id, taskType, approach, updated: true, global: true });
     return existing.id;
   }
 
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO global_workflow_patterns (task_type, approach, preferences, examples, last_used_at)
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `, [taskType, approach, preferences ?? null, examples ?? null]);
+  `,
+    [taskType, approach, preferences ?? null, examples ?? null]
+  );
 
   const id = Number(result.lastInsertRowid);
   console.error(`\n🔄 Global workflow set for "${taskType}"`);
@@ -127,13 +143,22 @@ export function workflowGet(
   }
 
   if (options.global) {
-    const pattern = db.query<{
-      id: number; task_type: string; approach: string;
-      preferences: string | null; examples: string | null;
-      times_used: number; last_used_at: string | null;
-    }, [string]>(`
+    const pattern = db
+      .query<
+        {
+          id: number;
+          task_type: string;
+          approach: string;
+          preferences: string | null;
+          examples: string | null;
+          times_used: number;
+          last_used_at: string | null;
+        },
+        [string]
+      >(`
       SELECT * FROM global_workflow_patterns WHERE task_type = ?
-    `).get(taskType);
+    `)
+      .get(taskType);
 
     if (!pattern) {
       console.error(`No global workflow found for "${taskType}"`);
@@ -150,14 +175,23 @@ export function workflowGet(
   }
 
   // Try project-local first, fall back to global
-  const pattern = db.query<{
-    id: number; task_type: string; approach: string;
-    preferences: string | null; examples: string | null;
-    times_used: number; last_used_at: string | null;
-  }, [number | null, string]>(`
+  const pattern = db
+    .query<
+      {
+        id: number;
+        task_type: string;
+        approach: string;
+        preferences: string | null;
+        examples: string | null;
+        times_used: number;
+        last_used_at: string | null;
+      },
+      [number | null, string]
+    >(`
     SELECT * FROM workflow_patterns
     WHERE project_id = ? AND task_type = ?
-  `).get(projectId, taskType);
+  `)
+    .get(projectId, taskType);
 
   if (pattern) {
     console.error(`\n🔄 Workflow: ${taskType}`);
@@ -169,18 +203,26 @@ export function workflowGet(
   }
 
   // Fall back to global
-  const globalPattern = db.query<{
-    id: number; task_type: string; approach: string;
-    preferences: string | null; examples: string | null;
-    times_used: number;
-  }, [string]>(`
+  const globalPattern = db
+    .query<
+      {
+        id: number;
+        task_type: string;
+        approach: string;
+        preferences: string | null;
+        examples: string | null;
+        times_used: number;
+      },
+      [string]
+    >(`
     SELECT * FROM global_workflow_patterns WHERE task_type = ?
-  `).get(taskType);
+  `)
+    .get(taskType);
 
   if (globalPattern) {
     console.error(`\n🔄 Workflow (global): ${taskType}`);
     console.error(`   Approach: ${globalPattern.approach}`);
-    outputSuccess({ ...globalPattern, source: 'global' });
+    outputSuccess({ ...globalPattern, source: "global" });
     return;
   }
 
@@ -192,20 +234,24 @@ export function workflowGet(
 // List Workflows
 // ============================================================================
 
-export function workflowList(
-  db: Database,
-  projectId: number | null,
-  options: { global?: boolean } = {}
-): void {
+export function workflowList(db: Database, projectId: number | null, options: { global?: boolean } = {}): void {
   if (options.global) {
-    const patterns = db.query<{
-      id: number; task_type: string; approach: string;
-      times_used: number; last_used_at: string | null;
-    }, []>(`
+    const patterns = db
+      .query<
+        {
+          id: number;
+          task_type: string;
+          approach: string;
+          times_used: number;
+          last_used_at: string | null;
+        },
+        []
+      >(`
       SELECT id, task_type, approach, times_used, last_used_at
       FROM global_workflow_patterns
       ORDER BY times_used DESC
-    `).all();
+    `)
+      .all();
 
     console.error(`\n🔄 Global Workflows (${patterns.length})\n`);
     for (const p of patterns) {
@@ -215,15 +261,23 @@ export function workflowList(
     return;
   }
 
-  const patterns = db.query<{
-    id: number; task_type: string; approach: string;
-    times_used: number; last_used_at: string | null;
-  }, [number | null]>(`
+  const patterns = db
+    .query<
+      {
+        id: number;
+        task_type: string;
+        approach: string;
+        times_used: number;
+        last_used_at: string | null;
+      },
+      [number | null]
+    >(`
     SELECT id, task_type, approach, times_used, last_used_at
     FROM workflow_patterns
     WHERE project_id = ?
     ORDER BY times_used DESC
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   console.error(`\n🔄 Workflows (${patterns.length})\n`);
   for (const p of patterns) {
@@ -236,17 +290,16 @@ export function workflowList(
 // CLI Handler
 // ============================================================================
 
-export function handleWorkflowCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): void {
+export function handleWorkflowCommand(db: Database, projectId: number, args: string[]): void {
   const subCmd = args[0];
 
   switch (subCmd) {
     case "set": {
       const taskType = args[1] as TaskType;
-      const approach = args.slice(2).filter(a => !a.startsWith("--")).join(" ");
+      const approach = args
+        .slice(2)
+        .filter((a) => !a.startsWith("--"))
+        .join(" ");
       const prefIdx = args.indexOf("--preferences");
       const preferences = prefIdx !== -1 ? args[prefIdx + 1] : undefined;
       const exIdx = args.indexOf("--examples");

@@ -3,8 +3,8 @@
  * Provides type-safe validation for CLI inputs and data
  */
 
+import { parseArgs } from "node:util";
 import { z } from "zod";
-import { parseArgs } from "util";
 import type { ServerRole } from "../types";
 
 // ============================================================================
@@ -22,17 +22,17 @@ export const SeverityScore = z.number().int().min(1).max(10);
 // Infrastructure Schemas
 // ============================================================================
 
-export const ServerRoleSchema = z.enum(['production', 'staging', 'homelab', 'development']);
-export const ServerStatusSchema = z.enum(['online', 'offline', 'degraded', 'unknown']);
-export const HealthStatusSchema = z.enum(['healthy', 'unhealthy', 'degraded', 'unknown']);
-export const ServiceStatusSchema = z.enum(['running', 'stopped', 'error', 'unknown']);
+export const ServerRoleSchema = z.enum(["production", "staging", "homelab", "development"]);
+export const ServerStatusSchema = z.enum(["online", "offline", "degraded", "unknown"]);
+export const HealthStatusSchema = z.enum(["healthy", "unhealthy", "degraded", "unknown"]);
+export const ServiceStatusSchema = z.enum(["running", "stopped", "error", "unknown"]);
 
 export const ServerAddInput = z.object({
   name: NonEmptyString,
   ip: z.string().ip().optional(),
   hostname: OptionalString,
   role: ServerRoleSchema.optional(),
-  user: z.string().default('root'),
+  user: z.string().default("root"),
   port: z.coerce.number().int().min(1).max(65535).default(22),
   key: OptionalString,
   jump: OptionalString,
@@ -46,13 +46,13 @@ export type ServerAddInput = z.infer<typeof ServerAddInput>;
 export const ServiceAddInput = z.object({
   name: NonEmptyString,
   server: NonEmptyString,
-  type: z.enum(['app', 'database', 'cache', 'queue', 'proxy', 'static']).optional(),
+  type: z.enum(["app", "database", "cache", "queue", "proxy", "static"]).optional(),
   runtime: OptionalString,
   port: z.coerce.number().int().min(1).max(65535).optional(),
   health: OptionalString,
   project: OptionalString,
   repo: OptionalString,
-  branch: z.string().default('main'),
+  branch: z.string().default("main"),
   deploy: OptionalString,
   restart: OptionalString,
   stop: OptionalString,
@@ -65,24 +65,26 @@ export type ServiceAddInput = z.infer<typeof ServiceAddInput>;
 export const RouteAddInput = z.object({
   domain: NonEmptyString,
   service: NonEmptyString,
-  path: z.string().default('/'),
+  path: z.string().default("/"),
   proxy: OptionalString,
-  ssl: z.enum(['letsencrypt', 'cloudflare', 'self-signed', 'none']).optional(),
+  ssl: z.enum(["letsencrypt", "cloudflare", "self-signed", "none"]).optional(),
   notes: OptionalString,
 });
 
 export type RouteAddInput = z.infer<typeof RouteAddInput>;
 
-export const DepAddInput = z.object({
-  service: NonEmptyString,
-  depends: OptionalString,
-  external: OptionalString,
-  type: z.enum(['database', 'cache', 'api', 'queue', 'auth', 'storage']).optional(),
-  env: OptionalString,
-  optional: z.boolean().default(false),
-}).refine(data => data.depends || data.external, {
-  message: "Either --depends or --external must be specified",
-});
+export const DepAddInput = z
+  .object({
+    service: NonEmptyString,
+    depends: OptionalString,
+    external: OptionalString,
+    type: z.enum(["database", "cache", "api", "queue", "auth", "storage"]).optional(),
+    env: OptionalString,
+    optional: z.boolean().default(false),
+  })
+  .refine((data) => data.depends || data.external, {
+    message: "Either --depends or --external must be specified",
+  });
 
 export type DepAddInput = z.infer<typeof DepAddInput>;
 
@@ -91,11 +93,19 @@ export type DepAddInput = z.infer<typeof DepAddInput>;
 // ============================================================================
 
 export const FileTypeSchema = z.enum([
-  'component', 'route', 'util', 'config', 'schema',
-  'service', 'hook', 'middleware', 'test', 'other'
+  "component",
+  "route",
+  "util",
+  "config",
+  "schema",
+  "service",
+  "hook",
+  "middleware",
+  "test",
+  "other",
 ]);
 
-export const FileStatusSchema = z.enum(['active', 'deprecated', 'do-not-touch', 'generated']);
+export const FileStatusSchema = z.enum(["active", "deprecated", "do-not-touch", "generated"]);
 
 export const FileAddInput = z.object({
   path: NonEmptyString,
@@ -103,7 +113,7 @@ export const FileAddInput = z.object({
   purpose: OptionalString,
   fragility: z.coerce.number().int().min(0).max(10).default(0),
   fragilityReason: OptionalString,
-  status: FileStatusSchema.default('active'),
+  status: FileStatusSchema.default("active"),
 });
 
 export type FileAddInput = z.infer<typeof FileAddInput>;
@@ -112,7 +122,7 @@ export type FileAddInput = z.infer<typeof FileAddInput>;
 // Decision Schemas
 // ============================================================================
 
-export const DecisionStatusSchema = z.enum(['active', 'superseded', 'reconsidering']);
+export const DecisionStatusSchema = z.enum(["active", "superseded", "reconsidering"]);
 
 export const DecisionAddInput = z.object({
   title: NonEmptyString,
@@ -127,13 +137,13 @@ export type DecisionAddInput = z.infer<typeof DecisionAddInput>;
 // Issue Schemas
 // ============================================================================
 
-export const IssueTypeSchema = z.enum(['bug', 'tech-debt', 'enhancement', 'question', 'potential']);
-export const IssueStatusSchema = z.enum(['open', 'in-progress', 'resolved', 'wont-fix']);
+export const IssueTypeSchema = z.enum(["bug", "tech-debt", "enhancement", "question", "potential"]);
+export const IssueStatusSchema = z.enum(["open", "in-progress", "resolved", "wont-fix"]);
 
 export const IssueAddInput = z.object({
   title: NonEmptyString,
   description: OptionalString,
-  type: IssueTypeSchema.default('bug'),
+  type: IssueTypeSchema.default("bug"),
   severity: z.coerce.number().int().min(1).max(10).default(5),
   files: OptionalString,
   workaround: OptionalString,
@@ -145,10 +155,10 @@ export type IssueAddInput = z.infer<typeof IssueAddInput>;
 // Learning Schemas
 // ============================================================================
 
-export const LearningCategorySchema = z.enum(['pattern', 'gotcha', 'preference', 'convention', 'architecture']);
+export const LearningCategorySchema = z.enum(["pattern", "gotcha", "preference", "convention", "architecture"]);
 
 export const LearnAddInput = z.object({
-  category: LearningCategorySchema.default('pattern'),
+  category: LearningCategorySchema.default("pattern"),
   title: NonEmptyString,
   content: NonEmptyString,
   context: OptionalString,
@@ -176,14 +186,14 @@ export type PatternAddInput = z.infer<typeof PatternAddInput>;
 // Tech Debt Schemas
 // ============================================================================
 
-export const DebtEffortSchema = z.enum(['small', 'medium', 'large']);
-export const DebtStatusSchema = z.enum(['open', 'in-progress', 'resolved']);
+export const DebtEffortSchema = z.enum(["small", "medium", "large"]);
+export const DebtStatusSchema = z.enum(["open", "in-progress", "resolved"]);
 
 export const DebtAddInput = z.object({
   title: NonEmptyString,
   description: OptionalString,
   severity: z.coerce.number().int().min(1).max(10).default(5),
-  effort: DebtEffortSchema.default('medium'),
+  effort: DebtEffortSchema.default("medium"),
   files: OptionalString,
 });
 
@@ -242,8 +252,8 @@ export function parseServerArgs(args: string[]): ParsedArgs<Partial<ServerAddInp
       ip: values.ip,
       hostname: values.hostname,
       role: values.role as ServerRole | undefined,
-      user: values.user || 'root',
-      port: parseInt(values.port || '22'),
+      user: values.user || "root",
+      port: parseInt(values.port || "22", 10),
       key: values.key,
       jump: values.jump,
       os: values.os,
@@ -279,13 +289,13 @@ export function parseServiceArgs(args: string[]): ParsedArgs<Partial<ServiceAddI
     values: {
       name: positionals[0],
       server: values.server,
-      type: values.type as ServiceAddInput['type'],
+      type: values.type as ServiceAddInput["type"],
       runtime: values.runtime,
-      port: values.port ? parseInt(values.port) : undefined,
+      port: values.port ? parseInt(values.port, 10) : undefined,
       health: values.health,
       project: values.project,
       repo: values.repo,
-      branch: values.branch || 'main',
+      branch: values.branch || "main",
       deploy: values.deploy,
       restart: values.restart,
       stop: values.stop,
@@ -313,9 +323,9 @@ export function parseRouteArgs(args: string[]): ParsedArgs<Partial<RouteAddInput
     values: {
       domain: positionals[0],
       service: values.service,
-      path: values.path || '/',
+      path: values.path || "/",
       proxy: values.proxy,
-      ssl: values.ssl as RouteAddInput['ssl'],
+      ssl: values.ssl as RouteAddInput["ssl"],
       notes: values.notes,
     },
     positionals,
@@ -338,11 +348,11 @@ export function parseFileArgs(args: string[]): ParsedArgs<Partial<FileAddInput>>
   return {
     values: {
       path: positionals[0],
-      type: values.type as FileAddInput['type'],
+      type: values.type as FileAddInput["type"],
       purpose: values.purpose,
-      fragility: values.fragility ? parseInt(values.fragility) : 0,
+      fragility: values.fragility ? parseInt(values.fragility, 10) : 0,
       fragilityReason: values["fragility-reason"],
-      status: values.status as FileAddInput['status'],
+      status: values.status as FileAddInput["status"],
     },
     positionals,
   };
@@ -389,8 +399,8 @@ export function parseIssueArgs(args: string[]): ParsedArgs<Partial<IssueAddInput
     values: {
       title: values.title,
       description: values.description,
-      type: values.type as IssueAddInput['type'],
-      severity: values.severity ? parseInt(values.severity) : 5,
+      type: values.type as IssueAddInput["type"],
+      severity: values.severity ? parseInt(values.severity, 10) : 5,
       files: values.files,
       workaround: values.workaround,
     },
@@ -414,7 +424,7 @@ export function parseLearnArgs(args: string[]): ParsedArgs<Partial<LearnAddInput
 
   return {
     values: {
-      category: values.category as LearnAddInput['category'],
+      category: values.category as LearnAddInput["category"],
       title: values.title,
       content: values.content,
       context: values.context,
@@ -467,8 +477,8 @@ export function parseDebtArgs(args: string[]): ParsedArgs<Partial<DebtAddInput>>
     values: {
       title: values.title,
       description: values.description,
-      severity: values.severity ? parseInt(values.severity) : 5,
-      effort: values.effort as DebtAddInput['effort'],
+      severity: values.severity ? parseInt(values.severity, 10) : 5,
+      effort: values.effort as DebtAddInput["effort"],
       files: values.files,
     },
     positionals,
@@ -491,12 +501,12 @@ export function parseSessionEndArgs(args: string[]): ParsedArgs<Partial<SessionE
 
   return {
     values: {
-      id: positionals[0] ? parseInt(positionals[0]) : undefined,
+      id: positionals[0] ? parseInt(positionals[0], 10) : undefined,
       outcome: values.outcome,
       files: values.files,
       learnings: values.learnings,
       next: values.next,
-      success: values.success ? parseInt(values.success) : undefined,
+      success: values.success ? parseInt(values.success, 10) : undefined,
       analyze: values.analyze,
     },
     positionals,

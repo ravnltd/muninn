@@ -12,32 +12,24 @@
  * for TypeScript/JavaScript. Can be extended for other languages.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync } from "node:fs";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type ChunkType =
-  | 'function'
-  | 'class'
-  | 'interface'
-  | 'type'
-  | 'constant'
-  | 'component'
-  | 'method'
-  | 'export';
+export type ChunkType = "function" | "class" | "interface" | "type" | "constant" | "component" | "method" | "export";
 
 export interface CodeChunk {
   name: string;
   type: ChunkType;
-  signature: string;        // Full signature/declaration line
-  body: string;             // The actual code
+  signature: string; // Full signature/declaration line
+  body: string; // The actual code
   startLine: number;
   endLine: number;
-  purpose?: string;         // Extracted from JSDoc/comments
-  parameters?: string[];    // For functions
-  returnType?: string;      // For functions
+  purpose?: string; // Extracted from JSDoc/comments
+  parameters?: string[]; // For functions
+  returnType?: string; // For functions
   exported: boolean;
 }
 
@@ -53,27 +45,27 @@ export interface ChunkResult {
 // ============================================================================
 
 export function detectLanguage(filePath: string): string | null {
-  const ext = filePath.split('.').pop()?.toLowerCase();
+  const ext = filePath.split(".").pop()?.toLowerCase();
 
   switch (ext) {
-    case 'ts':
-    case 'tsx':
-      return 'typescript';
-    case 'js':
-    case 'jsx':
-    case 'mjs':
-    case 'cjs':
-      return 'javascript';
-    case 'go':
-      return 'go';
-    case 'py':
-      return 'python';
-    case 'rs':
-      return 'rust';
-    case 'svelte':
-      return 'svelte';
-    case 'vue':
-      return 'vue';
+    case "ts":
+    case "tsx":
+      return "typescript";
+    case "js":
+    case "jsx":
+    case "mjs":
+    case "cjs":
+      return "javascript";
+    case "go":
+      return "go";
+    case "py":
+      return "python";
+    case "rs":
+      return "rust";
+    case "svelte":
+      return "svelte";
+    case "vue":
+      return "vue";
     default:
       return null;
   }
@@ -89,14 +81,14 @@ export function detectLanguage(filePath: string): string | null {
 export function parseTypeScript(content: string, filePath: string): ChunkResult {
   const chunks: CodeChunk[] = [];
   const errors: string[] = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
 
   // Track braces for block detection
   let braceDepth = 0;
   let currentChunk: Partial<CodeChunk> | null = null;
   let chunkStartLine = 0;
   let chunkLines: string[] = [];
-  let pendingComment = '';
+  let pendingComment = "";
   let foundFirstBrace = false; // Track when we've found the function body start
 
   for (let i = 0; i < lines.length; i++) {
@@ -105,11 +97,11 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
     const trimmed = line.trim();
 
     // Capture JSDoc comments
-    if (trimmed.startsWith('/**')) {
-      pendingComment = '';
+    if (trimmed.startsWith("/**")) {
+      pendingComment = "";
       let j = i;
-      while (j < lines.length && !lines[j].includes('*/')) {
-        pendingComment += lines[j] + '\n';
+      while (j < lines.length && !lines[j].includes("*/")) {
+        pendingComment += `${lines[j]}\n`;
         j++;
       }
       if (j < lines.length) {
@@ -125,7 +117,7 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
       // (not braces in the return type annotation)
       if (!foundFirstBrace) {
         // Look for opening brace that starts a block (usually at end of line or on its own line)
-        if (trimmed === '{' || trimmed.endsWith('{')) {
+        if (trimmed === "{" || trimmed.endsWith("{")) {
           foundFirstBrace = true;
           braceDepth = 1;
         }
@@ -137,12 +129,12 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
       // Check if chunk is complete
       if (braceDepth === 0) {
         currentChunk.endLine = lineNum;
-        currentChunk.body = chunkLines.join('\n');
+        currentChunk.body = chunkLines.join("\n");
         currentChunk.purpose = extractPurpose(pendingComment);
         chunks.push(currentChunk as CodeChunk);
         currentChunk = null;
         chunkLines = [];
-        pendingComment = '';
+        pendingComment = "";
         foundFirstBrace = false;
       }
       continue;
@@ -158,34 +150,34 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
       foundFirstBrace = false;
 
       // Check if opening brace is on this line
-      if (trimmed.endsWith('{')) {
+      if (trimmed.endsWith("{")) {
         foundFirstBrace = true;
         braceDepth = 1;
-      } else if (chunk.type === 'type' || chunk.type === 'constant') {
+      } else if (chunk.type === "type" || chunk.type === "constant") {
         // Type aliases and consts don't need brace tracking
         // Just find the semicolon
         let j = i;
         while (j < lines.length) {
           const checkLine = lines[j].trim();
           chunkLines.push(lines[j]);
-          if (checkLine.endsWith(';')) {
+          if (checkLine.endsWith(";")) {
             currentChunk.endLine = j + 1;
-            currentChunk.body = chunkLines.join('\n');
+            currentChunk.body = chunkLines.join("\n");
             currentChunk.purpose = extractPurpose(pendingComment);
             chunks.push(currentChunk as CodeChunk);
             currentChunk = null;
             chunkLines = [];
-            pendingComment = '';
+            pendingComment = "";
             i = j; // Skip ahead
             break;
           }
           j++;
         }
       }
-    } else if (!trimmed.startsWith('*') && !trimmed.startsWith('//') && !trimmed.startsWith('/*')) {
+    } else if (!trimmed.startsWith("*") && !trimmed.startsWith("//") && !trimmed.startsWith("/*")) {
       // Clear pending comment if we hit non-comment, non-chunk line
-      if (trimmed.length > 0 && !trimmed.startsWith('import') && !trimmed.startsWith('from')) {
-        pendingComment = '';
+      if (trimmed.length > 0 && !trimmed.startsWith("import") && !trimmed.startsWith("from")) {
+        pendingComment = "";
       }
     }
   }
@@ -193,7 +185,7 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
   // Handle unclosed chunk - save partial if we have enough lines
   if (currentChunk && chunkLines.length > 1) {
     currentChunk.endLine = chunkStartLine + chunkLines.length - 1;
-    currentChunk.body = chunkLines.join('\n');
+    currentChunk.body = chunkLines.join("\n");
     currentChunk.purpose = extractPurpose(pendingComment);
     chunks.push(currentChunk as CodeChunk);
   } else if (currentChunk) {
@@ -202,9 +194,9 @@ export function parseTypeScript(content: string, filePath: string): ChunkResult 
 
   return {
     file: filePath,
-    language: 'typescript',
+    language: "typescript",
     chunks,
-    errors
+    errors,
   };
 }
 
@@ -217,12 +209,12 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
   if (match) {
     return {
       name: match[2],
-      type: 'function',
-      signature: line.split('{')[0].trim(),
+      type: "function",
+      signature: line.split("{")[0].trim(),
       startLine: lineNum,
       parameters: parseParams(match[4]),
       returnType: match[5]?.trim(),
-      exported: true
+      exported: true,
     };
   }
 
@@ -231,26 +223,28 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
   if (match) {
     return {
       name: match[2],
-      type: 'function',
-      signature: line.split('{')[0].trim(),
+      type: "function",
+      signature: line.split("{")[0].trim(),
       startLine: lineNum,
       parameters: parseParams(match[4]),
       returnType: match[5]?.trim(),
-      exported: false
+      exported: false,
     };
   }
 
   // Arrow function (const x = () => or const x = async () =>)
-  match = line.match(/^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(async\s+)?\(?([^)=]*)\)?\s*(?::\s*([^=]+))?\s*=>/);
+  match = line.match(
+    /^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?\s*=\s*(async\s+)?\(?([^)=]*)\)?\s*(?::\s*([^=]+))?\s*=>/
+  );
   if (match) {
     return {
       name: match[1],
-      type: 'function',
-      signature: line.split('=>')[0].trim() + ' =>',
+      type: "function",
+      signature: `${line.split("=>")[0].trim()} =>`,
       startLine: lineNum,
       parameters: parseParams(match[3]),
       returnType: match[4]?.trim(),
-      exported: line.startsWith('export')
+      exported: line.startsWith("export"),
     };
   }
 
@@ -259,10 +253,10 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
   if (match) {
     return {
       name: match[1],
-      type: 'class',
-      signature: line.split('{')[0].trim(),
+      type: "class",
+      signature: line.split("{")[0].trim(),
       startLine: lineNum,
-      exported: line.startsWith('export')
+      exported: line.startsWith("export"),
     };
   }
 
@@ -271,10 +265,10 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
   if (match) {
     return {
       name: match[1],
-      type: 'interface',
-      signature: line.split('{')[0].trim(),
+      type: "interface",
+      signature: line.split("{")[0].trim(),
       startLine: lineNum,
-      exported: line.startsWith('export')
+      exported: line.startsWith("export"),
     };
   }
 
@@ -283,10 +277,10 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
   if (match) {
     return {
       name: match[1],
-      type: 'type',
+      type: "type",
       signature: line,
       startLine: lineNum,
-      exported: line.startsWith('export')
+      exported: line.startsWith("export"),
     };
   }
 
@@ -295,15 +289,15 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
   if (match) {
     const name = match[1];
     // Detect React component (PascalCase)
-    const isComponent = /^[A-Z]/.test(name) &&
-      (line.includes('React') || line.includes('=>') || line.includes('function'));
+    const isComponent =
+      /^[A-Z]/.test(name) && (line.includes("React") || line.includes("=>") || line.includes("function"));
 
     return {
       name,
-      type: isComponent ? 'component' : 'constant',
-      signature: line.split('=')[0].trim() + ' =',
+      type: isComponent ? "component" : "constant",
+      signature: `${line.split("=")[0].trim()} =`,
       startLine: lineNum,
-      exported: true
+      exported: true,
     };
   }
 
@@ -316,16 +310,16 @@ function matchChunkStart(line: string, lineNum: number, _comment: string): Parti
 function countBraces(line: string): number {
   // Remove strings and comments
   const cleaned = line
-    .replace(/"(?:[^"\\]|\\.)*"/g, '')
-    .replace(/'(?:[^'\\]|\\.)*'/g, '')
-    .replace(/`(?:[^`\\]|\\.)*`/g, '')
-    .replace(/\/\/.*/g, '')
-    .replace(/\/\*.*?\*\//g, '');
+    .replace(/"(?:[^"\\]|\\.)*"/g, "")
+    .replace(/'(?:[^'\\]|\\.)*'/g, "")
+    .replace(/`(?:[^`\\]|\\.)*`/g, "")
+    .replace(/\/\/.*/g, "")
+    .replace(/\/\*.*?\*\//g, "");
 
   let count = 0;
   for (const char of cleaned) {
-    if (char === '{') count++;
-    else if (char === '}') count--;
+    if (char === "{") count++;
+    else if (char === "}") count--;
   }
   return count;
 }
@@ -337,9 +331,9 @@ function parseParams(paramStr: string): string[] {
   if (!paramStr?.trim()) return [];
 
   return paramStr
-    .split(',')
-    .map(p => p.trim().split(':')[0].trim())
-    .filter(p => p.length > 0);
+    .split(",")
+    .map((p) => p.trim().split(":")[0].trim())
+    .filter((p) => p.length > 0);
 }
 
 /**
@@ -353,10 +347,10 @@ function extractPurpose(comment: string): string | undefined {
   if (descMatch) return descMatch[1].trim();
 
   // Get first non-empty, non-tag line
-  const lines = comment.split('\n');
+  const lines = comment.split("\n");
   for (const line of lines) {
-    const cleaned = line.replace(/^\s*\*\s?/, '').trim();
-    if (cleaned && !cleaned.startsWith('@') && !cleaned.startsWith('/*') && !cleaned.startsWith('*/')) {
+    const cleaned = line.replace(/^\s*\*\s?/, "").trim();
+    if (cleaned && !cleaned.startsWith("@") && !cleaned.startsWith("/*") && !cleaned.startsWith("*/")) {
       return cleaned;
     }
   }
@@ -371,12 +365,12 @@ function extractPurpose(comment: string): string | undefined {
 export function parseGo(content: string, filePath: string): ChunkResult {
   const chunks: CodeChunk[] = [];
   const errors: string[] = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
 
   let braceDepth = 0;
   let currentChunk: Partial<CodeChunk> | null = null;
   let chunkLines: string[] = [];
-  let pendingComment = '';
+  let pendingComment = "";
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -384,8 +378,8 @@ export function parseGo(content: string, filePath: string): ChunkResult {
     const trimmed = line.trim();
 
     // Capture comments
-    if (trimmed.startsWith('//')) {
-      pendingComment += trimmed.slice(2).trim() + ' ';
+    if (trimmed.startsWith("//")) {
+      pendingComment += `${trimmed.slice(2).trim()} `;
       continue;
     }
 
@@ -395,12 +389,12 @@ export function parseGo(content: string, filePath: string): ChunkResult {
 
       if (braceDepth === 0) {
         currentChunk.endLine = lineNum;
-        currentChunk.body = chunkLines.join('\n');
+        currentChunk.body = chunkLines.join("\n");
         currentChunk.purpose = pendingComment.trim() || undefined;
         chunks.push(currentChunk as CodeChunk);
         currentChunk = null;
         chunkLines = [];
-        pendingComment = '';
+        pendingComment = "";
       }
       continue;
     }
@@ -410,16 +404,16 @@ export function parseGo(content: string, filePath: string): ChunkResult {
     if (match) {
       currentChunk = {
         name: match[1],
-        type: 'function',
-        signature: trimmed.split('{')[0].trim(),
+        type: "function",
+        signature: trimmed.split("{")[0].trim(),
         startLine: lineNum,
-        parameters: match[2] ? match[2].split(',').map(p => p.trim().split(' ')[0]) : [],
+        parameters: match[2] ? match[2].split(",").map((p) => p.trim().split(" ")[0]) : [],
         returnType: match[3] || match[4],
-        exported: /^[A-Z]/.test(match[1])
+        exported: /^[A-Z]/.test(match[1]),
       };
       chunkLines = [line];
       braceDepth = countBraces(line);
-      pendingComment = '';
+      pendingComment = "";
       continue;
     }
 
@@ -428,21 +422,21 @@ export function parseGo(content: string, filePath: string): ChunkResult {
     if (match) {
       currentChunk = {
         name: match[1],
-        type: match[2] === 'struct' ? 'class' : 'interface',
-        signature: trimmed.split('{')[0].trim(),
+        type: match[2] === "struct" ? "class" : "interface",
+        signature: trimmed.split("{")[0].trim(),
         startLine: lineNum,
-        exported: /^[A-Z]/.test(match[1])
+        exported: /^[A-Z]/.test(match[1]),
       };
       chunkLines = [line];
       braceDepth = countBraces(line);
-      pendingComment = '';
+      pendingComment = "";
       continue;
     }
 
-    pendingComment = '';
+    pendingComment = "";
   }
 
-  return { file: filePath, language: 'go', chunks, errors };
+  return { file: filePath, language: "go", chunks, errors };
 }
 
 // ============================================================================
@@ -460,15 +454,15 @@ export function parseFile(filePath: string): ChunkResult | null {
   }
 
   try {
-    const content = readFileSync(filePath, 'utf-8');
+    const content = readFileSync(filePath, "utf-8");
 
     switch (language) {
-      case 'typescript':
-      case 'javascript':
-      case 'svelte':
-      case 'vue':
+      case "typescript":
+      case "javascript":
+      case "svelte":
+      case "vue":
         return parseTypeScript(content, filePath);
-      case 'go':
+      case "go":
         return parseGo(content, filePath);
       default:
         return null;
@@ -478,7 +472,7 @@ export function parseFile(filePath: string): ChunkResult | null {
       file: filePath,
       language,
       chunks: [],
-      errors: [`Failed to read file: ${error}`]
+      errors: [`Failed to read file: ${error}`],
     };
   }
 }
@@ -491,10 +485,10 @@ export function chunkToSearchText(chunk: CodeChunk): string {
     chunk.name,
     chunk.type,
     chunk.signature,
-    chunk.purpose || '',
-    chunk.parameters?.join(' ') || '',
-    chunk.returnType || ''
+    chunk.purpose || "",
+    chunk.parameters?.join(" ") || "",
+    chunk.returnType || "",
   ];
 
-  return parts.filter(Boolean).join(' ');
+  return parts.filter(Boolean).join(" ");
 }

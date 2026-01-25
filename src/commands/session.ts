@@ -4,23 +4,23 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { outputJson, outputSuccess, getTimeAgo } from "../utils/format";
-import { exitWithUsage, safeJsonParse, logError } from "../utils/errors";
-import { parseSessionEndArgs } from "../utils/validation";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
-import { getOpenQuestionsForResume } from "./questions";
-import { getTopProfileEntries } from "./profile";
-import { getDecisionsDue, incrementSessionsSince } from "./outcomes";
+import { exitWithUsage, logError, safeJsonParse } from "../utils/errors";
+import { getTimeAgo, outputJson, outputSuccess } from "../utils/format";
+import { parseSessionEndArgs } from "../utils/validation";
 import { generateInsights, listInsights } from "./insights";
-import { assignSessionNumber, detectAnomalies } from "./temporal";
+import { getDecisionsDue, incrementSessionsSince } from "./outcomes";
+import { getTopProfileEntries } from "./profile";
+import { getOpenQuestionsForResume } from "./questions";
 import {
-  autoRelateSessionFiles,
+  autoRelateFileCorrelations,
   autoRelateSessionDecisions,
+  autoRelateSessionFiles,
   autoRelateSessionIssues,
   autoRelateSessionLearnings,
-  autoRelateFileCorrelations,
   autoRelateTestFiles,
 } from "./relationships";
+import { assignSessionNumber, detectAnomalies } from "./temporal";
 
 // ============================================================================
 // Types
@@ -52,10 +52,13 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
   // Decay temperatures on session start
   decayTemperatures(db, projectId);
 
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO sessions (project_id, goal)
     VALUES (?, ?)
-  `, [projectId, goal]);
+  `,
+    [projectId, goal]
+  );
 
   const sessionId = Number(result.lastInsertRowid);
 
@@ -79,9 +82,11 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
  */
 function shouldGenerateInsights(db: Database, projectId: number): boolean {
   try {
-    const last = db.query<{ generated_at: string | null }, [number]>(
-      `SELECT MAX(generated_at) as generated_at FROM insights WHERE project_id = ?`
-    ).get(projectId);
+    const last = db
+      .query<{ generated_at: string | null }, [number]>(
+        `SELECT MAX(generated_at) as generated_at FROM insights WHERE project_id = ?`
+      )
+      .get(projectId);
 
     // Never generated — bootstrap
     if (!last?.generated_at) return true;
@@ -89,24 +94,30 @@ function shouldGenerateInsights(db: Database, projectId: number): boolean {
     const since = last.generated_at;
 
     // 3+ completed sessions since last generation
-    const sessions = db.query<{ count: number }, [number, string]>(
-      `SELECT COUNT(*) as count FROM sessions
+    const sessions = db
+      .query<{ count: number }, [number, string]>(
+        `SELECT COUNT(*) as count FROM sessions
        WHERE project_id = ? AND ended_at > ?`
-    ).get(projectId, since);
+      )
+      .get(projectId, since);
     if ((sessions?.count ?? 0) >= 3) return true;
 
     // 5+ correlation updates since last generation
-    const correlations = db.query<{ count: number }, [number, string]>(
-      `SELECT COUNT(*) as count FROM file_correlations
+    const correlations = db
+      .query<{ count: number }, [number, string]>(
+        `SELECT COUNT(*) as count FROM file_correlations
        WHERE project_id = ? AND last_cochange > ?`
-    ).get(projectId, since);
+      )
+      .get(projectId, since);
     if ((correlations?.count ?? 0) >= 5) return true;
 
     // 2+ new decisions since last generation
-    const decisions = db.query<{ count: number }, [number, string]>(
-      `SELECT COUNT(*) as count FROM decisions
+    const decisions = db
+      .query<{ count: number }, [number, string]>(
+        `SELECT COUNT(*) as count FROM decisions
        WHERE project_id = ? AND decided_at > ?`
-    ).get(projectId, since);
+      )
+      .get(projectId, since);
     if ((decisions?.count ?? 0) >= 2) return true;
 
     return false;
@@ -133,16 +144,17 @@ export function sessionEnd(db: Database, sessionId: number, args: string[]): voi
   }
 
   // Verify session exists
-  const session = db.query<{ id: number; goal: string }, [number]>(
-    "SELECT id, goal FROM sessions WHERE id = ?"
-  ).get(sessionId);
+  const session = db
+    .query<{ id: number; goal: string }, [number]>("SELECT id, goal FROM sessions WHERE id = ?")
+    .get(sessionId);
 
   if (!session) {
     console.error(`❌ Session #${sessionId} not found`);
     process.exit(1);
   }
 
-  db.run(`
+  db.run(
+    `
     UPDATE sessions SET
       ended_at = CURRENT_TIMESTAMP,
       outcome = ?,
@@ -151,14 +163,16 @@ export function sessionEnd(db: Database, sessionId: number, args: string[]): voi
       next_steps = ?,
       success = ?
     WHERE id = ?
-  `, [
-    values.outcome || null,
-    values.files || null,
-    values.learnings || null,
-    values.next || null,
-    values.success ?? null,
-    sessionId,
-  ]);
+  `,
+    [
+      values.outcome || null,
+      values.files || null,
+      values.learnings || null,
+      values.next || null,
+      values.success ?? null,
+      sessionId,
+    ]
+  );
 
   console.error(`\n✅ Session #${sessionId} ended`);
   if (values.outcome) {
@@ -177,12 +191,14 @@ export function sessionEnd(db: Database, sessionId: number, args: string[]): voi
 // ============================================================================
 
 export function sessionLast(db: Database, projectId: number): void {
-  const session = db.query<Record<string, unknown>, [number]>(`
+  const session = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT * FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   if (!session) {
     console.error("No sessions found. Start one with: muninn session start <goal>");
@@ -194,7 +210,7 @@ export function sessionLast(db: Database, projectId: number): void {
   const isOngoing = !session.ended_at;
 
   console.error(`\n📋 Last Session (#${session.id}) - ${timeAgo}`);
-  console.error(`   Goal: ${session.goal || 'Not specified'}`);
+  console.error(`   Goal: ${session.goal || "Not specified"}`);
 
   if (session.outcome) {
     console.error(`   Outcome: ${session.outcome}`);
@@ -218,9 +234,9 @@ export function sessionLast(db: Database, projectId: number): void {
 // ============================================================================
 
 export function sessionCount(db: Database, projectId: number): number {
-  const result = db.query<{ count: number }, [number]>(
-    `SELECT COUNT(*) as count FROM sessions WHERE project_id = ?`
-  ).get(projectId);
+  const result = db
+    .query<{ count: number }, [number]>(`SELECT COUNT(*) as count FROM sessions WHERE project_id = ?`)
+    .get(projectId);
   return result?.count || 0;
 }
 
@@ -229,13 +245,15 @@ export function sessionCount(db: Database, projectId: number): number {
 // ============================================================================
 
 export function sessionList(db: Database, projectId: number, limit: number = 10): void {
-  const sessions = db.query<Record<string, unknown>, [number, number]>(`
+  const sessions = db
+    .query<Record<string, unknown>, [number, number]>(`
     SELECT id, goal, outcome, started_at, ended_at, success
     FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT ?
-  `).all(projectId, limit);
+  `)
+    .all(projectId, limit);
 
   if (sessions.length === 0) {
     console.error("No sessions found.");
@@ -248,10 +266,10 @@ export function sessionList(db: Database, projectId: number, limit: number = 10)
   for (const s of sessions) {
     const timeAgo = getTimeAgo(s.started_at as string);
     const isOngoing = !s.ended_at;
-    const successIcon = s.success === 2 ? '✅' : s.success === 1 ? '⚠️' : s.success === 0 ? '❌' : '⚪';
+    const successIcon = s.success === 2 ? "✅" : s.success === 1 ? "⚠️" : s.success === 0 ? "❌" : "⚪";
 
-    console.error(`  ${successIcon} #${s.id} (${timeAgo})${isOngoing ? ' [ONGOING]' : ''}`);
-    console.error(`     ${(s.goal as string)?.substring(0, 60) || 'No goal'}...`);
+    console.error(`  ${successIcon} #${s.id} (${timeAgo})${isOngoing ? " [ONGOING]" : ""}`);
+    console.error(`     ${(s.goal as string)?.substring(0, 60) || "No goal"}...`);
   }
   console.error("");
 
@@ -263,15 +281,17 @@ export function sessionList(db: Database, projectId: number, limit: number = 10)
 // ============================================================================
 
 export function generateResume(db: Database, projectId: number): string {
-  const lastSession = db.query<Record<string, unknown>, [number]>(`
+  const lastSession = db
+    .query<Record<string, unknown>, [number]>(`
     SELECT * FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   if (!lastSession) {
-    return "No previous sessions found. Start fresh with `muninn session start \"Your goal\"`";
+    return 'No previous sessions found. Start fresh with `muninn session start "Your goal"`';
   }
 
   // Build system primer section
@@ -346,7 +366,10 @@ export function generateResume(db: Database, projectId: number): string {
     // Parse next_steps as a checklist if it contains bullet points
     const nextSteps = lastSession.next_steps as string;
     if (nextSteps.includes("\n") || nextSteps.includes("-")) {
-      const steps = nextSteps.split(/[\n•-]/).map(s => s.trim()).filter(Boolean);
+      const steps = nextSteps
+        .split(/[\n•-]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       for (const step of steps) {
         md += `- [ ] ${step}\n`;
       }
@@ -369,10 +392,10 @@ export function generateResume(db: Database, projectId: number): string {
     if (found.length > 0 || resolved.length > 0) {
       md += `## Issues\n`;
       if (found.length > 0) {
-        md += `- Found: ${found.map(id => `#${id}`).join(", ")}\n`;
+        md += `- Found: ${found.map((id) => `#${id}`).join(", ")}\n`;
       }
       if (resolved.length > 0) {
-        md += `- Resolved: ${resolved.map(id => `#${id}`).join(", ")}\n`;
+        md += `- Resolved: ${resolved.map((id) => `#${id}`).join(", ")}\n`;
       }
       md += "\n";
     }
@@ -383,13 +406,13 @@ export function generateResume(db: Database, projectId: number): string {
   if (sessionRelationships.hasData) {
     md += `## Session Accomplishments\n`;
     if (sessionRelationships.decisionsMade.length > 0) {
-      md += `**Decisions:** ${sessionRelationships.decisionsMade.map(d => `D${d.id} (${d.title})`).join(', ')}\n`;
+      md += `**Decisions:** ${sessionRelationships.decisionsMade.map((d) => `D${d.id} (${d.title})`).join(", ")}\n`;
     }
     if (sessionRelationships.issuesResolved.length > 0) {
-      md += `**Resolved:** ${sessionRelationships.issuesResolved.map(i => `#${i.id}`).join(', ')}\n`;
+      md += `**Resolved:** ${sessionRelationships.issuesResolved.map((i) => `#${i.id}`).join(", ")}\n`;
     }
     if (sessionRelationships.learningsExtracted.length > 0) {
-      md += `**Learned:** ${sessionRelationships.learningsExtracted.map(l => l.title.slice(0, 40)).join(', ')}\n`;
+      md += `**Learned:** ${sessionRelationships.learningsExtracted.map((l) => l.title.slice(0, 40)).join(", ")}\n`;
     }
     md += "\n";
   }
@@ -401,13 +424,13 @@ export function generateResume(db: Database, projectId: number): string {
   if (hasHot) {
     md += `## Hot Context\n`;
     if (hotEntities.files.length > 0) {
-      md += `**Files:** ${hotEntities.files.map(f => f.path).join(', ')}\n`;
+      md += `**Files:** ${hotEntities.files.map((f) => f.path).join(", ")}\n`;
     }
     if (hotEntities.decisions.length > 0) {
-      md += `**Decisions:** ${hotEntities.decisions.map(d => d.title).join(', ')}\n`;
+      md += `**Decisions:** ${hotEntities.decisions.map((d) => d.title).join(", ")}\n`;
     }
     if (hotEntities.learnings.length > 0) {
-      md += `**Learnings:** ${hotEntities.learnings.map(l => l.title).join(', ')}\n`;
+      md += `**Learnings:** ${hotEntities.learnings.map((l) => l.title).join(", ")}\n`;
     }
     md += "\n";
   }
@@ -417,7 +440,7 @@ export function generateResume(db: Database, projectId: number): string {
   if (openQuestions.length > 0) {
     md += `## Open Questions\n`;
     for (const q of openQuestions) {
-      const pri = ['', 'P1', 'P2', 'P3', 'P4', 'P5'][q.priority];
+      const pri = ["", "P1", "P2", "P3", "P4", "P5"][q.priority];
       md += `- [${pri}] ${q.question}\n`;
     }
     md += "\n";
@@ -428,7 +451,7 @@ export function generateResume(db: Database, projectId: number): string {
   if (recentObs.length > 0) {
     md += `## Recent Observations\n`;
     for (const obs of recentObs) {
-      const freq = obs.frequency > 1 ? ` (${obs.frequency}x)` : '';
+      const freq = obs.frequency > 1 ? ` (${obs.frequency}x)` : "";
       md += `- [${obs.type}] ${obs.content.slice(0, 60)}${freq}\n`;
     }
     md += "\n";
@@ -456,27 +479,33 @@ export function generateResume(db: Database, projectId: number): string {
  * Hot = referenced in last 3 sessions, Warm = 3-10, Cold = 10+
  */
 export function decayTemperatures(db: Database, projectId: number): void {
-  const tables = ['files', 'decisions', 'issues', 'learnings'];
+  const tables = ["files", "decisions", "issues", "learnings"];
 
   for (const table of tables) {
     try {
       // Set cold: last_referenced_at more than 10 sessions ago or null
-      db.run(`
+      db.run(
+        `
         UPDATE ${table}
         SET temperature = 'cold'
         WHERE project_id = ? AND temperature != 'cold'
         AND (last_referenced_at IS NULL OR
              (SELECT COUNT(*) FROM sessions WHERE project_id = ? AND started_at > last_referenced_at) > 10)
-      `, [projectId, projectId]);
+      `,
+        [projectId, projectId]
+      );
 
       // Set warm: last_referenced between 3-10 sessions ago
-      db.run(`
+      db.run(
+        `
         UPDATE ${table}
         SET temperature = 'warm'
         WHERE project_id = ? AND temperature = 'hot'
         AND last_referenced_at IS NOT NULL
         AND (SELECT COUNT(*) FROM sessions WHERE project_id = ? AND started_at > last_referenced_at) BETWEEN 3 AND 10
-      `, [projectId, projectId]);
+      `,
+        [projectId, projectId]
+      );
     } catch {
       // Temperature columns might not exist yet
     }
@@ -488,11 +517,14 @@ export function decayTemperatures(db: Database, projectId: number): void {
  */
 export function heatEntity(db: Database, table: string, id: number): void {
   try {
-    db.run(`
+    db.run(
+      `
       UPDATE ${table}
       SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [id]);
+    `,
+      [id]
+    );
   } catch {
     // Temperature columns might not exist
   }
@@ -501,7 +533,10 @@ export function heatEntity(db: Database, table: string, id: number): void {
 /**
  * Get hot entities for resume display
  */
-export function getHotEntities(db: Database, projectId: number): {
+export function getHotEntities(
+  db: Database,
+  projectId: number
+): {
   files: Array<{ path: string; purpose: string | null }>;
   decisions: Array<{ id: number; title: string }>;
   learnings: Array<{ id: number; title: string }>;
@@ -513,28 +548,40 @@ export function getHotEntities(db: Database, projectId: number): {
   };
 
   try {
-    result.files = db.query<{ path: string; purpose: string | null }, [number]>(`
+    result.files = db
+      .query<{ path: string; purpose: string | null }, [number]>(`
       SELECT path, purpose FROM files
       WHERE project_id = ? AND temperature = 'hot'
       ORDER BY last_referenced_at DESC LIMIT 5
-    `).all(projectId);
-  } catch { /* temperature column may not exist */ }
+    `)
+      .all(projectId);
+  } catch {
+    /* temperature column may not exist */
+  }
 
   try {
-    result.decisions = db.query<{ id: number; title: string }, [number]>(`
+    result.decisions = db
+      .query<{ id: number; title: string }, [number]>(`
       SELECT id, title FROM decisions
       WHERE project_id = ? AND temperature = 'hot' AND status = 'active'
       ORDER BY last_referenced_at DESC LIMIT 5
-    `).all(projectId);
-  } catch { /* temperature column may not exist */ }
+    `)
+      .all(projectId);
+  } catch {
+    /* temperature column may not exist */
+  }
 
   try {
-    result.learnings = db.query<{ id: number; title: string }, [number]>(`
+    result.learnings = db
+      .query<{ id: number; title: string }, [number]>(`
       SELECT id, title FROM learnings
       WHERE (project_id = ? OR project_id IS NULL) AND temperature = 'hot'
       ORDER BY last_referenced_at DESC LIMIT 5
-    `).all(projectId);
-  } catch { /* temperature column may not exist */ }
+    `)
+      .all(projectId);
+  } catch {
+    /* temperature column may not exist */
+  }
 
   return result;
 }
@@ -542,16 +589,24 @@ export function getHotEntities(db: Database, projectId: number): {
 /**
  * Get recent observations for resume
  */
-export function getRecentObservations(db: Database, projectId: number, limit: number = 3): Array<{
-  type: string; content: string; frequency: number;
+export function getRecentObservations(
+  db: Database,
+  projectId: number,
+  limit: number = 3
+): Array<{
+  type: string;
+  content: string;
+  frequency: number;
 }> {
   try {
-    return db.query<{ type: string; content: string; frequency: number }, [number, number]>(`
+    return db
+      .query<{ type: string; content: string; frequency: number }, [number, number]>(`
       SELECT type, content, frequency FROM observations
       WHERE (project_id = ? OR project_id IS NULL)
       ORDER BY last_seen_at DESC
       LIMIT ?
-    `).all(projectId, limit);
+    `)
+      .all(projectId, limit);
   } catch {
     return [];
   }
@@ -561,7 +616,10 @@ export function getRecentObservations(db: Database, projectId: number, limit: nu
  * Get session accomplishments from relationship graph
  * Uses "made", "resolved", "learned" relationship types
  */
-export function getSessionRelationships(db: Database, sessionId: number): {
+export function getSessionRelationships(
+  db: Database,
+  sessionId: number
+): {
   hasData: boolean;
   decisionsMade: Array<{ id: number; title: string }>;
   issuesResolved: Array<{ id: number; title: string }>;
@@ -576,32 +634,37 @@ export function getSessionRelationships(db: Database, sessionId: number): {
 
   try {
     // Decisions made (via "made" relationship)
-    result.decisionsMade = db.query<{ id: number; title: string }, [number]>(`
+    result.decisionsMade = db
+      .query<{ id: number; title: string }, [number]>(`
       SELECT d.id, d.title FROM relationships r
       JOIN decisions d ON r.target_id = d.id AND r.target_type = 'decision'
       WHERE r.source_type = 'session' AND r.source_id = ?
         AND r.relationship = 'made'
-    `).all(sessionId);
+    `)
+      .all(sessionId);
 
     // Issues resolved (via "resolved" relationship)
-    result.issuesResolved = db.query<{ id: number; title: string }, [number]>(`
+    result.issuesResolved = db
+      .query<{ id: number; title: string }, [number]>(`
       SELECT i.id, i.title FROM relationships r
       JOIN issues i ON r.target_id = i.id AND r.target_type = 'issue'
       WHERE r.source_type = 'session' AND r.source_id = ?
         AND r.relationship = 'resolved'
-    `).all(sessionId);
+    `)
+      .all(sessionId);
 
     // Learnings extracted (via "learned" relationship)
-    result.learningsExtracted = db.query<{ id: number; title: string }, [number]>(`
+    result.learningsExtracted = db
+      .query<{ id: number; title: string }, [number]>(`
       SELECT l.id, l.title FROM relationships r
       JOIN learnings l ON r.target_id = l.id AND r.target_type = 'learning'
       WHERE r.source_type = 'session' AND r.source_id = ?
         AND r.relationship = 'learned'
-    `).all(sessionId);
+    `)
+      .all(sessionId);
 
-    result.hasData = result.decisionsMade.length > 0 ||
-                     result.issuesResolved.length > 0 ||
-                     result.learningsExtracted.length > 0;
+    result.hasData =
+      result.decisionsMade.length > 0 || result.issuesResolved.length > 0 || result.learningsExtracted.length > 0;
   } catch {
     // Relationships table might not exist
   }
@@ -617,12 +680,14 @@ export function getSessionRelationships(db: Database, sessionId: number): {
  * Get the current active session ID for a project
  */
 export function getActiveSessionId(db: Database, projectId: number): number | null {
-  const session = db.query<{ id: number }, [number]>(`
+  const session = db
+    .query<{ id: number }, [number]>(`
     SELECT id FROM sessions
     WHERE project_id = ? AND ended_at IS NULL
     ORDER BY started_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   return session?.id || null;
 }
@@ -634,17 +699,22 @@ export function trackFileRead(db: Database, projectId: number, filePath: string)
   const sessionId = getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db.query<{ files_read: string | null }, [number]>(`
+  const session = db
+    .query<{ files_read: string | null }, [number]>(`
     SELECT files_read FROM sessions WHERE id = ?
-  `).get(sessionId);
+  `)
+    .get(sessionId);
 
   const filesRead = safeJsonParse<string[]>(session?.files_read || "[]", []);
 
   if (!filesRead.includes(filePath)) {
     filesRead.push(filePath);
-    db.run(`
+    db.run(
+      `
       UPDATE sessions SET files_read = ? WHERE id = ?
-    `, [JSON.stringify(filesRead), sessionId]);
+    `,
+      [JSON.stringify(filesRead), sessionId]
+    );
   }
 }
 
@@ -655,9 +725,11 @@ export function trackQuery(db: Database, projectId: number, query: string): void
   const sessionId = getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db.query<{ queries_made: string | null }, [number]>(`
+  const session = db
+    .query<{ queries_made: string | null }, [number]>(`
     SELECT queries_made FROM sessions WHERE id = ?
-  `).get(sessionId);
+  `)
+    .get(sessionId);
 
   const queriesMade = safeJsonParse<string[]>(session?.queries_made || "[]", []);
 
@@ -667,9 +739,12 @@ export function trackQuery(db: Database, projectId: number, query: string): void
   }
 
   queriesMade.push(query);
-  db.run(`
+  db.run(
+    `
     UPDATE sessions SET queries_made = ? WHERE id = ?
-  `, [JSON.stringify(queriesMade), sessionId]);
+  `,
+    [JSON.stringify(queriesMade), sessionId]
+  );
 }
 
 /**
@@ -679,17 +754,22 @@ export function trackFileTouched(db: Database, projectId: number, filePath: stri
   const sessionId = getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db.query<{ files_touched: string | null }, [number]>(`
+  const session = db
+    .query<{ files_touched: string | null }, [number]>(`
     SELECT files_touched FROM sessions WHERE id = ?
-  `).get(sessionId);
+  `)
+    .get(sessionId);
 
   const filesTouched = safeJsonParse<string[]>(session?.files_touched || "[]", []);
 
   if (!filesTouched.includes(filePath)) {
     filesTouched.push(filePath);
-    db.run(`
+    db.run(
+      `
       UPDATE sessions SET files_touched = ? WHERE id = ?
-    `, [JSON.stringify(filesTouched), sessionId]);
+    `,
+      [JSON.stringify(filesTouched), sessionId]
+    );
   }
 }
 
@@ -700,17 +780,22 @@ export function trackDecisionMade(db: Database, projectId: number, decisionId: n
   const sessionId = getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db.query<{ decisions_made: string | null }, [number]>(`
+  const session = db
+    .query<{ decisions_made: string | null }, [number]>(`
     SELECT decisions_made FROM sessions WHERE id = ?
-  `).get(sessionId);
+  `)
+    .get(sessionId);
 
   const decisionsMade = safeJsonParse<number[]>(session?.decisions_made || "[]", []);
 
   if (!decisionsMade.includes(decisionId)) {
     decisionsMade.push(decisionId);
-    db.run(`
+    db.run(
+      `
       UPDATE sessions SET decisions_made = ? WHERE id = ?
-    `, [JSON.stringify(decisionsMade), sessionId]);
+    `,
+      [JSON.stringify(decisionsMade), sessionId]
+    );
   }
 }
 
@@ -721,17 +806,22 @@ export function trackIssueFound(db: Database, projectId: number, issueId: number
   const sessionId = getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db.query<{ issues_found: string | null }, [number]>(`
+  const session = db
+    .query<{ issues_found: string | null }, [number]>(`
     SELECT issues_found FROM sessions WHERE id = ?
-  `).get(sessionId);
+  `)
+    .get(sessionId);
 
   const issuesFound = safeJsonParse<number[]>(session?.issues_found || "[]", []);
 
   if (!issuesFound.includes(issueId)) {
     issuesFound.push(issueId);
-    db.run(`
+    db.run(
+      `
       UPDATE sessions SET issues_found = ? WHERE id = ?
-    `, [JSON.stringify(issuesFound), sessionId]);
+    `,
+      [JSON.stringify(issuesFound), sessionId]
+    );
   }
 }
 
@@ -742,17 +832,22 @@ export function trackIssueResolved(db: Database, projectId: number, issueId: num
   const sessionId = getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db.query<{ issues_resolved: string | null }, [number]>(`
+  const session = db
+    .query<{ issues_resolved: string | null }, [number]>(`
     SELECT issues_resolved FROM sessions WHERE id = ?
-  `).get(sessionId);
+  `)
+    .get(sessionId);
 
   const issuesResolved = safeJsonParse<number[]>(session?.issues_resolved || "[]", []);
 
   if (!issuesResolved.includes(issueId)) {
     issuesResolved.push(issueId);
-    db.run(`
+    db.run(
+      `
       UPDATE sessions SET issues_resolved = ? WHERE id = ?
-    `, [JSON.stringify(issuesResolved), sessionId]);
+    `,
+      [JSON.stringify(issuesResolved), sessionId]
+    );
   }
 }
 
@@ -763,11 +858,7 @@ export function trackIssueResolved(db: Database, projectId: number, issueId: num
 /**
  * Update file correlations based on files changed together
  */
-export function updateFileCorrelations(
-  db: Database,
-  projectId: number,
-  files: string[]
-): void {
+export function updateFileCorrelations(db: Database, projectId: number, files: string[]): void {
   if (files.length < 2) return;
 
   // Sort files to ensure consistent ordering (file_a < file_b alphabetically)
@@ -809,13 +900,17 @@ export function getCorrelatedFiles(
 ): FileCorrelation[] {
   try {
     // Check both directions (file could be file_a or file_b)
-    const correlations = db.query<{
-      file: string;
-      cochange_count: number;
-      correlation_strength: number;
-      last_cochange: string;
-    }, [string, number, string, string, number]>(
-      `SELECT
+    const correlations = db
+      .query<
+        {
+          file: string;
+          cochange_count: number;
+          correlation_strength: number;
+          last_cochange: string;
+        },
+        [string, number, string, string, number]
+      >(
+        `SELECT
          CASE WHEN file_a = ? THEN file_b ELSE file_a END as file,
          cochange_count,
          COALESCE(correlation_strength, CAST(cochange_count AS REAL) / 10) as correlation_strength,
@@ -824,7 +919,8 @@ export function getCorrelatedFiles(
        WHERE project_id = ? AND (file_a = ? OR file_b = ?)
        ORDER BY cochange_count DESC, last_cochange DESC
        LIMIT ?`
-    ).all(filePath, projectId, filePath, filePath, limit);
+      )
+      .all(filePath, projectId, filePath, filePath, limit);
 
     return correlations;
   } catch {
@@ -846,19 +942,24 @@ export function getTopCorrelations(
   correlation_strength: number;
 }> {
   try {
-    return db.query<{
-      file_a: string;
-      file_b: string;
-      cochange_count: number;
-      correlation_strength: number;
-    }, [number, number]>(
-      `SELECT file_a, file_b, cochange_count,
+    return db
+      .query<
+        {
+          file_a: string;
+          file_b: string;
+          cochange_count: number;
+          correlation_strength: number;
+        },
+        [number, number]
+      >(
+        `SELECT file_a, file_b, cochange_count,
          COALESCE(correlation_strength, CAST(cochange_count AS REAL) / 10) as correlation_strength
        FROM file_correlations
        WHERE project_id = ? AND cochange_count > 1
        ORDER BY cochange_count DESC
        LIMIT ?`
-    ).all(projectId, limit);
+      )
+      .all(projectId, limit);
   } catch {
     return []; // Table might not exist
   }
@@ -904,8 +1005,14 @@ export async function extractSessionLearnings(
         const result = db.run(
           `INSERT INTO learnings (project_id, category, title, content, source, confidence)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [projectId, learning.category, learning.title, learning.content,
-           `session:${sessionId}`, Math.round(learning.confidence * 10)]
+          [
+            projectId,
+            learning.category,
+            learning.title,
+            learning.content,
+            `session:${sessionId}`,
+            Math.round(learning.confidence * 10),
+          ]
         );
 
         try {
@@ -933,19 +1040,13 @@ export async function extractSessionLearnings(
 
     return learnings;
   } catch (error) {
-    logError('extractSessionLearnings', error);
+    logError("extractSessionLearnings", error);
     return [];
   }
 }
 
-function buildExtractionPrompt(context: {
-  goal: string;
-  outcome: string;
-  files: string[];
-  success: number;
-}): string {
-  const successLabel = context.success === 0 ? 'failed' :
-                       context.success === 1 ? 'partial' : 'success';
+function buildExtractionPrompt(context: { goal: string; outcome: string; files: string[]; success: number }): string {
+  const successLabel = context.success === 0 ? "failed" : context.success === 1 ? "partial" : "success";
 
   return `Analyze this coding session and extract reusable learnings.
 
@@ -953,7 +1054,7 @@ SESSION:
 - Goal: ${context.goal}
 - Outcome: ${context.outcome}
 - Status: ${successLabel}
-- Files Modified: ${context.files.slice(0, 20).join(', ')}${context.files.length > 20 ? ` (+${context.files.length - 20} more)` : ''}
+- Files Modified: ${context.files.slice(0, 20).join(", ")}${context.files.length > 20 ? ` (+${context.files.length - 20} more)` : ""}
 
 Extract 0-3 learnings that would be useful for future sessions. Focus on:
 1. Patterns that worked well
@@ -993,7 +1094,7 @@ async function callLLMForExtraction(apiKey: string, prompt: string): Promise<str
     throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
   }
 
-  const data = await response.json() as { content: Array<{ type: string; text: string }> };
+  const data = (await response.json()) as { content: Array<{ type: string; text: string }> };
   return data.content[0]?.text || "[]";
 }
 
@@ -1009,12 +1110,13 @@ function parseExtractedLearnings(response: string): ExtractedLearning[] {
       return [];
     }
 
-    return parsed.filter((item): item is ExtractedLearning =>
-      typeof item === 'object' &&
-      typeof item.title === 'string' &&
-      typeof item.content === 'string' &&
-      typeof item.category === 'string' &&
-      typeof item.confidence === 'number'
+    return parsed.filter(
+      (item): item is ExtractedLearning =>
+        typeof item === "object" &&
+        typeof item.title === "string" &&
+        typeof item.content === "string" &&
+        typeof item.category === "string" &&
+        typeof item.confidence === "number"
     );
   } catch {
     return [];
@@ -1055,7 +1157,7 @@ RULES:
 - If no clear learnings, return empty array
 - Be concise and factual
 
-FILES MODIFIED: ${files.slice(0, 20).join(', ')}${files.length > 20 ? ` (+${files.length - 20} more)` : ''}
+FILES MODIFIED: ${files.slice(0, 20).join(", ")}${files.length > 20 ? ` (+${files.length - 20} more)` : ""}
 
 TRANSCRIPT (last portion):
 ${transcript}
@@ -1105,9 +1207,11 @@ export async function sessionEndEnhanced(
   const { values } = parseSessionEndArgs(args);
 
   // Get session
-  const session = db.query<{ id: number; goal: string; started_at: string; files_touched: string | null }, [number]>(
-    "SELECT id, goal, started_at, files_touched FROM sessions WHERE id = ?"
-  ).get(sessionId);
+  const session = db
+    .query<{ id: number; goal: string; started_at: string; files_touched: string | null }, [number]>(
+      "SELECT id, goal, started_at, files_touched FROM sessions WHERE id = ?"
+    )
+    .get(sessionId);
 
   if (!session) {
     throw new Error(`Session #${sessionId} not found`);
@@ -1124,14 +1228,9 @@ export async function sessionEndEnhanced(
       if (transcript.length > 0) {
         const truncated = transcript.slice(-12000);
         try {
-          analysisResult = await analyzeTranscript(
-            keyResult.value,
-            truncated,
-            session.goal || "Unknown",
-            filesTouched
-          );
+          analysisResult = await analyzeTranscript(keyResult.value, truncated, session.goal || "Unknown", filesTouched);
         } catch (error) {
-          logError('analyzeTranscript', error);
+          logError("analyzeTranscript", error);
         }
       }
     }
@@ -1151,8 +1250,9 @@ export async function sessionEndEnhanced(
   }
 
   // Standard end update (goal only updated if extracted and original was generic)
-  const finalGoal = (extractedGoal && session.goal === "New session") ? extractedGoal : session.goal;
-  db.run(`
+  const finalGoal = extractedGoal && session.goal === "New session" ? extractedGoal : session.goal;
+  db.run(
+    `
     UPDATE sessions SET
       ended_at = CURRENT_TIMESTAMP,
       goal = ?,
@@ -1162,15 +1262,17 @@ export async function sessionEndEnhanced(
       next_steps = ?,
       success = ?
     WHERE id = ?
-  `, [
-    finalGoal,
-    outcome,
-    JSON.stringify(filesTouched),
-    values.learnings || null,
-    nextSteps,
-    values.success ?? 2,
-    sessionId,
-  ]);
+  `,
+    [
+      finalGoal,
+      outcome,
+      JSON.stringify(filesTouched),
+      values.learnings || null,
+      nextSteps,
+      values.success ?? 2,
+      sessionId,
+    ]
+  );
 
   // Save learnings from analysis or fall back to existing extraction
   let learnings: ExtractedLearning[] = [];
@@ -1180,8 +1282,14 @@ export async function sessionEndEnhanced(
         db.run(
           `INSERT INTO learnings (project_id, category, title, content, source, confidence)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [projectId, learning.category, learning.title, learning.content,
-           `session:${sessionId}`, Math.round(learning.confidence * 10)]
+          [
+            projectId,
+            learning.category,
+            learning.title,
+            learning.content,
+            `session:${sessionId}`,
+            Math.round(learning.confidence * 10),
+          ]
         );
       }
     }
@@ -1191,7 +1299,7 @@ export async function sessionEndEnhanced(
       goal: session.goal || "",
       outcome: outcome || "",
       files: filesTouched,
-      success: values.success ?? 2
+      success: values.success ?? 2,
     });
   }
 
@@ -1200,13 +1308,16 @@ export async function sessionEndEnhanced(
   // ========================================================================
 
   // Get session data for relationships
-  const sessionData = db.query<{
-    decisions_made: string | null;
-    issues_found: string | null;
-    issues_resolved: string | null;
-  }, [number]>(
-    "SELECT decisions_made, issues_found, issues_resolved FROM sessions WHERE id = ?"
-  ).get(sessionId);
+  const sessionData = db
+    .query<
+      {
+        decisions_made: string | null;
+        issues_found: string | null;
+        issues_resolved: string | null;
+      },
+      [number]
+    >("SELECT decisions_made, issues_found, issues_resolved FROM sessions WHERE id = ?")
+    .get(sessionId);
 
   // Session → Decisions (made)
   const decisionsMade = safeJsonParse<number[]>(sessionData?.decisions_made || "[]", []);
@@ -1217,13 +1328,13 @@ export async function sessionEndEnhanced(
   // Session → Issues (found)
   const issuesFound = safeJsonParse<number[]>(sessionData?.issues_found || "[]", []);
   if (issuesFound.length > 0) {
-    autoRelateSessionIssues(db, sessionId, issuesFound, 'found');
+    autoRelateSessionIssues(db, sessionId, issuesFound, "found");
   }
 
   // Session → Issues (resolved)
   const issuesResolved = safeJsonParse<number[]>(sessionData?.issues_resolved || "[]", []);
   if (issuesResolved.length > 0) {
-    autoRelateSessionIssues(db, sessionId, issuesResolved, 'resolved');
+    autoRelateSessionIssues(db, sessionId, issuesResolved, "resolved");
   }
 
   // Session → Learnings (from session_learnings table)
@@ -1244,7 +1355,7 @@ export async function sessionEndEnhanced(
   if (learnings.length > 0) {
     console.error(`\n💡 Extracted ${learnings.length} learning(s):`);
     for (const l of learnings) {
-      const icon = l.confidence >= 0.7 ? '✓' : '○';
+      const icon = l.confidence >= 0.7 ? "✓" : "○";
       console.error(`   ${icon} [${l.category}] ${l.title}`);
     }
   }
@@ -1264,11 +1375,7 @@ export async function sessionEndEnhanced(
 /**
  * Handle correlation subcommands
  */
-export function handleCorrelationCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): void {
+export function handleCorrelationCommand(db: Database, projectId: number, args: string[]): void {
   const file = args[0];
 
   if (file) {
@@ -1338,27 +1445,33 @@ function buildSystemPrimer(db: Database, projectId: number): string {
 
   // Focus
   try {
-    const focus = db.query<{ area: string }, [number]>(`
+    const focus = db
+      .query<{ area: string }, [number]>(`
       SELECT area FROM focus
       WHERE project_id = ? AND cleared_at IS NULL
       ORDER BY created_at DESC LIMIT 1
-    `).get(projectId);
-    md += `- Focus: ${focus?.area || 'none'}\n`;
+    `)
+      .get(projectId);
+    md += `- Focus: ${focus?.area || "none"}\n`;
   } catch {
     md += `- Focus: none\n`;
   }
 
   // Hot files
   try {
-    const hotFiles = db.query<{ path: string }, [number]>(`
+    const hotFiles = db
+      .query<{ path: string }, [number]>(`
       SELECT path FROM files
       WHERE project_id = ? AND temperature = 'hot'
       ORDER BY last_referenced_at DESC LIMIT 3
-    `).all(projectId);
+    `)
+      .all(projectId);
     if (hotFiles.length > 0) {
-      md += `- Hot files: ${hotFiles.map(f => f.path).join(', ')}\n`;
+      md += `- Hot files: ${hotFiles.map((f) => f.path).join(", ")}\n`;
     }
-  } catch { /* temperature column might not exist */ }
+  } catch {
+    /* temperature column might not exist */
+  }
 
   // Decisions due — show titles + age
   const decisionsDue = getDecisionsDue(db, projectId);
@@ -1373,7 +1486,7 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   }
 
   // Pending insights — show type + content
-  const newInsights = listInsights(db, projectId, { status: 'new' });
+  const newInsights = listInsights(db, projectId, { status: "new" });
   if (newInsights.length > 0) {
     md += `- New insights:\n`;
     for (const i of newInsights.slice(0, 3)) {
@@ -1387,7 +1500,7 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   // Velocity anomalies — hot-changing files
   const anomalies = detectAnomalies(db, projectId);
   if (anomalies.length > 0) {
-    md += `- Velocity anomalies: ${anomalies.map(a => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(', ')}\n`;
+    md += `- Velocity anomalies: ${anomalies.map((a) => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
   }
 
   // Open questions count

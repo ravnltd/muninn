@@ -3,11 +3,11 @@
  * Hono-based API serving project data + static dashboard assets
  */
 
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { Database } from "bun:sqlite";
-import { join } from "path";
-import { existsSync } from "fs";
 import { z } from "zod";
 
 // ============================================================================
@@ -27,9 +27,8 @@ async function serveStaticFile(filePath: string, options: ServeFileOptions): Pro
 
   const file = Bun.file(filePath);
   const content = await file.arrayBuffer();
-  const cacheControl = options.cache === "immutable"
-    ? "public, max-age=31536000, immutable"
-    : "no-cache, no-store, must-revalidate";
+  const cacheControl =
+    options.cache === "immutable" ? "public, max-age=31536000, immutable" : "no-cache, no-store, must-revalidate";
 
   return new Response(content, {
     status: 200,
@@ -37,20 +36,32 @@ async function serveStaticFile(filePath: string, options: ServeFileOptions): Pro
       "Content-Type": options.contentType,
       "Content-Length": String(content.byteLength),
       "Cache-Control": cacheControl,
-      ...(options.cache === "no-cache" && { "Pragma": "no-cache", "Expires": "0" }),
+      ...(options.cache === "no-cache" && { Pragma: "no-cache", Expires: "0" }),
       "Access-Control-Allow-Origin": "*",
     },
   });
 }
 
 // ============================================================================
-// API Input Schemas (for write operations)
+// API Input Schemas
 // ============================================================================
 
+// Path/Query param schemas
+const ProjectIdParam = z.coerce.number().int().positive();
+const IssueIdParam = z.coerce.number().int().positive();
+const SearchQuery = z.string().min(1).max(500);
+
+// Helper to validate path params
+function parseProjectId(id: string): number | null {
+  const result = ProjectIdParam.safeParse(id);
+  return result.success ? result.data : null;
+}
+
+// Write operation schemas
 const CreateIssueInput = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
-  type: z.enum(['bug', 'tech-debt', 'enhancement', 'question', 'potential']).default('bug'),
+  type: z.enum(["bug", "tech-debt", "enhancement", "question", "potential"]).default("bug"),
   severity: z.number().int().min(1).max(10).default(5),
   workaround: z.string().optional(),
 });
@@ -68,7 +79,7 @@ const CreateDecisionInput = z.object({
 const CreateLearningInput = z.object({
   title: z.string().min(1),
   content: z.string().min(1),
-  category: z.enum(['pattern', 'gotcha', 'preference', 'convention', 'architecture']).default('pattern'),
+  category: z.enum(["pattern", "gotcha", "preference", "convention", "architecture"]).default("pattern"),
   context: z.string().optional(),
 });
 
@@ -88,10 +99,11 @@ function getProjectDbPath(projectPath: string): string | null {
 
 function openDb(path: string, readonly = true): Database {
   // Bun's Database only accepts readonly option when true
-  const db = readonly
-    ? new Database(path, { readonly: true })
-    : new Database(path);
-  db.exec("PRAGMA journal_mode = WAL");
+  const db = readonly ? new Database(path, { readonly: true }) : new Database(path);
+  // Only set WAL mode on writable databases
+  if (!readonly) {
+    db.exec("PRAGMA journal_mode = WAL");
+  }
   db.exec("PRAGMA busy_timeout = 3000");
   return db;
 }
@@ -133,10 +145,16 @@ export function createApp(dbPath?: string): Hono {
   }
 
   // Look up project path and return its DB with the correct local project ID
-  function getDbForProject(projectId: number, readonly = true): { db: Database; project: Record<string, unknown>; localProjectId: number } | null {
+  function getDbForProject(
+    projectId: number,
+    readonly = true
+  ): { db: Database; project: Record<string, unknown>; localProjectId: number } | null {
     const globalDb = getGlobalDb();
     try {
-      const project = globalDb.query(`SELECT * FROM projects WHERE id = ?`).get(projectId) as Record<string, unknown> | null;
+      const project = globalDb.query(`SELECT * FROM projects WHERE id = ?`).get(projectId) as Record<
+        string,
+        unknown
+      > | null;
       if (!project) {
         globalDb.close();
         return null;
@@ -147,9 +165,9 @@ export function createApp(dbPath?: string): Hono {
         globalDb.close();
         const db = openDb(projectDbPath, readonly);
         // Find the local project ID by path
-        const localProject = db.query<{ id: number }, [string]>(
-          `SELECT id FROM projects WHERE path = ?`
-        ).get(projectPath);
+        const localProject = db
+          .query<{ id: number }, [string]>(`SELECT id FROM projects WHERE path = ?`)
+          .get(projectPath);
         return { db, project, localProjectId: localProject?.id ?? 1 };
       }
       return { db: globalDb, project, localProjectId: projectId };
@@ -175,38 +193,52 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/health", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, project, localProjectId } = result;
     try {
+      const fileCount =
+        db
+          .query<{ count: number }, [number]>(`SELECT COUNT(*) as count FROM files WHERE project_id = ?`)
+          .get(localProjectId)?.count ?? 0;
 
-      const fileCount = db.query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM files WHERE project_id = ?`
-      ).get(localProjectId)?.count ?? 0;
+      const openIssues =
+        db
+          .query<{ count: number }, [number]>(
+            `SELECT COUNT(*) as count FROM issues WHERE project_id = ? AND status = 'open'`
+          )
+          .get(localProjectId)?.count ?? 0;
 
-      const openIssues = db.query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM issues WHERE project_id = ? AND status = 'open'`
-      ).get(localProjectId)?.count ?? 0;
+      const activeDecisions =
+        db
+          .query<{ count: number }, [number]>(
+            `SELECT COUNT(*) as count FROM decisions WHERE project_id = ? AND status = 'active'`
+          )
+          .get(localProjectId)?.count ?? 0;
 
-      const activeDecisions = db.query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM decisions WHERE project_id = ? AND status = 'active'`
-      ).get(localProjectId)?.count ?? 0;
-
-      const fragileFiles = safeQuery(db,
+      const fragileFiles = safeQuery(
+        db,
         `SELECT id, path, purpose, fragility, temperature, velocity_score FROM files WHERE project_id = ? AND fragility >= 5 ORDER BY fragility DESC LIMIT 10`,
         `SELECT id, path, purpose, fragility, NULL as temperature, NULL as velocity_score FROM files WHERE project_id = ? AND fragility >= 5 ORDER BY fragility DESC LIMIT 10`,
-        [localProjectId]);
+        [localProjectId]
+      );
 
-      const recentSessions = safeQuery(db,
+      const recentSessions = safeQuery(
+        db,
         `SELECT id, goal, outcome, started_at, ended_at, success, session_number FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 10`,
         `SELECT id, goal, outcome, started_at, ended_at, success, NULL as session_number FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 10`,
-        [localProjectId]);
+        [localProjectId]
+      );
 
-      const techDebtScore = (safeQueryGet<{ count: number }>(db,
-        `SELECT COUNT(*) as count FROM issues WHERE project_id = ? AND type = 'tech-debt' AND status = 'open'`,
-        `SELECT 0 as count`,
-        [localProjectId]))?.count ?? 0;
+      const techDebtScore =
+        safeQueryGet<{ count: number }>(
+          db,
+          `SELECT COUNT(*) as count FROM issues WHERE project_id = ? AND type = 'tech-debt' AND status = 'open'`,
+          `SELECT 0 as count`,
+          [localProjectId]
+        )?.count ?? 0;
 
       return c.json({
         project,
@@ -223,15 +255,18 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/files", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const files = safeQuery(db,
+      const files = safeQuery(
+        db,
         `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`,
         `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`,
-        [localProjectId]);
+        [localProjectId]
+      );
       return c.json(files);
     } finally {
       db.close();
@@ -239,15 +274,18 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/decisions", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const decisions = safeQuery(db,
+      const decisions = safeQuery(
+        db,
         `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`,
         `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`,
-        [localProjectId]);
+        [localProjectId]
+      );
       return c.json(decisions);
     } finally {
       db.close();
@@ -255,15 +293,18 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/issues", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const issues = safeQuery(db,
+      const issues = safeQuery(
+        db,
         `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`,
         `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`,
-        [localProjectId]);
+        [localProjectId]
+      );
       return c.json(issues);
     } finally {
       db.close();
@@ -271,15 +312,18 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/learnings", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const learnings = safeQuery(db,
+      const learnings = safeQuery(
+        db,
         `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`,
         `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`,
-        [localProjectId]);
+        [localProjectId]
+      );
       return c.json(learnings);
     } finally {
       db.close();
@@ -287,15 +331,18 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/sessions", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
-      const sessions = safeQuery(db,
+      const sessions = safeQuery(
+        db,
         `SELECT id, goal, outcome, started_at, ended_at, success, session_number, files_touched FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50`,
         `SELECT id, goal, outcome, started_at, ended_at, success, NULL as session_number, files_touched FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50`,
-        [localProjectId]);
+        [localProjectId]
+      );
       return c.json(sessions);
     } finally {
       db.close();
@@ -303,12 +350,14 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/relationships", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId: pid } = result;
     try {
-      const relationships = db.query(`
+      const relationships = db
+        .query(`
         SELECT r.* FROM relationships r
         WHERE (r.source_type = 'file' AND r.source_id IN (SELECT id FROM files WHERE project_id = ?))
            OR (r.target_type = 'file' AND r.target_id IN (SELECT id FROM files WHERE project_id = ?))
@@ -319,7 +368,8 @@ export function createApp(dbPath?: string): Hono {
            OR (r.source_type = 'learning' AND r.source_id IN (SELECT id FROM learnings WHERE project_id = ?))
            OR (r.target_type = 'learning' AND r.target_id IN (SELECT id FROM learnings WHERE project_id = ?))
         ORDER BY r.strength DESC
-      `).all(pid, pid, pid, pid, pid, pid, pid, pid);
+      `)
+        .all(pid, pid, pid, pid, pid, pid, pid, pid);
       return c.json(relationships);
     } finally {
       db.close();
@@ -327,55 +377,98 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/projects/:id/graph", (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
     try {
       const nodes: Array<{ id: string; type: string; label: string; size: number; temperature?: string }> = [];
 
-      const files = db.query<{ id: number; path: string; fragility: number; temperature: string | null }, [number]>(
-        `SELECT id, path, fragility, temperature FROM files WHERE project_id = ? AND archived_at IS NULL`
-      ).all(localProjectId);
+      const files = db
+        .query<{ id: number; path: string; fragility: number; temperature: string | null }, [number]>(
+          `SELECT id, path, fragility, temperature FROM files WHERE project_id = ? AND archived_at IS NULL`
+        )
+        .all(localProjectId);
       for (const f of files) {
-        nodes.push({ id: `file:${f.id}`, type: "file", label: f.path, size: Math.max(6, f.fragility), temperature: f.temperature ?? undefined });
+        nodes.push({
+          id: `file:${f.id}`,
+          type: "file",
+          label: f.path,
+          size: Math.max(6, f.fragility),
+          temperature: f.temperature ?? undefined,
+        });
       }
 
-      const decisions = db.query<{ id: number; title: string; temperature: string | null }, [number]>(
-        `SELECT id, title, temperature FROM decisions WHERE project_id = ? AND archived_at IS NULL`
-      ).all(localProjectId);
+      const decisions = db
+        .query<{ id: number; title: string; temperature: string | null }, [number]>(
+          `SELECT id, title, temperature FROM decisions WHERE project_id = ? AND archived_at IS NULL`
+        )
+        .all(localProjectId);
       for (const d of decisions) {
-        nodes.push({ id: `decision:${d.id}`, type: "decision", label: d.title, size: 8, temperature: d.temperature ?? undefined });
+        nodes.push({
+          id: `decision:${d.id}`,
+          type: "decision",
+          label: d.title,
+          size: 8,
+          temperature: d.temperature ?? undefined,
+        });
       }
 
-      const learnings = db.query<{ id: number; title: string; temperature: string | null }, [number]>(
-        `SELECT id, title, temperature FROM learnings WHERE (project_id = ? OR project_id IS NULL) AND archived_at IS NULL`
-      ).all(localProjectId);
+      const learnings = db
+        .query<{ id: number; title: string; temperature: string | null }, [number]>(
+          `SELECT id, title, temperature FROM learnings WHERE (project_id = ? OR project_id IS NULL) AND archived_at IS NULL`
+        )
+        .all(localProjectId);
       for (const l of learnings) {
-        nodes.push({ id: `learning:${l.id}`, type: "learning", label: l.title, size: 6, temperature: l.temperature ?? undefined });
+        nodes.push({
+          id: `learning:${l.id}`,
+          type: "learning",
+          label: l.title,
+          size: 6,
+          temperature: l.temperature ?? undefined,
+        });
       }
 
-      const issues = db.query<{ id: number; title: string; severity: number; temperature: string | null }, [number]>(
-        `SELECT id, title, severity, temperature FROM issues WHERE project_id = ? AND archived_at IS NULL`
-      ).all(localProjectId);
+      const issues = db
+        .query<{ id: number; title: string; severity: number; temperature: string | null }, [number]>(
+          `SELECT id, title, severity, temperature FROM issues WHERE project_id = ? AND archived_at IS NULL`
+        )
+        .all(localProjectId);
       for (const i of issues) {
-        nodes.push({ id: `issue:${i.id}`, type: "issue", label: i.title, size: Math.max(6, i.severity), temperature: i.temperature ?? undefined });
+        nodes.push({
+          id: `issue:${i.id}`,
+          type: "issue",
+          label: i.title,
+          size: Math.max(6, i.severity),
+          temperature: i.temperature ?? undefined,
+        });
       }
 
       // Build edges from relationships
-      const nodeIds = new Set(nodes.map(n => n.id));
-      const relationships = db.query<{ source_type: string; source_id: number; target_type: string; target_id: number; relationship: string; strength: number }, []>(
-        `SELECT source_type, source_id, target_type, target_id, relationship, strength FROM relationships`
-      ).all();
+      const nodeIds = new Set(nodes.map((n) => n.id));
+      const relationships = db
+        .query<
+          {
+            source_type: string;
+            source_id: number;
+            target_type: string;
+            target_id: number;
+            relationship: string;
+            strength: number;
+          },
+          []
+        >(`SELECT source_type, source_id, target_type, target_id, relationship, strength FROM relationships`)
+        .all();
 
       const edges = relationships
-        .map(r => ({
+        .map((r) => ({
           source: `${r.source_type}:${r.source_id}`,
           target: `${r.target_type}:${r.target_id}`,
           type: r.relationship,
           strength: r.strength,
         }))
-        .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+        .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
       return c.json({ nodes, edges });
     } finally {
@@ -384,12 +477,11 @@ export function createApp(dbPath?: string): Hono {
   });
 
   app.get("/api/search", (c) => {
-    const query = c.req.query("q") || "";
-    const projectIdStr = c.req.query("project_id");
-    const projectId = projectIdStr ? parseInt(projectIdStr, 10) : undefined;
+    const queryResult = SearchQuery.safeParse(c.req.query("q"));
+    if (!queryResult.success) return c.json([]);
+    const query = queryResult.data;
 
-    if (!query) return c.json([]);
-
+    const projectId = parseProjectId(c.req.query("project_id") || "");
     if (!projectId) return c.json([]);
 
     const result = getDbForProject(projectId);
@@ -397,12 +489,14 @@ export function createApp(dbPath?: string): Hono {
     const { db, localProjectId } = result;
 
     try {
-      const files = db.query(`
+      const files = db
+        .query(`
         SELECT f.id, 'file' as type, f.path as title, f.purpose as content
         FROM fts_files JOIN files f ON fts_files.rowid = f.id
         WHERE fts_files MATCH ? AND f.project_id = ? AND f.archived_at IS NULL
         LIMIT 5
-      `).all(query, localProjectId);
+      `)
+        .all(query, localProjectId);
       return c.json(files);
     } finally {
       db.close();
@@ -415,7 +509,8 @@ export function createApp(dbPath?: string): Hono {
 
   // Create Issue
   app.post("/api/projects/:id/issues", async (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId, false);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
@@ -428,7 +523,14 @@ export function createApp(dbPath?: string): Hono {
         INSERT INTO issues (project_id, title, description, type, severity, status, workaround, created_at)
         VALUES (?, ?, ?, ?, ?, 'open', ?, datetime('now'))
       `);
-      stmt.run(localProjectId, input.title, input.description ?? null, input.type, input.severity, input.workaround ?? null);
+      stmt.run(
+        localProjectId,
+        input.title,
+        input.description ?? null,
+        input.type,
+        input.severity,
+        input.workaround ?? null
+      );
 
       const id = db.query<{ id: number }, []>(`SELECT last_insert_rowid() as id`).get()?.id;
       return c.json({ id, message: "Issue created" }, 201);
@@ -444,8 +546,10 @@ export function createApp(dbPath?: string): Hono {
 
   // Resolve Issue
   app.put("/api/projects/:id/issues/:issueId/resolve", async (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
-    const issueId = parseInt(c.req.param("issueId"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
+    const issueId = IssueIdParam.safeParse(c.req.param("issueId"));
+    if (!issueId.success) return c.json({ error: "Invalid issue ID" }, 400);
     const result = getDbForProject(projectId, false);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
@@ -455,15 +559,15 @@ export function createApp(dbPath?: string): Hono {
       const input = ResolveIssueInput.parse(body);
 
       // Verify issue exists and belongs to this project
-      const issue = db.query<{ id: number }, [number, number]>(
-        `SELECT id FROM issues WHERE id = ? AND project_id = ?`
-      ).get(issueId, localProjectId);
+      const issue = db
+        .query<{ id: number }, [number, number]>(`SELECT id FROM issues WHERE id = ? AND project_id = ?`)
+        .get(issueId.data, localProjectId);
       if (!issue) return c.json({ error: "Issue not found" }, 404);
 
       db.query(`
         UPDATE issues SET status = 'resolved', resolution = ?, resolved_at = datetime('now')
         WHERE id = ?
-      `).run(input.resolution, issueId);
+      `).run(input.resolution, issueId.data);
 
       return c.json({ message: "Issue resolved" });
     } catch (e) {
@@ -478,7 +582,8 @@ export function createApp(dbPath?: string): Hono {
 
   // Create Decision
   app.post("/api/projects/:id/decisions", async (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId, false);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
@@ -507,7 +612,8 @@ export function createApp(dbPath?: string): Hono {
 
   // Create Learning
   app.post("/api/projects/:id/learnings", async (c) => {
-    const projectId = parseInt(c.req.param("id"), 10);
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId, false);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
@@ -576,7 +682,7 @@ async function verifyStaticServing(port: number): Promise<void> {
   const contentLength = indexRes.headers.get("content-length");
 
   if (contentLength === "0" || contentLength === null) {
-    console.error("FATAL: Static file serving broken - index.html has content-length: " + contentLength);
+    console.error(`FATAL: Static file serving broken - index.html has content-length: ${contentLength}`);
     console.error("This is the Hono+Bun bug. Check serveStaticFile() uses arrayBuffer().");
     process.exit(1);
   }

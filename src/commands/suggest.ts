@@ -5,7 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { vectorSearch, type VectorSearchResult } from "../database/queries/vector";
+import { type VectorSearchResult, vectorSearch } from "../database/queries/vector";
 import { outputJson } from "../utils/format";
 
 // ============================================================================
@@ -104,8 +104,7 @@ export async function suggestFilesForTask(
  * Generate a human-readable reason for the suggestion
  */
 function generateReason(similarity: number, purpose: string | null): string {
-  const strength =
-    similarity >= 0.7 ? "Strongly" : similarity >= 0.5 ? "Moderately" : "Loosely";
+  const strength = similarity >= 0.7 ? "Strongly" : similarity >= 0.5 ? "Moderately" : "Loosely";
 
   if (purpose) {
     return `${strength} related: ${purpose.slice(0, 60)}${purpose.length > 60 ? "..." : ""}`;
@@ -116,10 +115,7 @@ function generateReason(similarity: number, purpose: string | null): string {
 /**
  * Get file paths for symbol results
  */
-async function getSymbolFiles(
-  db: Database,
-  symbols: VectorSearchResult[]
-): Promise<SuggestResult["symbols"]> {
+async function getSymbolFiles(db: Database, symbols: VectorSearchResult[]): Promise<SuggestResult["symbols"]> {
   const results: SuggestResult["symbols"] = [];
 
   for (const symbol of symbols) {
@@ -151,11 +147,7 @@ async function getSymbolFiles(
 /**
  * Get blast radius dependents for files
  */
-function getBlastDependents(
-  db: Database,
-  projectId: number,
-  files: string[]
-): SuggestResult["relatedByDeps"] {
+function getBlastDependents(db: Database, projectId: number, files: string[]): SuggestResult["relatedByDeps"] {
   const results: SuggestResult["relatedByDeps"] = [];
   const seen = new Set(files);
 
@@ -192,21 +184,14 @@ function getBlastDependents(
 // CLI Handler
 // ============================================================================
 
-export async function handleSuggestCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): Promise<void> {
+export async function handleSuggestCommand(db: Database, projectId: number, args: string[]): Promise<void> {
   // Parse arguments
   const includeSymbols = args.includes("--symbols");
   const limitIdx = args.indexOf("--limit");
   const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10;
 
   // Task is everything that's not a flag
-  const taskParts = args.filter(
-    (a, i) =>
-      !a.startsWith("--") && (limitIdx === -1 || i !== limitIdx + 1)
-  );
+  const taskParts = args.filter((a, i) => !a.startsWith("--") && (limitIdx === -1 || i !== limitIdx + 1));
   const task = taskParts.join(" ");
 
   if (!task) {

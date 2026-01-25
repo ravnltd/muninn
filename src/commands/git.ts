@@ -4,12 +4,12 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync, statSync } from "fs";
-import { join } from "path";
-import { execSync } from "child_process";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { DriftResult, StaleFile } from "../types";
-import { outputJson, computeContentHash } from "../utils/format";
 import { logError } from "../utils/errors";
+import { computeContentHash, outputJson } from "../utils/format";
 
 // ============================================================================
 // Git Helpers
@@ -39,7 +39,7 @@ function getGitStatus(path: string): string[] {
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map(line => line.substring(3)); // Remove status prefix
+      .map((line) => line.substring(3)); // Remove status prefix
   } catch {
     return [];
   }
@@ -62,19 +62,16 @@ function getUntrackedFiles(path: string): string[] {
 
 function getRecentCommits(path: string, count: number = 5): Array<{ hash: string; message: string; date: string }> {
   try {
-    const output = execSync(
-      `git log --pretty=format:"%H|%s|%ai" -${count}`,
-      {
-        cwd: path,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
+    const output = execSync(`git log --pretty=format:"%H|%s|%ai" -${count}`, {
+      cwd: path,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return output
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map(line => {
+      .map((line) => {
         const [hash, message, date] = line.split("|");
         return { hash: hash.substring(0, 7), message, date };
       });
@@ -87,11 +84,7 @@ function getRecentCommits(path: string, count: number = 5): Array<{ hash: string
 // Drift Detection Command
 // ============================================================================
 
-export function detectDrift(
-  db: Database,
-  projectId: number,
-  projectPath: string
-): DriftResult {
+export function detectDrift(db: Database, projectId: number, projectPath: string): DriftResult {
   const staleFiles: StaleFile[] = [];
   const gitChanges: string[] = [];
   const untrackedFiles: string[] = [];
@@ -106,21 +99,26 @@ export function detectDrift(
     const untracked = getUntrackedFiles(projectPath);
 
     gitChanges.push(...statusFiles);
-    untrackedFiles.push(...untracked.filter(f => !f.startsWith(".")));
+    untrackedFiles.push(...untracked.filter((f) => !f.startsWith(".")));
   }
 
   // Get tracked files from database
-  const trackedFiles = db.query<{
-    path: string;
-    content_hash: string | null;
-    last_analyzed: string | null;
-    fs_modified_at: string | null;
-    fragility: number;
-  }, [number]>(`
+  const trackedFiles = db
+    .query<
+      {
+        path: string;
+        content_hash: string | null;
+        last_analyzed: string | null;
+        fs_modified_at: string | null;
+        fragility: number;
+      },
+      [number]
+    >(`
     SELECT path, content_hash, last_analyzed, fs_modified_at, fragility
     FROM files
     WHERE project_id = ? AND status = 'active'
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   // Check each tracked file for staleness
   for (const file of trackedFiles) {
@@ -179,28 +177,34 @@ export function detectDrift(
 
   // Generate recommendations
   if (staleFiles.length > 0) {
-    const criticalStale = staleFiles.filter(f => {
-      const record = trackedFiles.find(t => t.path === f.path);
+    const criticalStale = staleFiles.filter((f) => {
+      const record = trackedFiles.find((t) => t.path === f.path);
       return record && record.fragility >= 7;
     });
 
     if (criticalStale.length > 0) {
-      recommendations.push(`URGENT: ${criticalStale.length} fragile file(s) have stale knowledge. Run \`muninn analyze\` or update individually.`);
+      recommendations.push(
+        `URGENT: ${criticalStale.length} fragile file(s) have stale knowledge. Run \`muninn analyze\` or update individually.`
+      );
     }
 
     if (staleFiles.length > 5) {
-      recommendations.push(`Consider running \`muninn analyze\` to refresh knowledge for all ${staleFiles.length} stale files.`);
+      recommendations.push(
+        `Consider running \`muninn analyze\` to refresh knowledge for all ${staleFiles.length} stale files.`
+      );
     } else {
-      recommendations.push(`Update knowledge for: ${staleFiles.map(f => f.path).join(", ")}`);
+      recommendations.push(`Update knowledge for: ${staleFiles.map((f) => f.path).join(", ")}`);
     }
   }
 
   if (untrackedFiles.length > 0) {
-    const codeFiles = untrackedFiles.filter(f =>
-      f.endsWith(".ts") || f.endsWith(".tsx") || f.endsWith(".js") || f.endsWith(".jsx")
+    const codeFiles = untrackedFiles.filter(
+      (f) => f.endsWith(".ts") || f.endsWith(".tsx") || f.endsWith(".js") || f.endsWith(".jsx")
     );
     if (codeFiles.length > 0) {
-      recommendations.push(`${codeFiles.length} new code file(s) not tracked. Consider adding them with \`muninn file add\`.`);
+      recommendations.push(
+        `${codeFiles.length} new code file(s) not tracked. Consider adding them with \`muninn file add\`.`
+      );
     }
   }
 
@@ -319,11 +323,7 @@ export function getGitInfo(projectPath: string): {
 // Update Last Queried At
 // ============================================================================
 
-export function updateLastQueried(
-  db: Database,
-  projectId: number,
-  paths: string[]
-): void {
+export function updateLastQueried(db: Database, projectId: number, paths: string[]): void {
   const stmt = db.prepare(`
     UPDATE files
     SET last_queried_at = CURRENT_TIMESTAMP
@@ -347,9 +347,11 @@ export function syncFileHashes(
   let updated = 0;
   let missing = 0;
 
-  const files = db.query<{ id: number; path: string }, [number]>(`
+  const files = db
+    .query<{ id: number; path: string }, [number]>(`
     SELECT id, path FROM files WHERE project_id = ? AND status = 'active'
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   for (const file of files) {
     const fullPath = join(projectPath, file.path);
@@ -364,11 +366,14 @@ export function syncFileHashes(
       const hash = computeContentHash(content);
       const stat = statSync(fullPath);
 
-      db.run(`
+      db.run(
+        `
         UPDATE files
         SET content_hash = ?, fs_modified_at = ?
         WHERE id = ?
-      `, [hash, stat.mtime.toISOString(), file.id]);
+      `,
+        [hash, stat.mtime.toISOString(), file.id]
+      );
 
       updated++;
     } catch {

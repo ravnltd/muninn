@@ -14,16 +14,22 @@ const VALID_ENTITY_TYPES = ["file", "decision", "issue", "learning", "session"] 
 type EntityType = (typeof VALID_ENTITY_TYPES)[number];
 
 const VALID_RELATIONSHIP_TYPES = [
-  "causes", "fixes", "supersedes", "depends_on",
-  "contradicts", "supports", "follows", "related",
+  "causes",
+  "fixes",
+  "supersedes",
+  "depends_on",
+  "contradicts",
+  "supports",
+  "follows",
+  "related",
   // Session → entity relationships
-  "made",              // session → decision
-  "found",             // session → issue
-  "resolved",          // session → issue
-  "learned",           // session → learning
+  "made", // session → decision
+  "found", // session → issue
+  "resolved", // session → issue
+  "learned", // session → learning
   // File ↔ file relationships
   "often_changes_with", // file ↔ file (co-change pattern)
-  "tests",             // file ↔ file (test → source)
+  "tests", // file ↔ file (test → source)
 ] as const;
 type RelationshipType = (typeof VALID_RELATIONSHIP_TYPES)[number];
 
@@ -53,7 +59,7 @@ function parseEntityRef(ref: string): { type: EntityType; id: number } | null {
   }
   const type = parts[0] as EntityType;
   const id = parseInt(parts[1], 10);
-  if (!VALID_ENTITY_TYPES.includes(type) || isNaN(id)) {
+  if (!VALID_ENTITY_TYPES.includes(type) || Number.isNaN(id)) {
     return null;
   }
   return { type, id };
@@ -65,33 +71,23 @@ function parseEntityRef(ref: string): { type: EntityType; id: number } | null {
 function getEntityTitle(db: Database, type: EntityType, id: number): string {
   switch (type) {
     case "file": {
-      const row = db.query<{ path: string }, [number]>(
-        "SELECT path FROM files WHERE id = ?"
-      ).get(id);
+      const row = db.query<{ path: string }, [number]>("SELECT path FROM files WHERE id = ?").get(id);
       return row?.path ?? `file:${id}`;
     }
     case "decision": {
-      const row = db.query<{ title: string }, [number]>(
-        "SELECT title FROM decisions WHERE id = ?"
-      ).get(id);
+      const row = db.query<{ title: string }, [number]>("SELECT title FROM decisions WHERE id = ?").get(id);
       return row?.title ?? `decision:${id}`;
     }
     case "issue": {
-      const row = db.query<{ title: string }, [number]>(
-        "SELECT title FROM issues WHERE id = ?"
-      ).get(id);
+      const row = db.query<{ title: string }, [number]>("SELECT title FROM issues WHERE id = ?").get(id);
       return row?.title ?? `issue:${id}`;
     }
     case "learning": {
-      const row = db.query<{ title: string }, [number]>(
-        "SELECT title FROM learnings WHERE id = ?"
-      ).get(id);
+      const row = db.query<{ title: string }, [number]>("SELECT title FROM learnings WHERE id = ?").get(id);
       return row?.title ?? `learning:${id}`;
     }
     case "session": {
-      const row = db.query<{ goal: string | null }, [number]>(
-        "SELECT goal FROM sessions WHERE id = ?"
-      ).get(id);
+      const row = db.query<{ goal: string | null }, [number]>("SELECT goal FROM sessions WHERE id = ?").get(id);
       return row?.goal ?? `session:${id}`;
     }
   }
@@ -169,11 +165,7 @@ export function createRelationship(
 /**
  * Query relationships for an entity
  */
-export function queryRelationships(
-  db: Database,
-  entityRef: string | undefined,
-  options: { type?: string } = {}
-): void {
+export function queryRelationships(db: Database, entityRef: string | undefined, options: { type?: string } = {}): void {
   let rows: RelationshipRow[];
 
   if (entityRef) {
@@ -184,24 +176,30 @@ export function queryRelationships(
       process.exit(1);
     }
 
-    rows = db.query<RelationshipRow, [string, number, string, number]>(`
+    rows = db
+      .query<RelationshipRow, [string, number, string, number]>(`
       SELECT * FROM relationships
       WHERE (source_type = ? AND source_id = ?)
          OR (target_type = ? AND target_id = ?)
       ORDER BY strength DESC, created_at DESC
-    `).all(entity.type, entity.id, entity.type, entity.id);
+    `)
+      .all(entity.type, entity.id, entity.type, entity.id);
   } else if (options.type) {
-    rows = db.query<RelationshipRow, [string]>(`
+    rows = db
+      .query<RelationshipRow, [string]>(`
       SELECT * FROM relationships
       WHERE relationship = ?
       ORDER BY strength DESC, created_at DESC
-    `).all(options.type);
+    `)
+      .all(options.type);
   } else {
-    rows = db.query<RelationshipRow, []>(`
+    rows = db
+      .query<RelationshipRow, []>(`
       SELECT * FROM relationships
       ORDER BY strength DESC, created_at DESC
       LIMIT 50
-    `).all();
+    `)
+      .all();
   }
 
   if (rows.length === 0) {
@@ -217,7 +215,9 @@ export function queryRelationships(
     const targetTitle = getEntityTitle(db, row.target_type as EntityType, row.target_id);
     const strengthBar = "█".repeat(Math.round(row.strength / 2)) + "░".repeat(5 - Math.round(row.strength / 2));
 
-    console.error(`  [${strengthBar}] ${row.source_type}:${row.source_id} --[${row.relationship}]--> ${row.target_type}:${row.target_id}`);
+    console.error(
+      `  [${strengthBar}] ${row.source_type}:${row.source_id} --[${row.relationship}]--> ${row.target_type}:${row.target_id}`
+    );
     console.error(`           "${sourceTitle}" → "${targetTitle}"`);
     if (row.notes) {
       console.error(`           Note: ${row.notes}`);
@@ -227,7 +227,7 @@ export function queryRelationships(
   console.error("");
 
   outputJson({
-    relationships: rows.map(r => ({
+    relationships: rows.map((r) => ({
       id: r.id,
       source: { type: r.source_type, id: r.source_id },
       target: { type: r.target_type, id: r.target_id },
@@ -242,9 +242,7 @@ export function queryRelationships(
  * Remove a relationship by ID
  */
 export function removeRelationship(db: Database, id: number): void {
-  const existing = db.query<RelationshipRow, [number]>(
-    "SELECT * FROM relationships WHERE id = ?"
-  ).get(id);
+  const existing = db.query<RelationshipRow, [number]>("SELECT * FROM relationships WHERE id = ?").get(id);
 
   if (!existing) {
     console.error(`Relationship ${id} not found.`);
@@ -254,7 +252,9 @@ export function removeRelationship(db: Database, id: number): void {
   db.run("DELETE FROM relationships WHERE id = ?", [id]);
 
   console.error(`\n✅ Removed relationship ${id}:`);
-  console.error(`   ${existing.source_type}:${existing.source_id} --[${existing.relationship}]--> ${existing.target_type}:${existing.target_id}`);
+  console.error(
+    `   ${existing.source_type}:${existing.source_id} --[${existing.relationship}]--> ${existing.target_type}:${existing.target_id}`
+  );
   console.error("");
 
   outputSuccess({ deleted: id });
@@ -265,9 +265,9 @@ export function removeRelationship(db: Database, id: number): void {
  */
 export function getOrCreateFileId(db: Database, projectId: number, filePath: string): number | null {
   // Try to find existing file
-  const existing = db.query<{ id: number }, [number, string]>(
-    "SELECT id FROM files WHERE project_id = ? AND path = ?"
-  ).get(projectId, filePath);
+  const existing = db
+    .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
+    .get(projectId, filePath);
 
   if (existing) {
     return existing.id;
@@ -284,9 +284,9 @@ export function getOrCreateFileId(db: Database, projectId: number, filePath: str
       return Number(result.lastInsertRowid);
     }
     // If insert was ignored (race condition), fetch existing
-    const created = db.query<{ id: number }, [number, string]>(
-      "SELECT id FROM files WHERE project_id = ? AND path = ?"
-    ).get(projectId, filePath);
+    const created = db
+      .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
+      .get(projectId, filePath);
     return created?.id || null;
   } catch {
     return null;
@@ -296,12 +296,7 @@ export function getOrCreateFileId(db: Database, projectId: number, filePath: str
 /**
  * Auto-create relationships between an issue and its affected files
  */
-export function autoRelateIssueFiles(
-  db: Database,
-  projectId: number,
-  issueId: number,
-  files: string[]
-): void {
+export function autoRelateIssueFiles(db: Database, projectId: number, issueId: number, files: string[]): void {
   for (const filePath of files) {
     const fileId = getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
@@ -311,7 +306,9 @@ export function autoRelateIssueFiles(
            VALUES ('issue', ?, 'file', ?, 'related', 7, 'Auto-created: issue affects this file')`,
           [issueId, fileId]
         );
-      } catch { /* ignore duplicates */ }
+      } catch {
+        /* ignore duplicates */
+      }
     }
   }
 }
@@ -319,12 +316,7 @@ export function autoRelateIssueFiles(
 /**
  * Auto-create relationships between a learning and related files
  */
-export function autoRelateLearningFiles(
-  db: Database,
-  projectId: number,
-  learningId: number,
-  files: string[]
-): void {
+export function autoRelateLearningFiles(db: Database, projectId: number, learningId: number, files: string[]): void {
   for (const filePath of files) {
     const fileId = getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
@@ -334,7 +326,9 @@ export function autoRelateLearningFiles(
            VALUES ('learning', ?, 'file', ?, 'related', 6, 'Auto-created: learning applies to this file')`,
           [learningId, fileId]
         );
-      } catch { /* ignore duplicates */ }
+      } catch {
+        /* ignore duplicates */
+      }
     }
   }
 }
@@ -342,12 +336,7 @@ export function autoRelateLearningFiles(
 /**
  * Auto-create relationships between a session and files it touched
  */
-export function autoRelateSessionFiles(
-  db: Database,
-  projectId: number,
-  sessionId: number,
-  files: string[]
-): void {
+export function autoRelateSessionFiles(db: Database, projectId: number, sessionId: number, files: string[]): void {
   for (const filePath of files) {
     const fileId = getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
@@ -357,7 +346,9 @@ export function autoRelateSessionFiles(
            VALUES ('session', ?, 'file', ?, 'related', 5, 'Auto-created: file touched during session')`,
           [sessionId, fileId]
         );
-      } catch { /* ignore duplicates */ }
+      } catch {
+        /* ignore duplicates */
+      }
     }
   }
 }
@@ -378,7 +369,9 @@ export function autoRelateIssueFix(
          VALUES ('decision', ?, 'issue', ?, 'fixes', 8, 'Auto-detected from issue resolution')`,
         [resolutionContext.decisionId, issueId]
       );
-    } catch { /* ignore duplicates */ }
+    } catch {
+      /* ignore duplicates */
+    }
   }
 
   if (resolutionContext?.sessionId) {
@@ -388,7 +381,9 @@ export function autoRelateIssueFix(
          VALUES ('session', ?, 'issue', ?, 'fixes', 6, 'Auto-detected: issue resolved in session')`,
         [resolutionContext.sessionId, issueId]
       );
-    } catch { /* ignore duplicates */ }
+    } catch {
+      /* ignore duplicates */
+    }
   }
 }
 
@@ -400,11 +395,7 @@ export function autoRelateIssueFix(
  * Auto-create "made" relationships between a session and decisions made during it
  * Strength: 7 (session made this decision)
  */
-export function autoRelateSessionDecisions(
-  db: Database,
-  sessionId: number,
-  decisionIds: number[]
-): void {
+export function autoRelateSessionDecisions(db: Database, sessionId: number, decisionIds: number[]): void {
   for (const decisionId of decisionIds) {
     try {
       db.run(
@@ -412,7 +403,9 @@ export function autoRelateSessionDecisions(
          VALUES ('session', ?, 'decision', ?, 'made', 7, 'Auto-created: decision made during session')`,
         [sessionId, decisionId]
       );
-    } catch { /* ignore duplicates */ }
+    } catch {
+      /* ignore duplicates */
+    }
   }
 }
 
@@ -424,12 +417,13 @@ export function autoRelateSessionIssues(
   db: Database,
   sessionId: number,
   issueIds: number[],
-  relation: 'found' | 'resolved'
+  relation: "found" | "resolved"
 ): void {
-  const strength = relation === 'resolved' ? 8 : 6;
-  const note = relation === 'resolved'
-    ? 'Auto-created: issue resolved during session'
-    : 'Auto-created: issue discovered during session';
+  const strength = relation === "resolved" ? 8 : 6;
+  const note =
+    relation === "resolved"
+      ? "Auto-created: issue resolved during session"
+      : "Auto-created: issue discovered during session";
 
   for (const issueId of issueIds) {
     try {
@@ -438,7 +432,9 @@ export function autoRelateSessionIssues(
          VALUES ('session', ?, 'issue', ?, ?, ?, ?)`,
         [sessionId, issueId, relation, strength, note]
       );
-    } catch { /* ignore duplicates */ }
+    } catch {
+      /* ignore duplicates */
+    }
   }
 }
 
@@ -447,15 +443,14 @@ export function autoRelateSessionIssues(
  * Queries session_learnings table to find learnings linked to this session
  * Strength: 7
  */
-export function autoRelateSessionLearnings(
-  db: Database,
-  sessionId: number
-): void {
+export function autoRelateSessionLearnings(db: Database, sessionId: number): void {
   try {
-    const learnings = db.query<{ learning_id: number }, [number]>(`
+    const learnings = db
+      .query<{ learning_id: number }, [number]>(`
       SELECT learning_id FROM session_learnings
       WHERE session_id = ? AND learning_id IS NOT NULL
-    `).all(sessionId);
+    `)
+      .all(sessionId);
 
     for (const { learning_id } of learnings) {
       try {
@@ -464,7 +459,9 @@ export function autoRelateSessionLearnings(
            VALUES ('session', ?, 'learning', ?, 'learned', 7, 'Auto-created: learning extracted from session')`,
           [sessionId, learning_id]
         );
-      } catch { /* ignore duplicates */ }
+      } catch {
+        /* ignore duplicates */
+      }
     }
   } catch {
     // session_learnings table might not exist
@@ -479,21 +476,22 @@ export function autoRelateSessionLearnings(
  * Auto-create "often_changes_with" relationships based on file correlations
  * Strength: min(10, cochange_count) - more co-changes = stronger relationship
  */
-export function autoRelateFileCorrelations(
-  db: Database,
-  projectId: number,
-  minCount: number = 3
-): number {
+export function autoRelateFileCorrelations(db: Database, projectId: number, minCount: number = 3): number {
   let count = 0;
   try {
-    const correlations = db.query<{
-      file_a: string;
-      file_b: string;
-      cochange_count: number;
-    }, [number, number]>(`
+    const correlations = db
+      .query<
+        {
+          file_a: string;
+          file_b: string;
+          cochange_count: number;
+        },
+        [number, number]
+      >(`
       SELECT file_a, file_b, cochange_count FROM file_correlations
       WHERE project_id = ? AND cochange_count >= ?
-    `).all(projectId, minCount);
+    `)
+      .all(projectId, minCount);
 
     for (const { file_a, file_b, cochange_count } of correlations) {
       const fileAId = getOrCreateFileId(db, projectId, file_a);
@@ -508,7 +506,9 @@ export function autoRelateFileCorrelations(
             [fileAId, fileBId, strength, `Co-changed ${cochange_count} times`]
           );
           count++;
-        } catch { /* ignore duplicates */ }
+        } catch {
+          /* ignore duplicates */
+        }
       }
     }
   } catch {
@@ -522,27 +522,26 @@ export function autoRelateFileCorrelations(
  * Detects patterns: *.test.ts, *.spec.ts, __tests__/*.ts
  * Strength: 9 (strong relationship)
  */
-export function autoRelateTestFiles(
-  db: Database,
-  projectId: number
-): number {
+export function autoRelateTestFiles(db: Database, projectId: number): number {
   let count = 0;
   try {
     // Get all test files
-    const testFiles = db.query<{ id: number; path: string }, [number]>(`
+    const testFiles = db
+      .query<{ id: number; path: string }, [number]>(`
       SELECT id, path FROM files
       WHERE project_id = ?
       AND (path LIKE '%.test.%' OR path LIKE '%.spec.%' OR path LIKE '%__tests__%')
-    `).all(projectId);
+    `)
+      .all(projectId);
 
     for (const testFile of testFiles) {
       const sourcePath = inferSourceFromTestPath(testFile.path);
       if (!sourcePath) continue;
 
       // Find the source file
-      const sourceFile = db.query<{ id: number }, [number, string]>(
-        "SELECT id FROM files WHERE project_id = ? AND path = ?"
-      ).get(projectId, sourcePath);
+      const sourceFile = db
+        .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
+        .get(projectId, sourcePath);
 
       if (sourceFile) {
         try {
@@ -552,7 +551,9 @@ export function autoRelateTestFiles(
             [testFile.id, sourceFile.id]
           );
           count++;
-        } catch { /* ignore duplicates */ }
+        } catch {
+          /* ignore duplicates */
+        }
       }
     }
   } catch {
@@ -604,12 +605,7 @@ interface DecisionRow {
 /**
  * Auto-create relationships between a decision and its affected files
  */
-export function autoRelateDecisionFiles(
-  db: Database,
-  projectId: number,
-  decisionId: number,
-  files: string[]
-): void {
+export function autoRelateDecisionFiles(db: Database, projectId: number, decisionId: number, files: string[]): void {
   for (const filePath of files) {
     const fileId = getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
@@ -619,7 +615,9 @@ export function autoRelateDecisionFiles(
            VALUES ('decision', ?, 'file', ?, 'related', 8, 'Auto-created: decision affects this file')`,
           [decisionId, fileId]
         );
-      } catch { /* ignore duplicates */ }
+      } catch {
+        /* ignore duplicates */
+      }
     }
   }
 }
@@ -633,7 +631,10 @@ interface ExtendedSessionRow extends SessionRow {
 /**
  * Backfill relationships for existing issues, sessions, and decisions
  */
-export function backfillEntityRelationships(db: Database, projectId: number): {
+export function backfillEntityRelationships(
+  db: Database,
+  projectId: number
+): {
   decisions: number;
   issues: number;
   sessions: number;
@@ -651,10 +652,12 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
   let sessionLearningCount = 0;
 
   // Backfill decisions with affects
-  const decisions = db.query<DecisionRow, [number]>(`
+  const decisions = db
+    .query<DecisionRow, [number]>(`
     SELECT id, affects FROM decisions
     WHERE project_id = ? AND affects IS NOT NULL
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   for (const decision of decisions) {
     if (!decision.affects) continue;
@@ -664,14 +667,18 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
         autoRelateDecisionFiles(db, projectId, decision.id, files);
         decisionCount++;
       }
-    } catch { /* invalid JSON - might be plain text like "all services" */ }
+    } catch {
+      /* invalid JSON - might be plain text like "all services" */
+    }
   }
 
   // Backfill issues with affected_files
-  const issues = db.query<IssueRow, [number]>(`
+  const issues = db
+    .query<IssueRow, [number]>(`
     SELECT id, affected_files FROM issues
     WHERE project_id = ? AND affected_files IS NOT NULL
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   for (const issue of issues) {
     if (!issue.affected_files) continue;
@@ -681,14 +688,18 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
         autoRelateIssueFiles(db, projectId, issue.id, files);
         issueCount++;
       }
-    } catch { /* invalid JSON */ }
+    } catch {
+      /* invalid JSON */
+    }
   }
 
   // Backfill sessions with files_touched AND new relationship types
-  const sessions = db.query<ExtendedSessionRow, [number]>(`
+  const sessions = db
+    .query<ExtendedSessionRow, [number]>(`
     SELECT id, files_touched, decisions_made, issues_found, issues_resolved FROM sessions
     WHERE project_id = ?
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   for (const session of sessions) {
     // Files touched (existing)
@@ -699,7 +710,9 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
           autoRelateSessionFiles(db, projectId, session.id, files);
           sessionCount++;
         }
-      } catch { /* invalid JSON */ }
+      } catch {
+        /* invalid JSON */
+      }
     }
 
     // Decisions made (new)
@@ -710,7 +723,9 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
           autoRelateSessionDecisions(db, session.id, decisionIds);
           sessionDecisionCount += decisionIds.length;
         }
-      } catch { /* invalid JSON */ }
+      } catch {
+        /* invalid JSON */
+      }
     }
 
     // Issues found (new)
@@ -718,10 +733,12 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
       try {
         const issueIds = JSON.parse(session.issues_found) as number[];
         if (Array.isArray(issueIds) && issueIds.length > 0) {
-          autoRelateSessionIssues(db, session.id, issueIds, 'found');
+          autoRelateSessionIssues(db, session.id, issueIds, "found");
           sessionIssueCount += issueIds.length;
         }
-      } catch { /* invalid JSON */ }
+      } catch {
+        /* invalid JSON */
+      }
     }
 
     // Issues resolved (new)
@@ -729,10 +746,12 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
       try {
         const issueIds = JSON.parse(session.issues_resolved) as number[];
         if (Array.isArray(issueIds) && issueIds.length > 0) {
-          autoRelateSessionIssues(db, session.id, issueIds, 'resolved');
+          autoRelateSessionIssues(db, session.id, issueIds, "resolved");
           sessionIssueCount += issueIds.length;
         }
-      } catch { /* invalid JSON */ }
+      } catch {
+        /* invalid JSON */
+      }
     }
 
     // Learnings (new) - via session_learnings table
@@ -742,11 +761,13 @@ export function backfillEntityRelationships(db: Database, projectId: number): {
 
   // Count session learnings separately
   try {
-    const learningCount = db.query<{ count: number }, [number]>(`
+    const learningCount = db
+      .query<{ count: number }, [number]>(`
       SELECT COUNT(*) as count FROM session_learnings sl
       JOIN sessions s ON sl.session_id = s.id
       WHERE s.project_id = ? AND sl.learning_id IS NOT NULL
-    `).get(projectId);
+    `)
+      .get(projectId);
     sessionLearningCount = learningCount?.count || 0;
   } catch {
     // Table might not exist
@@ -798,7 +819,7 @@ export function handleRelationshipCommand(db: Database, projectId: number, args:
       const target = args[3];
 
       if (!source || !relationship || !target) {
-        console.error("Usage: muninn relate <source> <relationship> <target> [--strength N] [--notes \"...\"]");
+        console.error('Usage: muninn relate <source> <relationship> <target> [--strength N] [--notes "..."]');
         console.error("Example: muninn relate decision:5 fixes issue:3 --strength 8");
         process.exit(1);
       }
@@ -830,7 +851,7 @@ export function handleRelationshipCommand(db: Database, projectId: number, args:
     case "remove":
     case "delete": {
       const id = parseInt(args[1], 10);
-      if (isNaN(id)) {
+      if (Number.isNaN(id)) {
         console.error("Usage: muninn unrelate <id>");
         process.exit(1);
       }

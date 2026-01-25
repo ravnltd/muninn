@@ -4,17 +4,24 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { outputSuccess } from "../utils/format";
-import { generateEmbedding, serializeEmbedding, observationToText } from "../embeddings";
+import { generateEmbedding, observationToText, serializeEmbedding } from "../embeddings";
 import { logError } from "../utils/errors";
+import { outputSuccess } from "../utils/format";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-type ObservationType = 'pattern' | 'frustration' | 'insight' | 'dropped_thread' | 'preference' | 'behavior';
+type ObservationType = "pattern" | "frustration" | "insight" | "dropped_thread" | "preference" | "behavior";
 
-const VALID_TYPES: ObservationType[] = ['pattern', 'frustration', 'insight', 'dropped_thread', 'preference', 'behavior'];
+const VALID_TYPES: ObservationType[] = [
+  "pattern",
+  "frustration",
+  "insight",
+  "dropped_thread",
+  "preference",
+  "behavior",
+];
 
 // ============================================================================
 // Add Observation (with auto-dedup)
@@ -24,7 +31,7 @@ export async function observeAdd(
   db: Database,
   projectId: number | null,
   content: string,
-  type: ObservationType = 'insight',
+  type: ObservationType = "insight",
   sessionId?: number,
   isGlobal: boolean = false
 ): Promise<number> {
@@ -34,7 +41,7 @@ export async function observeAdd(
   }
 
   if (!VALID_TYPES.includes(type)) {
-    console.error(`Invalid type. Must be one of: ${VALID_TYPES.join(', ')}`);
+    console.error(`Invalid type. Must be one of: ${VALID_TYPES.join(", ")}`);
     process.exit(1);
   }
 
@@ -47,41 +54,47 @@ export async function observeAdd(
 
   if (existing) {
     // Increment frequency and update last_seen
-    db.run(`
+    db.run(
+      `
       UPDATE observations
       SET frequency = frequency + 1, last_seen_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [existing.id]);
+    `,
+      [existing.id]
+    );
 
     console.error(`\n📝 Observation reinforced (seen ${existing.frequency + 1}x)`);
-    console.error(`   "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}"`);
+    console.error(`   "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}"`);
 
     outputSuccess({ id: existing.id, frequency: existing.frequency + 1, deduped: true });
     return existing.id;
   }
 
   // Insert new observation
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO observations (project_id, type, content, session_id)
     VALUES (?, ?, ?, ?)
-  `, [projectId, type, content, sessionId ?? null]);
+  `,
+    [projectId, type, content, sessionId ?? null]
+  );
 
   const id = Number(result.lastInsertRowid);
 
   // Update FTS
-  db.run(`
+  db.run(
+    `
     INSERT INTO fts_observations(rowid, content, type)
     VALUES (?, ?, ?)
-  `, [id, content, type]);
+  `,
+    [id, content, type]
+  );
 
   // Generate embedding async
   try {
     const embedding = await generateEmbedding(observationToText(content, type));
     if (embedding) {
-      db.run("UPDATE observations SET embedding = ? WHERE id = ?", [
-        serializeEmbedding(embedding),
-        id,
-      ]);
+      db.run("UPDATE observations SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), id]);
     }
   } catch (error) {
     logError("observe:embedding", error);
@@ -89,7 +102,7 @@ export async function observeAdd(
 
   console.error(`\n📝 Observation recorded (#${id})`);
   console.error(`   Type: ${type}`);
-  console.error(`   "${content.slice(0, 80)}${content.length > 80 ? '...' : ''}"`);
+  console.error(`   "${content.slice(0, 80)}${content.length > 80 ? "..." : ""}"`);
 
   outputSuccess({ id, type, content, deduped: false });
   return id;
@@ -101,27 +114,35 @@ export async function observeAdd(
 
 function observeAddGlobal(db: Database, content: string, type: ObservationType): number {
   // Check for dedup in global
-  const existing = db.query<{ id: number; frequency: number }, [string]>(`
+  const existing = db
+    .query<{ id: number; frequency: number }, [string]>(`
     SELECT id, frequency FROM global_observations
     WHERE content = ?
-  `).get(content);
+  `)
+    .get(content);
 
   if (existing) {
-    db.run(`
+    db.run(
+      `
       UPDATE global_observations
       SET frequency = frequency + 1, last_seen_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `, [existing.id]);
+    `,
+      [existing.id]
+    );
 
     console.error(`\n📝 Global observation reinforced (seen ${existing.frequency + 1}x)`);
     outputSuccess({ id: existing.id, frequency: existing.frequency + 1, deduped: true, global: true });
     return existing.id;
   }
 
-  const result = db.run(`
+  const result = db.run(
+    `
     INSERT INTO global_observations (type, content)
     VALUES (?, ?)
-  `, [type, content]);
+  `,
+    [type, content]
+  );
 
   const id = Number(result.lastInsertRowid);
   console.error(`\n📝 Global observation recorded (#${id})`);
@@ -141,14 +162,23 @@ export function observeList(
   const limit = options.limit ?? 20;
 
   if (options.global) {
-    const results = db.query<{
-      id: number; type: string; content: string; frequency: number;
-      last_seen_at: string; created_at: string;
-    }, [number]>(`
+    const results = db
+      .query<
+        {
+          id: number;
+          type: string;
+          content: string;
+          frequency: number;
+          last_seen_at: string;
+          created_at: string;
+        },
+        [number]
+      >(`
       SELECT * FROM global_observations
       ORDER BY frequency DESC, last_seen_at DESC
       LIMIT ?
-    `).all(limit);
+    `)
+      .all(limit);
 
     console.error(`\n📝 Global Observations (${results.length})\n`);
     for (const obs of results) {
@@ -158,21 +188,30 @@ export function observeList(
     return;
   }
 
-  const typeFilter = options.type ? `AND type = '${options.type}'` : '';
-  const results = db.query<{
-    id: number; type: string; content: string; frequency: number;
-    last_seen_at: string; created_at: string;
-  }, [number | null, number]>(`
+  const typeFilter = options.type ? `AND type = '${options.type}'` : "";
+  const results = db
+    .query<
+      {
+        id: number;
+        type: string;
+        content: string;
+        frequency: number;
+        last_seen_at: string;
+        created_at: string;
+      },
+      [number | null, number]
+    >(`
     SELECT * FROM observations
     WHERE (project_id = ?1 OR project_id IS NULL)
     ${typeFilter}
     ORDER BY frequency DESC, last_seen_at DESC
     LIMIT ?2
-  `).all(projectId, limit);
+  `)
+    .all(projectId, limit);
 
   console.error(`\n📝 Observations (${results.length})\n`);
   for (const obs of results) {
-    const freq = obs.frequency > 1 ? ` (${obs.frequency}x)` : '';
+    const freq = obs.frequency > 1 ? ` (${obs.frequency}x)` : "";
     console.error(`  [${obs.type}] ${obs.content.slice(0, 60)}${freq}`);
   }
 
@@ -189,29 +228,33 @@ function findSimilarObservation(
   content: string
 ): { id: number; frequency: number } | null {
   // Exact match first
-  const exact = db.query<{ id: number; frequency: number }, [number | null, string]>(`
+  const exact = db
+    .query<{ id: number; frequency: number }, [number | null, string]>(`
     SELECT id, frequency FROM observations
     WHERE (project_id = ? OR project_id IS NULL) AND content = ?
-  `).get(projectId, content);
+  `)
+    .get(projectId, content);
 
   if (exact) return exact;
 
   // FTS match for similar content
   try {
-    const ftsMatch = db.query<{ id: number; frequency: number }, [string, number | null]>(`
+    const ftsMatch = db
+      .query<{ id: number; frequency: number }, [string, number | null]>(`
       SELECT o.id, o.frequency FROM fts_observations
       JOIN observations o ON fts_observations.rowid = o.id
       WHERE fts_observations MATCH ?1
       AND (o.project_id = ?2 OR o.project_id IS NULL)
       ORDER BY bm25(fts_observations)
       LIMIT 1
-    `).get(content.split(' ').slice(0, 5).join(' '), projectId);
+    `)
+      .get(content.split(" ").slice(0, 5).join(" "), projectId);
 
     // Only dedup if the FTS match is very close (check manually)
     if (ftsMatch) {
-      const existing = db.query<{ content: string }, [number]>(
-        "SELECT content FROM observations WHERE id = ?"
-      ).get(ftsMatch.id);
+      const existing = db
+        .query<{ content: string }, [number]>("SELECT content FROM observations WHERE id = ?")
+        .get(ftsMatch.id);
 
       if (existing && isSimilarEnough(content, existing.content)) {
         return ftsMatch;
@@ -244,11 +287,7 @@ function isSimilarEnough(a: string, b: string): boolean {
 // CLI Handler
 // ============================================================================
 
-export async function handleObserveCommand(
-  db: Database,
-  projectId: number,
-  args: string[]
-): Promise<void> {
+export async function handleObserveCommand(db: Database, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   if (subCmd === "list") {
@@ -261,14 +300,19 @@ export async function handleObserveCommand(
 
   // Default: add observation
   const typeIdx = args.indexOf("--type");
-  const type = (typeIdx !== -1 ? args[typeIdx + 1] : 'insight') as ObservationType;
+  const type = (typeIdx !== -1 ? args[typeIdx + 1] : "insight") as ObservationType;
   const isGlobal = args.includes("--global");
 
   // Filter out flags and their arguments
   const contentParts: string[] = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--type") { i++; continue; }
-    if (args[i] === "--global") { continue; }
+    if (args[i] === "--type") {
+      i++;
+      continue;
+    }
+    if (args[i] === "--global") {
+      continue;
+    }
     contentParts.push(args[i]);
   }
   const content = contentParts.join(" ");

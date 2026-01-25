@@ -5,8 +5,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { computeContentHash } from "../utils/format";
 
 // ============================================================================
@@ -58,15 +58,20 @@ export function hookCheck(
   let blockingFile: string | null = null;
 
   for (const filePath of files) {
-    const fileRecord = db.query<{
-      fragility: number;
-      fragility_reason: string | null;
-      content_hash: string | null;
-    }, [number, string]>(`
+    const fileRecord = db
+      .query<
+        {
+          fragility: number;
+          fragility_reason: string | null;
+          content_hash: string | null;
+        },
+        [number, string]
+      >(`
       SELECT fragility, fragility_reason, content_hash
       FROM files
       WHERE project_id = ? AND path = ?
-    `).get(projectId, filePath);
+    `)
+      .get(projectId, filePath);
 
     const warnings: string[] = [];
     let fragility = 0;
@@ -101,11 +106,13 @@ export function hookCheck(
     }
 
     // Check for related issues
-    const issues = db.query<{ id: number }, [number, string, string]>(`
+    const issues = db
+      .query<{ id: number }, [number, string, string]>(`
       SELECT id FROM issues
       WHERE project_id = ? AND status = 'open' AND severity >= 7
       AND (affected_files LIKE ? OR related_symbols LIKE ?)
-    `).all(projectId, `%${filePath}%`, `%${filePath}%`);
+    `)
+      .all(projectId, `%${filePath}%`, `%${filePath}%`);
 
     if (issues.length > 0) {
       warnings.push(`${issues.length} critical issue(s) affect this file`);
@@ -122,7 +129,7 @@ export function hookCheck(
   // Output for hooks
   if (result.blocked) {
     console.error(`\n🛑 BLOCKED: ${result.reason}\n`);
-    for (const f of result.files.filter(f => f.fragility >= threshold)) {
+    for (const f of result.files.filter((f) => f.fragility >= threshold)) {
       console.error(`   📁 ${f.path} (fragility: ${f.fragility}/10)`);
       for (const w of f.warnings) {
         console.error(`      - ${w}`);
@@ -131,9 +138,9 @@ export function hookCheck(
     console.error("\nTo proceed, explain your approach in your message.\n");
   } else {
     // Silent success for non-blocking
-    if (result.files.some(f => f.warnings.length > 0)) {
+    if (result.files.some((f) => f.warnings.length > 0)) {
       console.error(`\n✅ Pre-edit check passed with notes:`);
-      for (const f of result.files.filter(f => f.warnings.length > 0)) {
+      for (const f of result.files.filter((f) => f.warnings.length > 0)) {
         console.error(`   📁 ${f.path}: ${f.warnings.join(", ")}`);
       }
       console.error("");
@@ -156,11 +163,7 @@ export function hookCheck(
 // Returns session initialization context
 // ============================================================================
 
-export function hookInit(
-  db: Database,
-  projectId: number,
-  projectPath: string
-): HookInitResult {
+export function hookInit(db: Database, projectId: number, projectPath: string): HookInitResult {
   const result: HookInitResult = {
     hasContext: false,
     lastSession: null,
@@ -170,19 +173,24 @@ export function hookInit(
   };
 
   // Get last session
-  const session = db.query<{
-    goal: string;
-    outcome: string | null;
-    next_steps: string | null;
-    ended_at: string | null;
-    started_at: string;
-  }, [number]>(`
+  const session = db
+    .query<
+      {
+        goal: string;
+        outcome: string | null;
+        next_steps: string | null;
+        ended_at: string | null;
+        started_at: string;
+      },
+      [number]
+    >(`
     SELECT goal, outcome, next_steps, ended_at, started_at
     FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   if (session) {
     result.hasContext = true;
@@ -196,10 +204,12 @@ export function hookInit(
   }
 
   // Check project health
-  const criticalIssues = db.query<{ id: number }, [number]>(`
+  const criticalIssues = db
+    .query<{ id: number }, [number]>(`
     SELECT id FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 8
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (criticalIssues.length > 0) {
     result.health = "critical";
@@ -215,12 +225,14 @@ export function hookInit(
 
   // Get top action
   if (criticalIssues.length > 0) {
-    const topIssue = db.query<{ id: number; title: string }, [number]>(`
+    const topIssue = db
+      .query<{ id: number; title: string }, [number]>(`
       SELECT id, title FROM issues
       WHERE project_id = ? AND status = 'open' AND severity >= 8
       ORDER BY severity DESC
       LIMIT 1
-    `).get(projectId);
+    `)
+      .get(projectId);
     if (topIssue) {
       result.topAction = `Fix #${topIssue.id}: ${topIssue.title}`;
     }
@@ -270,16 +282,14 @@ function outputInitContext(result: HookInitResult): void {
 // Returns reminder to update memory
 // ============================================================================
 
-export function hookPostEdit(
-  db: Database,
-  projectId: number,
-  filePath: string
-): void {
+export function hookPostEdit(db: Database, projectId: number, filePath: string): void {
   // Check if file is tracked
-  const fileRecord = db.query<{ id: number; fragility: number }, [number, string]>(`
+  const fileRecord = db
+    .query<{ id: number; fragility: number }, [number, string]>(`
     SELECT id, fragility FROM files
     WHERE project_id = ? AND path = ?
-  `).get(projectId, filePath);
+  `)
+    .get(projectId, filePath);
 
   if (!fileRecord) {
     console.error(`\n💡 New file modified: ${filePath}`);
@@ -292,26 +302,27 @@ export function hookPostEdit(
   }
 
   // Track the edit in active session
-  const sessionId = db.query<{ id: number }, [number]>(`
+  const sessionId = db
+    .query<{ id: number }, [number]>(`
     SELECT id FROM sessions
     WHERE project_id = ? AND ended_at IS NULL
     ORDER BY started_at DESC
     LIMIT 1
-  `).get(projectId)?.id;
+  `)
+    .get(projectId)?.id;
 
   if (sessionId) {
     // Update files_touched in session
-    const session = db.query<{ files_touched: string | null }, [number]>(`
+    const session = db
+      .query<{ files_touched: string | null }, [number]>(`
       SELECT files_touched FROM sessions WHERE id = ?
-    `).get(sessionId);
+    `)
+      .get(sessionId);
 
     const filesTouched = JSON.parse(session?.files_touched || "[]") as string[];
     if (!filesTouched.includes(filePath)) {
       filesTouched.push(filePath);
-      db.run(`UPDATE sessions SET files_touched = ? WHERE id = ?`, [
-        JSON.stringify(filesTouched),
-        sessionId,
-      ]);
+      db.run(`UPDATE sessions SET files_touched = ? WHERE id = ?`, [JSON.stringify(filesTouched), sessionId]);
     }
   }
 
@@ -323,26 +334,27 @@ export function hookPostEdit(
 // Comprehensive brain dump for session start
 // ============================================================================
 
-export function hookBrain(
-  db: Database,
-  projectId: number,
-  projectPath: string
-): void {
+export function hookBrain(db: Database, projectId: number, projectPath: string): void {
   console.error("\n🧠 Loading Brain...\n");
 
   // 1. Resume point
-  const session = db.query<{
-    goal: string;
-    outcome: string | null;
-    next_steps: string | null;
-    started_at: string;
-  }, [number]>(`
+  const session = db
+    .query<
+      {
+        goal: string;
+        outcome: string | null;
+        next_steps: string | null;
+        started_at: string;
+      },
+      [number]
+    >(`
     SELECT goal, outcome, next_steps, started_at
     FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT 1
-  `).get(projectId);
+  `)
+    .get(projectId);
 
   if (session) {
     const timeAgo = getTimeAgo(session.started_at);
@@ -354,12 +366,14 @@ export function hookBrain(
   }
 
   // 2. Critical issues
-  const issues = db.query<{ id: number; title: string; severity: number }, [number]>(`
+  const issues = db
+    .query<{ id: number; title: string; severity: number }, [number]>(`
     SELECT id, title, severity FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 7
     ORDER BY severity DESC
     LIMIT 3
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (issues.length > 0) {
     console.error(`🔴 Critical Issues:`);
@@ -370,12 +384,14 @@ export function hookBrain(
   }
 
   // 3. Fragile files
-  const fragile = db.query<{ path: string; fragility: number }, [number]>(`
+  const fragile = db
+    .query<{ path: string; fragility: number }, [number]>(`
     SELECT path, fragility FROM files
     WHERE project_id = ? AND fragility >= 7
     ORDER BY fragility DESC
     LIMIT 5
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (fragile.length > 0) {
     console.error(`⚠️  Fragile Files:`);
@@ -386,12 +402,14 @@ export function hookBrain(
   }
 
   // 4. Recent decisions
-  const decisions = db.query<{ id: number; title: string }, [number]>(`
+  const decisions = db
+    .query<{ id: number; title: string }, [number]>(`
     SELECT id, title FROM decisions
     WHERE project_id = ? AND status = 'active'
     ORDER BY created_at DESC
     LIMIT 3
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   if (decisions.length > 0) {
     console.error(`📝 Recent Decisions:`);
@@ -434,13 +452,18 @@ function getTimeAgo(dateStr: string): string {
 function countStaleFiles(db: Database, projectId: number, projectPath: string): number {
   let count = 0;
 
-  const files = db.query<{
-    path: string;
-    content_hash: string | null;
-  }, [number]>(`
+  const files = db
+    .query<
+      {
+        path: string;
+        content_hash: string | null;
+      },
+      [number]
+    >(`
     SELECT path, content_hash FROM files
     WHERE project_id = ? AND status = 'active' AND content_hash IS NOT NULL
-  `).all(projectId);
+  `)
+    .all(projectId);
 
   for (const file of files) {
     const fullPath = join(projectPath, file.path);

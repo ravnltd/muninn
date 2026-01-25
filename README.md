@@ -193,4 +193,4 @@ PRs: not accepting at this time.
 
 ---
 
-Built with [Claude Code](https://claude.ai/code).
+Built in collaboration with [Claude Code](https://claude.ai/code).

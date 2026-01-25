@@ -8,7 +8,7 @@
  * - Graceful degradation
  */
 
-import { Result, ok, err, ContextError } from "./errors";
+import { ContextError, err, ok, type Result } from "./errors";
 
 // ============================================================================
 // Types
@@ -130,26 +130,21 @@ export function getApiKey(type: ApiKeyType): Result<string> {
 
   if (!status.available) {
     return err(
-      new ContextError(
-        status.error || `${type.toUpperCase()}_API_KEY not set`,
-        "API_ERROR",
-        { keyType: type }
-      )
+      new ContextError(status.error || `${type.toUpperCase()}_API_KEY not set`, "API_ERROR", { keyType: type })
     );
   }
 
   if (!status.valid) {
     return err(
-      new ContextError(
-        status.error || `${type.toUpperCase()}_API_KEY is invalid`,
-        "API_ERROR",
-        { keyType: type }
-      )
+      new ContextError(status.error || `${type.toUpperCase()}_API_KEY is invalid`, "API_ERROR", { keyType: type })
     );
   }
 
   // We know the key exists at this point
-  const key = getRawKey(type)!;
+  const key = getRawKey(type);
+  if (!key) {
+    return err(new ContextError(`${type.toUpperCase()}_API_KEY unexpectedly missing`, "API_ERROR", { keyType: type }));
+  }
   return ok(key);
 }
 
@@ -157,11 +152,7 @@ export function getApiKey(type: ApiKeyType): Result<string> {
  * Execute a function that requires an API key
  * Handles missing/invalid keys gracefully with fallback
  */
-export async function withApiKey<T>(
-  type: ApiKeyType,
-  fn: (key: string) => Promise<T>,
-  fallback: T
-): Promise<T> {
+export async function withApiKey<T>(type: ApiKeyType, fn: (key: string) => Promise<T>, fallback: T): Promise<T> {
   const keyResult = getApiKey(type);
 
   if (!keyResult.ok) {
@@ -174,8 +165,9 @@ export async function withApiKey<T>(
     // Don't expose key in error messages
     const message = error instanceof Error ? error.message : String(error);
     // Sanitize any accidental key exposure
-    const sanitized = message.replace(/sk-ant-[a-zA-Z0-9-_]+/g, "[REDACTED]")
-                             .replace(/pa-[a-zA-Z0-9-_]+/g, "[REDACTED]");
+    const sanitized = message
+      .replace(/sk-ant-[a-zA-Z0-9-_]+/g, "[REDACTED]")
+      .replace(/pa-[a-zA-Z0-9-_]+/g, "[REDACTED]");
     throw new Error(sanitized);
   }
 }

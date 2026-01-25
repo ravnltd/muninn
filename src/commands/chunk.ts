@@ -6,12 +6,12 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { existsSync, readdirSync } from "fs";
-import { join, relative } from "path";
-import { parseFile, chunkToSearchText, type CodeChunk } from "../analysis/chunker";
+import { existsSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { type CodeChunk, chunkToSearchText, parseFile } from "../analysis/chunker";
 import { embedBatch, isAvailable as isEmbeddingAvailable } from "../embeddings/voyage";
-import { outputJson } from "../utils/format";
 import { logError } from "../utils/errors";
+import { outputJson } from "../utils/format";
 
 // ============================================================================
 // Types
@@ -30,11 +30,21 @@ interface ChunkStats {
 // ============================================================================
 
 const IGNORED_DIRS = [
-  'node_modules', '.git', 'dist', 'build', '.next', '.svelte-kit',
-  'coverage', '.turbo', '.vercel', '__pycache__', 'vendor', 'target'
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".next",
+  ".svelte-kit",
+  "coverage",
+  ".turbo",
+  ".vercel",
+  "__pycache__",
+  "vendor",
+  "target",
 ];
 
-const CODE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.go', '.svelte', '.vue'];
+const CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".go", ".svelte", ".vue"];
 
 /**
  * Find all code files in a directory
@@ -54,11 +64,11 @@ function findCodeFiles(dir: string, maxFiles: number = 500): string[] {
         const fullPath = join(currentDir, entry.name);
 
         if (entry.isDirectory()) {
-          if (!IGNORED_DIRS.includes(entry.name) && !entry.name.startsWith('.')) {
+          if (!IGNORED_DIRS.includes(entry.name) && !entry.name.startsWith(".")) {
             walk(fullPath);
           }
         } else if (entry.isFile()) {
-          const ext = '.' + entry.name.split('.').pop()?.toLowerCase();
+          const ext = `.${entry.name.split(".").pop()?.toLowerCase()}`;
           if (CODE_EXTENSIONS.includes(ext)) {
             files.push(fullPath);
           }
@@ -81,18 +91,18 @@ function findCodeFiles(dir: string, maxFiles: number = 500): string[] {
  * Get or create file record
  */
 function getFileId(db: Database, projectId: number, filePath: string): number | null {
-  const existing = db.query<{ id: number }, [number, string]>(
-    `SELECT id FROM files WHERE project_id = ? AND path = ?`
-  ).get(projectId, filePath);
+  const existing = db
+    .query<{ id: number }, [number, string]>(`SELECT id FROM files WHERE project_id = ? AND path = ?`)
+    .get(projectId, filePath);
 
   if (existing) return existing.id;
 
   // Create minimal file record
   try {
-    const result = db.run(
-      `INSERT INTO files (project_id, path, type, status) VALUES (?, ?, 'source', 'active')`,
-      [projectId, filePath]
-    );
+    const result = db.run(`INSERT INTO files (project_id, path, type, status) VALUES (?, ?, 'source', 'active')`, [
+      projectId,
+      filePath,
+    ]);
     return Number(result.lastInsertRowid);
   } catch {
     return null;
@@ -112,12 +122,7 @@ function clearFileSymbols(db: Database, fileId: number): void {
 /**
  * Store a code chunk as a symbol
  */
-function storeChunk(
-  db: Database,
-  fileId: number,
-  chunk: CodeChunk,
-  embedding: number[] | null
-): number | null {
+function storeChunk(db: Database, fileId: number, chunk: CodeChunk, embedding: number[] | null): number | null {
   try {
     const embeddingBlob = embedding ? Buffer.from(new Float32Array(embedding).buffer) : null;
 
@@ -135,7 +140,7 @@ function storeChunk(
         chunk.parameters ? JSON.stringify(chunk.parameters) : null,
         chunk.returnType || null,
         Math.min(10, Math.floor((chunk.endLine - chunk.startLine) / 10)), // Simple complexity
-        embeddingBlob
+        embeddingBlob,
       ]
     );
 
@@ -143,7 +148,7 @@ function storeChunk(
     // FTS is auto-populated by trigger in schema.sql (symbols_ai)
     return symbolId;
   } catch (error) {
-    logError('storeChunk', error);
+    logError("storeChunk", error);
     return null;
   }
 }
@@ -232,7 +237,7 @@ export async function chunkProject(
     chunksExtracted: 0,
     chunksStored: 0,
     embeddingsGenerated: 0,
-    errors: []
+    errors: [],
   };
 
   const files = findCodeFiles(projectPath, maxFiles);
@@ -275,45 +280,58 @@ export async function chunkProject(
 /**
  * Get symbol statistics for a project
  */
-export function getSymbolStats(db: Database, projectId: number): {
+export function getSymbolStats(
+  db: Database,
+  projectId: number
+): {
   totalSymbols: number;
   byType: Record<string, number>;
   withEmbeddings: number;
   topFiles: Array<{ path: string; count: number }>;
 } {
-  const total = db.query<{ count: number }, [number]>(
-    `SELECT COUNT(*) as count FROM symbols s
+  const total =
+    db
+      .query<{ count: number }, [number]>(
+        `SELECT COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ?`
-  ).get(projectId)?.count || 0;
+      )
+      .get(projectId)?.count || 0;
 
-  const byType = db.query<{ type: string; count: number }, [number]>(
-    `SELECT s.type, COUNT(*) as count FROM symbols s
+  const byType = db
+    .query<{ type: string; count: number }, [number]>(
+      `SELECT s.type, COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ?
      GROUP BY s.type`
-  ).all(projectId);
+    )
+    .all(projectId);
 
-  const withEmbeddings = db.query<{ count: number }, [number]>(
-    `SELECT COUNT(*) as count FROM symbols s
+  const withEmbeddings =
+    db
+      .query<{ count: number }, [number]>(
+        `SELECT COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ? AND s.embedding IS NOT NULL`
-  ).get(projectId)?.count || 0;
+      )
+      .get(projectId)?.count || 0;
 
-  const topFiles = db.query<{ path: string; count: number }, [number]>(
-    `SELECT f.path, COUNT(*) as count FROM symbols s
+  const topFiles = db
+    .query<{ path: string; count: number }, [number]>(
+      `SELECT f.path, COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ?
      GROUP BY f.id
      ORDER BY count DESC
      LIMIT 10`
-  ).all(projectId);
+    )
+    .all(projectId);
 
   return {
     totalSymbols: total,
-    byType: Object.fromEntries(byType.map(r => [r.type, r.count])),
+    byType: Object.fromEntries(byType.map((r) => [r.type, r.count])),
     withEmbeddings,
-    topFiles
+    topFiles,
   };
 }
 
@@ -334,22 +352,27 @@ export function searchSymbols(
   file: string;
 }> {
   // Use FTS for search
-  return db.query<{
-    id: number;
-    name: string;
-    type: string;
-    signature: string;
-    purpose: string | null;
-    file: string;
-  }, [number, string, number]>(
-    `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file
+  return db
+    .query<
+      {
+        id: number;
+        name: string;
+        type: string;
+        signature: string;
+        purpose: string | null;
+        file: string;
+      },
+      [number, string, number]
+    >(
+      `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file
      FROM fts_symbols fts
      JOIN symbols s ON fts.rowid = s.id
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ? AND fts_symbols MATCH ?
      ORDER BY rank
      LIMIT ?`
-  ).all(projectId, query, limit);
+    )
+    .all(projectId, query, limit);
 }
 
 // ============================================================================
@@ -365,19 +388,19 @@ export async function handleChunkCommand(
   const subCmd = args[0];
 
   switch (subCmd) {
-    case 'run':
+    case "run":
     case undefined: {
-      const noEmbeddings = args.includes('--no-embeddings');
-      const verbose = args.includes('-v') || args.includes('--verbose');
-      const maxFilesIdx = args.indexOf('--max');
-      const maxFiles = maxFilesIdx !== -1 ? parseInt(args[maxFilesIdx + 1]) : 500;
+      const noEmbeddings = args.includes("--no-embeddings");
+      const verbose = args.includes("-v") || args.includes("--verbose");
+      const maxFilesIdx = args.indexOf("--max");
+      const maxFiles = maxFilesIdx !== -1 ? parseInt(args[maxFilesIdx + 1], 10) : 500;
 
-      console.error('🧩 Chunking codebase...\n');
+      console.error("🧩 Chunking codebase...\n");
 
       const stats = await chunkProject(db, projectId, projectPath, {
         embeddings: !noEmbeddings,
         maxFiles,
-        verbose
+        verbose,
       });
 
       console.error(`\n✅ Chunking complete:`);
@@ -401,20 +424,20 @@ export async function handleChunkCommand(
       break;
     }
 
-    case 'status':
-    case 'stats': {
+    case "status":
+    case "stats": {
       const stats = getSymbolStats(db, projectId);
 
-      console.error('\n📊 Symbol Statistics:\n');
+      console.error("\n📊 Symbol Statistics:\n");
       console.error(`   Total symbols: ${stats.totalSymbols}`);
       console.error(`   With embeddings: ${stats.withEmbeddings}`);
-      console.error('\n   By type:');
+      console.error("\n   By type:");
       for (const [type, count] of Object.entries(stats.byType)) {
         console.error(`     ${type}: ${count}`);
       }
 
       if (stats.topFiles.length > 0) {
-        console.error('\n   Top files:');
+        console.error("\n   Top files:");
         for (const f of stats.topFiles.slice(0, 5)) {
           console.error(`     ${f.path}: ${f.count} symbols`);
         }
@@ -424,11 +447,14 @@ export async function handleChunkCommand(
       break;
     }
 
-    case 'search':
-    case 'find': {
-      const query = args.slice(1).filter(a => !a.startsWith('-')).join(' ');
+    case "search":
+    case "find": {
+      const query = args
+        .slice(1)
+        .filter((a) => !a.startsWith("-"))
+        .join(" ");
       if (!query) {
-        console.error('Usage: muninn chunk search <query>');
+        console.error("Usage: muninn chunk search <query>");
         process.exit(1);
       }
 
@@ -444,7 +470,7 @@ export async function handleChunkCommand(
           if (r.purpose) {
             console.error(`     Purpose: ${r.purpose}`);
           }
-          console.error('');
+          console.error("");
         }
       }
 
@@ -452,10 +478,10 @@ export async function handleChunkCommand(
       break;
     }
 
-    case 'file': {
+    case "file": {
       const filePath = args[1];
       if (!filePath) {
-        console.error('Usage: muninn chunk file <path>');
+        console.error("Usage: muninn chunk file <path>");
         process.exit(1);
       }
 
@@ -467,7 +493,7 @@ export async function handleChunkCommand(
 
       const result = parseFile(fullPath);
       if (!result) {
-        console.error('Unsupported file type');
+        console.error("Unsupported file type");
         process.exit(1);
       }
 
@@ -475,7 +501,7 @@ export async function handleChunkCommand(
       console.error(`   Found ${result.chunks.length} chunk(s):\n`);
 
       for (const chunk of result.chunks) {
-        const exportIcon = chunk.exported ? '📤' : '  ';
+        const exportIcon = chunk.exported ? "📤" : "  ";
         console.error(`   ${exportIcon} [${chunk.type}] ${chunk.name}`);
         console.error(`      Lines ${chunk.startLine}-${chunk.endLine}`);
         if (chunk.purpose) {
@@ -488,13 +514,13 @@ export async function handleChunkCommand(
     }
 
     default:
-      console.error('Usage: muninn chunk <command>');
-      console.error('');
-      console.error('Commands:');
-      console.error('  run [--no-embeddings] [-v]   Chunk all code files');
-      console.error('  status                       Show symbol statistics');
-      console.error('  search <query>               Search symbols');
-      console.error('  file <path>                  Preview chunks for a file');
+      console.error("Usage: muninn chunk <command>");
+      console.error("");
+      console.error("Commands:");
+      console.error("  run [--no-embeddings] [-v]   Chunk all code files");
+      console.error("  status                       Show symbol statistics");
+      console.error("  search <query>               Search symbols");
+      console.error("  file <path>                  Preview chunks for a file");
       process.exit(1);
   }
 }

@@ -4,8 +4,8 @@
  * https://docs.voyageai.com/docs/embeddings
  */
 
+import { getApiKey, isApiKeyAvailable, redactApiKeys } from "../utils/api-keys";
 import { logError } from "../utils/errors";
-import { isApiKeyAvailable, getApiKey, redactApiKeys } from "../utils/api-keys";
 
 // ============================================================================
 // Configuration
@@ -147,9 +147,7 @@ async function embedBatchInternal(texts: string[]): Promise<number[][] | null> {
       const errorData = (await response.json()) as VoyageError;
       // Redact any potential key exposure in error message
       const safeMessage = redactApiKeys(errorData.error?.message || response.statusText);
-      logError("voyage:embedBatch", new Error(
-        `Voyage API error ${response.status}: ${safeMessage}`
-      ));
+      logError("voyage:embedBatch", new Error(`Voyage API error ${response.status}: ${safeMessage}`));
       return null;
     }
 
