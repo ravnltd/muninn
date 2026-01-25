@@ -266,6 +266,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "Apply to all projects, not just this one",
             },
+            files: {
+              type: "string",
+              description: "JSON array of related file paths (optional). Auto-creates relationships.",
+            },
             cwd: {
               type: "string",
               description: "Working directory (optional)",
@@ -1104,7 +1108,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             relationship: {
               type: "string",
-              enum: ["causes", "fixes", "supersedes", "depends_on", "contradicts", "supports", "follows", "related"],
+              enum: [
+                "causes", "fixes", "supersedes", "depends_on", "contradicts", "supports", "follows", "related",
+                "made", "found", "resolved", "learned", "often_changes_with", "tests"
+              ],
               description: "Relationship type",
             },
             target: {
@@ -1140,7 +1147,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             type: {
               type: "string",
-              enum: ["causes", "fixes", "supersedes", "depends_on", "contradicts", "supports", "follows", "related"],
+              enum: [
+                "causes", "fixes", "supersedes", "depends_on", "contradicts", "supports", "follows", "related",
+                "made", "found", "resolved", "learned", "often_changes_with", "tests"
+              ],
               description: "Filter by relationship type (optional)",
             },
             cwd: {
@@ -1245,9 +1255,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const category = typedArgs.category ? `--category ${typedArgs.category}` : "";
         const context = typedArgs.context ? `--context "${typedArgs.context}"` : "";
         const global = typedArgs.global ? "--global" : "";
+        const files = typedArgs.files ? `--files '${typedArgs.files}'` : "";
 
         result = runContext(
-          `learn add --title "${title}" --content "${content}" ${category} ${context} ${global}`.trim(),
+          `learn add --title "${title}" --content "${content}" ${category} ${context} ${global} ${files}`.trim(),
           cwd
         );
         break;

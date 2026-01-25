@@ -16,6 +16,14 @@ type EntityType = (typeof VALID_ENTITY_TYPES)[number];
 const VALID_RELATIONSHIP_TYPES = [
   "causes", "fixes", "supersedes", "depends_on",
   "contradicts", "supports", "follows", "related",
+  // Session → entity relationships
+  "made",              // session → decision
+  "found",             // session → issue
+  "resolved",          // session → issue
+  "learned",           // session → learning
+  // File ↔ file relationships
+  "often_changes_with", // file ↔ file (co-change pattern)
+  "tests",             // file ↔ file (test → source)
 ] as const;
 type RelationshipType = (typeof VALID_RELATIONSHIP_TYPES)[number];
 
@@ -253,6 +261,108 @@ export function removeRelationship(db: Database, id: number): void {
 }
 
 /**
+ * Get or create a file record by path, returning its ID
+ */
+export function getOrCreateFileId(db: Database, projectId: number, filePath: string): number | null {
+  // Try to find existing file
+  const existing = db.query<{ id: number }, [number, string]>(
+    "SELECT id FROM files WHERE project_id = ? AND path = ?"
+  ).get(projectId, filePath);
+
+  if (existing) {
+    return existing.id;
+  }
+
+  // Create minimal file record
+  try {
+    const result = db.run(
+      `INSERT OR IGNORE INTO files (project_id, path, purpose, fragility)
+       VALUES (?, ?, 'Auto-created from entity relationship', 1)`,
+      [projectId, filePath]
+    );
+    if (result.lastInsertRowid) {
+      return Number(result.lastInsertRowid);
+    }
+    // If insert was ignored (race condition), fetch existing
+    const created = db.query<{ id: number }, [number, string]>(
+      "SELECT id FROM files WHERE project_id = ? AND path = ?"
+    ).get(projectId, filePath);
+    return created?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Auto-create relationships between an issue and its affected files
+ */
+export function autoRelateIssueFiles(
+  db: Database,
+  projectId: number,
+  issueId: number,
+  files: string[]
+): void {
+  for (const filePath of files) {
+    const fileId = getOrCreateFileId(db, projectId, filePath);
+    if (fileId) {
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+           VALUES ('issue', ?, 'file', ?, 'related', 7, 'Auto-created: issue affects this file')`,
+          [issueId, fileId]
+        );
+      } catch { /* ignore duplicates */ }
+    }
+  }
+}
+
+/**
+ * Auto-create relationships between a learning and related files
+ */
+export function autoRelateLearningFiles(
+  db: Database,
+  projectId: number,
+  learningId: number,
+  files: string[]
+): void {
+  for (const filePath of files) {
+    const fileId = getOrCreateFileId(db, projectId, filePath);
+    if (fileId) {
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+           VALUES ('learning', ?, 'file', ?, 'related', 6, 'Auto-created: learning applies to this file')`,
+          [learningId, fileId]
+        );
+      } catch { /* ignore duplicates */ }
+    }
+  }
+}
+
+/**
+ * Auto-create relationships between a session and files it touched
+ */
+export function autoRelateSessionFiles(
+  db: Database,
+  projectId: number,
+  sessionId: number,
+  files: string[]
+): void {
+  for (const filePath of files) {
+    const fileId = getOrCreateFileId(db, projectId, filePath);
+    if (fileId) {
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+           VALUES ('session', ?, 'file', ?, 'related', 5, 'Auto-created: file touched during session')`,
+          [sessionId, fileId]
+        );
+      } catch { /* ignore duplicates */ }
+    }
+  }
+}
+
+/**
  * Auto-create a "fixes" relationship when an issue is resolved
  * Called from issue resolve path
  */
@@ -283,10 +393,400 @@ export function autoRelateIssueFix(
 }
 
 // ============================================================================
+// Session → Entity Relationship Helpers
+// ============================================================================
+
+/**
+ * Auto-create "made" relationships between a session and decisions made during it
+ * Strength: 7 (session made this decision)
+ */
+export function autoRelateSessionDecisions(
+  db: Database,
+  sessionId: number,
+  decisionIds: number[]
+): void {
+  for (const decisionId of decisionIds) {
+    try {
+      db.run(
+        `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+         VALUES ('session', ?, 'decision', ?, 'made', 7, 'Auto-created: decision made during session')`,
+        [sessionId, decisionId]
+      );
+    } catch { /* ignore duplicates */ }
+  }
+}
+
+/**
+ * Auto-create "found" or "resolved" relationships between a session and issues
+ * Strength: 8 for resolved, 6 for found
+ */
+export function autoRelateSessionIssues(
+  db: Database,
+  sessionId: number,
+  issueIds: number[],
+  relation: 'found' | 'resolved'
+): void {
+  const strength = relation === 'resolved' ? 8 : 6;
+  const note = relation === 'resolved'
+    ? 'Auto-created: issue resolved during session'
+    : 'Auto-created: issue discovered during session';
+
+  for (const issueId of issueIds) {
+    try {
+      db.run(
+        `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+         VALUES ('session', ?, 'issue', ?, ?, ?, ?)`,
+        [sessionId, issueId, relation, strength, note]
+      );
+    } catch { /* ignore duplicates */ }
+  }
+}
+
+/**
+ * Auto-create "learned" relationships between a session and learnings extracted from it
+ * Queries session_learnings table to find learnings linked to this session
+ * Strength: 7
+ */
+export function autoRelateSessionLearnings(
+  db: Database,
+  sessionId: number
+): void {
+  try {
+    const learnings = db.query<{ learning_id: number }, [number]>(`
+      SELECT learning_id FROM session_learnings
+      WHERE session_id = ? AND learning_id IS NOT NULL
+    `).all(sessionId);
+
+    for (const { learning_id } of learnings) {
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+           VALUES ('session', ?, 'learning', ?, 'learned', 7, 'Auto-created: learning extracted from session')`,
+          [sessionId, learning_id]
+        );
+      } catch { /* ignore duplicates */ }
+    }
+  } catch {
+    // session_learnings table might not exist
+  }
+}
+
+// ============================================================================
+// File ↔ File Relationship Helpers
+// ============================================================================
+
+/**
+ * Auto-create "often_changes_with" relationships based on file correlations
+ * Strength: min(10, cochange_count) - more co-changes = stronger relationship
+ */
+export function autoRelateFileCorrelations(
+  db: Database,
+  projectId: number,
+  minCount: number = 3
+): number {
+  let count = 0;
+  try {
+    const correlations = db.query<{
+      file_a: string;
+      file_b: string;
+      cochange_count: number;
+    }, [number, number]>(`
+      SELECT file_a, file_b, cochange_count FROM file_correlations
+      WHERE project_id = ? AND cochange_count >= ?
+    `).all(projectId, minCount);
+
+    for (const { file_a, file_b, cochange_count } of correlations) {
+      const fileAId = getOrCreateFileId(db, projectId, file_a);
+      const fileBId = getOrCreateFileId(db, projectId, file_b);
+
+      if (fileAId && fileBId) {
+        const strength = Math.min(10, cochange_count);
+        try {
+          db.run(
+            `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+             VALUES ('file', ?, 'file', ?, 'often_changes_with', ?, ?)`,
+            [fileAId, fileBId, strength, `Co-changed ${cochange_count} times`]
+          );
+          count++;
+        } catch { /* ignore duplicates */ }
+      }
+    }
+  } catch {
+    // file_correlations table might not exist
+  }
+  return count;
+}
+
+/**
+ * Auto-create "tests" relationships between test files and their source files
+ * Detects patterns: *.test.ts, *.spec.ts, __tests__/*.ts
+ * Strength: 9 (strong relationship)
+ */
+export function autoRelateTestFiles(
+  db: Database,
+  projectId: number
+): number {
+  let count = 0;
+  try {
+    // Get all test files
+    const testFiles = db.query<{ id: number; path: string }, [number]>(`
+      SELECT id, path FROM files
+      WHERE project_id = ?
+      AND (path LIKE '%.test.%' OR path LIKE '%.spec.%' OR path LIKE '%__tests__%')
+    `).all(projectId);
+
+    for (const testFile of testFiles) {
+      const sourcePath = inferSourceFromTestPath(testFile.path);
+      if (!sourcePath) continue;
+
+      // Find the source file
+      const sourceFile = db.query<{ id: number }, [number, string]>(
+        "SELECT id FROM files WHERE project_id = ? AND path = ?"
+      ).get(projectId, sourcePath);
+
+      if (sourceFile) {
+        try {
+          db.run(
+            `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+             VALUES ('file', ?, 'file', ?, 'tests', 9, 'Auto-detected: test file for source')`,
+            [testFile.id, sourceFile.id]
+          );
+          count++;
+        } catch { /* ignore duplicates */ }
+      }
+    }
+  } catch {
+    // files table might not have expected columns
+  }
+  return count;
+}
+
+/**
+ * Infer the source file path from a test file path
+ * e.g., "src/utils/foo.test.ts" → "src/utils/foo.ts"
+ *       "src/__tests__/bar.ts" → "src/bar.ts"
+ */
+function inferSourceFromTestPath(testPath: string): string | null {
+  // Handle *.test.* and *.spec.* patterns
+  const testMatch = testPath.match(/^(.+)\.(test|spec)\.([^.]+)$/);
+  if (testMatch) {
+    return `${testMatch[1]}.${testMatch[3]}`;
+  }
+
+  // Handle __tests__ directory pattern
+  const testsMatch = testPath.match(/^(.+)\/__tests__\/(.+)$/);
+  if (testsMatch) {
+    return `${testsMatch[1]}/${testsMatch[2]}`;
+  }
+
+  return null;
+}
+
+// ============================================================================
+// Backfill Existing Entities
+// ============================================================================
+
+interface IssueRow {
+  id: number;
+  affected_files: string | null;
+}
+
+interface SessionRow {
+  id: number;
+  files_touched: string | null;
+}
+
+interface DecisionRow {
+  id: number;
+  affects: string | null;
+}
+
+/**
+ * Auto-create relationships between a decision and its affected files
+ */
+export function autoRelateDecisionFiles(
+  db: Database,
+  projectId: number,
+  decisionId: number,
+  files: string[]
+): void {
+  for (const filePath of files) {
+    const fileId = getOrCreateFileId(db, projectId, filePath);
+    if (fileId) {
+      try {
+        db.run(
+          `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
+           VALUES ('decision', ?, 'file', ?, 'related', 8, 'Auto-created: decision affects this file')`,
+          [decisionId, fileId]
+        );
+      } catch { /* ignore duplicates */ }
+    }
+  }
+}
+
+interface ExtendedSessionRow extends SessionRow {
+  decisions_made: string | null;
+  issues_found: string | null;
+  issues_resolved: string | null;
+}
+
+/**
+ * Backfill relationships for existing issues, sessions, and decisions
+ */
+export function backfillEntityRelationships(db: Database, projectId: number): {
+  decisions: number;
+  issues: number;
+  sessions: number;
+  sessionDecisions: number;
+  sessionIssues: number;
+  sessionLearnings: number;
+  fileCorrelations: number;
+  testFiles: number;
+} {
+  let decisionCount = 0;
+  let issueCount = 0;
+  let sessionCount = 0;
+  let sessionDecisionCount = 0;
+  let sessionIssueCount = 0;
+  let sessionLearningCount = 0;
+
+  // Backfill decisions with affects
+  const decisions = db.query<DecisionRow, [number]>(`
+    SELECT id, affects FROM decisions
+    WHERE project_id = ? AND affects IS NOT NULL
+  `).all(projectId);
+
+  for (const decision of decisions) {
+    if (!decision.affects) continue;
+    try {
+      const files = JSON.parse(decision.affects) as string[];
+      if (Array.isArray(files) && files.length > 0) {
+        autoRelateDecisionFiles(db, projectId, decision.id, files);
+        decisionCount++;
+      }
+    } catch { /* invalid JSON - might be plain text like "all services" */ }
+  }
+
+  // Backfill issues with affected_files
+  const issues = db.query<IssueRow, [number]>(`
+    SELECT id, affected_files FROM issues
+    WHERE project_id = ? AND affected_files IS NOT NULL
+  `).all(projectId);
+
+  for (const issue of issues) {
+    if (!issue.affected_files) continue;
+    try {
+      const files = JSON.parse(issue.affected_files) as string[];
+      if (Array.isArray(files) && files.length > 0) {
+        autoRelateIssueFiles(db, projectId, issue.id, files);
+        issueCount++;
+      }
+    } catch { /* invalid JSON */ }
+  }
+
+  // Backfill sessions with files_touched AND new relationship types
+  const sessions = db.query<ExtendedSessionRow, [number]>(`
+    SELECT id, files_touched, decisions_made, issues_found, issues_resolved FROM sessions
+    WHERE project_id = ?
+  `).all(projectId);
+
+  for (const session of sessions) {
+    // Files touched (existing)
+    if (session.files_touched) {
+      try {
+        const files = JSON.parse(session.files_touched) as string[];
+        if (Array.isArray(files) && files.length > 0) {
+          autoRelateSessionFiles(db, projectId, session.id, files);
+          sessionCount++;
+        }
+      } catch { /* invalid JSON */ }
+    }
+
+    // Decisions made (new)
+    if (session.decisions_made) {
+      try {
+        const decisionIds = JSON.parse(session.decisions_made) as number[];
+        if (Array.isArray(decisionIds) && decisionIds.length > 0) {
+          autoRelateSessionDecisions(db, session.id, decisionIds);
+          sessionDecisionCount += decisionIds.length;
+        }
+      } catch { /* invalid JSON */ }
+    }
+
+    // Issues found (new)
+    if (session.issues_found) {
+      try {
+        const issueIds = JSON.parse(session.issues_found) as number[];
+        if (Array.isArray(issueIds) && issueIds.length > 0) {
+          autoRelateSessionIssues(db, session.id, issueIds, 'found');
+          sessionIssueCount += issueIds.length;
+        }
+      } catch { /* invalid JSON */ }
+    }
+
+    // Issues resolved (new)
+    if (session.issues_resolved) {
+      try {
+        const issueIds = JSON.parse(session.issues_resolved) as number[];
+        if (Array.isArray(issueIds) && issueIds.length > 0) {
+          autoRelateSessionIssues(db, session.id, issueIds, 'resolved');
+          sessionIssueCount += issueIds.length;
+        }
+      } catch { /* invalid JSON */ }
+    }
+
+    // Learnings (new) - via session_learnings table
+    autoRelateSessionLearnings(db, session.id);
+    // Count is hard to track here, we'll estimate
+  }
+
+  // Count session learnings separately
+  try {
+    const learningCount = db.query<{ count: number }, [number]>(`
+      SELECT COUNT(*) as count FROM session_learnings sl
+      JOIN sessions s ON sl.session_id = s.id
+      WHERE s.project_id = ? AND sl.learning_id IS NOT NULL
+    `).get(projectId);
+    sessionLearningCount = learningCount?.count || 0;
+  } catch {
+    // Table might not exist
+  }
+
+  // File correlations (new)
+  const fileCorrelationCount = autoRelateFileCorrelations(db, projectId, 3);
+
+  // Test file relationships (new)
+  const testFileCount = autoRelateTestFiles(db, projectId);
+
+  console.error(`\n✅ Backfilled relationships:`);
+  console.error(`   Decisions → Files: ${decisionCount} (${decisions.length} checked)`);
+  console.error(`   Issues → Files: ${issueCount} (${issues.length} checked)`);
+  console.error(`   Sessions → Files: ${sessionCount} (${sessions.length} checked)`);
+  console.error(`   Sessions → Decisions: ${sessionDecisionCount}`);
+  console.error(`   Sessions → Issues: ${sessionIssueCount}`);
+  console.error(`   Sessions → Learnings: ${sessionLearningCount}`);
+  console.error(`   File Correlations: ${fileCorrelationCount}`);
+  console.error(`   Test → Source: ${testFileCount}`);
+  console.error(`\nNote: Duplicate relationships are automatically ignored.`);
+  console.error("");
+
+  return {
+    decisions: decisionCount,
+    issues: issueCount,
+    sessions: sessionCount,
+    sessionDecisions: sessionDecisionCount,
+    sessionIssues: sessionIssueCount,
+    sessionLearnings: sessionLearningCount,
+    fileCorrelations: fileCorrelationCount,
+    testFiles: testFileCount,
+  };
+}
+
+// ============================================================================
 // CLI Router
 // ============================================================================
 
-export function handleRelationshipCommand(db: Database, args: string[]): void {
+export function handleRelationshipCommand(db: Database, projectId: number, args: string[]): void {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -314,6 +814,11 @@ export function handleRelationshipCommand(db: Database, args: string[]): void {
 
     case "list":
     case "query": {
+      // Check for backfill subcommand first
+      if (args[1] === "backfill") {
+        backfillEntityRelationships(db, projectId);
+        break;
+      }
       // muninn relations [entity] [--type <type>]
       const entity = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
       const typeIdx = args.indexOf("--type");
@@ -333,9 +838,15 @@ export function handleRelationshipCommand(db: Database, args: string[]): void {
       break;
     }
 
+    case "backfill": {
+      backfillEntityRelationships(db, projectId);
+      break;
+    }
+
     default:
       console.error(`Usage: muninn relate <source> <relationship> <target>
        muninn relations [entity] [--type <type>]
+       muninn relations backfill
        context unrelate <id>
 
 Relationship types: ${VALID_RELATIONSHIP_TYPES.join(", ")}
@@ -347,6 +858,7 @@ Examples:
   muninn relate file:10 depends_on file:2
   muninn relations decision:5
   muninn relations --type fixes
+  muninn relations backfill
   context unrelate 7`);
   }
 }

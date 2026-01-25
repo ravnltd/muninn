@@ -13,6 +13,14 @@ import { getTopProfileEntries } from "./profile";
 import { getDecisionsDue, incrementSessionsSince } from "./outcomes";
 import { generateInsights, listInsights } from "./insights";
 import { assignSessionNumber, detectAnomalies } from "./temporal";
+import {
+  autoRelateSessionFiles,
+  autoRelateSessionDecisions,
+  autoRelateSessionIssues,
+  autoRelateSessionLearnings,
+  autoRelateFileCorrelations,
+  autoRelateTestFiles,
+} from "./relationships";
 
 // ============================================================================
 // Types
@@ -359,6 +367,22 @@ export function generateResume(db: Database, projectId: number): string {
     }
   }
 
+  // Session accomplishments from relationship graph (more reliable than JSON fields)
+  const sessionRelationships = getSessionRelationships(db, Number(lastSession.id));
+  if (sessionRelationships.hasData) {
+    md += `## Session Accomplishments\n`;
+    if (sessionRelationships.decisionsMade.length > 0) {
+      md += `**Decisions:** ${sessionRelationships.decisionsMade.map(d => `D${d.id} (${d.title})`).join(', ')}\n`;
+    }
+    if (sessionRelationships.issuesResolved.length > 0) {
+      md += `**Resolved:** ${sessionRelationships.issuesResolved.map(i => `#${i.id}`).join(', ')}\n`;
+    }
+    if (sessionRelationships.learningsExtracted.length > 0) {
+      md += `**Learned:** ${sessionRelationships.learningsExtracted.map(l => l.title.slice(0, 40)).join(', ')}\n`;
+    }
+    md += "\n";
+  }
+
   // Hot entities (actively in-flight context)
   const hotEntities = getHotEntities(db, projectId);
   const hasHot = hotEntities.files.length > 0 || hotEntities.decisions.length > 0 || hotEntities.learnings.length > 0;
@@ -522,6 +546,58 @@ export function getRecentObservations(db: Database, projectId: number, limit: nu
   }
 }
 
+/**
+ * Get session accomplishments from relationship graph
+ * Uses "made", "resolved", "learned" relationship types
+ */
+export function getSessionRelationships(db: Database, sessionId: number): {
+  hasData: boolean;
+  decisionsMade: Array<{ id: number; title: string }>;
+  issuesResolved: Array<{ id: number; title: string }>;
+  learningsExtracted: Array<{ id: number; title: string }>;
+} {
+  const result = {
+    hasData: false,
+    decisionsMade: [] as Array<{ id: number; title: string }>,
+    issuesResolved: [] as Array<{ id: number; title: string }>,
+    learningsExtracted: [] as Array<{ id: number; title: string }>,
+  };
+
+  try {
+    // Decisions made (via "made" relationship)
+    result.decisionsMade = db.query<{ id: number; title: string }, [number]>(`
+      SELECT d.id, d.title FROM relationships r
+      JOIN decisions d ON r.target_id = d.id AND r.target_type = 'decision'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'made'
+    `).all(sessionId);
+
+    // Issues resolved (via "resolved" relationship)
+    result.issuesResolved = db.query<{ id: number; title: string }, [number]>(`
+      SELECT i.id, i.title FROM relationships r
+      JOIN issues i ON r.target_id = i.id AND r.target_type = 'issue'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'resolved'
+    `).all(sessionId);
+
+    // Learnings extracted (via "learned" relationship)
+    result.learningsExtracted = db.query<{ id: number; title: string }, [number]>(`
+      SELECT l.id, l.title FROM relationships r
+      JOIN learnings l ON r.target_id = l.id AND r.target_type = 'learning'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'learned'
+    `).all(sessionId);
+
+    result.hasData = result.decisionsMade.length > 0 ||
+                     result.issuesResolved.length > 0 ||
+                     result.learningsExtracted.length > 0;
+  } catch {
+    // Relationships table might not exist
+  }
+
+  return result;
+}
+
 // ============================================================================
 // Session Tracking Helpers
 // ============================================================================
@@ -603,6 +679,27 @@ export function trackFileTouched(db: Database, projectId: number, filePath: stri
     db.run(`
       UPDATE sessions SET files_touched = ? WHERE id = ?
     `, [JSON.stringify(filesTouched), sessionId]);
+  }
+}
+
+/**
+ * Track a decision made in the current active session
+ */
+export function trackDecisionMade(db: Database, projectId: number, decisionId: number): void {
+  const sessionId = getActiveSessionId(db, projectId);
+  if (!sessionId) return;
+
+  const session = db.query<{ decisions_made: string | null }, [number]>(`
+    SELECT decisions_made FROM sessions WHERE id = ?
+  `).get(sessionId);
+
+  const decisionsMade = safeJsonParse<number[]>(session?.decisions_made || "[]", []);
+
+  if (!decisionsMade.includes(decisionId)) {
+    decisionsMade.push(decisionId);
+    db.run(`
+      UPDATE sessions SET decisions_made = ? WHERE id = ?
+    `, [JSON.stringify(decisionsMade), sessionId]);
   }
 }
 
@@ -1046,6 +1143,11 @@ export async function sessionEndEnhanced(
   // Update correlations
   updateFileCorrelations(db, projectId, filesTouched);
 
+  // Auto-create relationships between session and files touched
+  if (filesTouched.length > 0) {
+    autoRelateSessionFiles(db, projectId, sessionId, filesTouched);
+  }
+
   // Standard end update
   db.run(`
     UPDATE sessions SET
@@ -1087,6 +1189,46 @@ export async function sessionEndEnhanced(
       success: values.success ?? 2
     });
   }
+
+  // ========================================================================
+  // Auto-create relationships for session entities
+  // ========================================================================
+
+  // Get session data for relationships
+  const sessionData = db.query<{
+    decisions_made: string | null;
+    issues_found: string | null;
+    issues_resolved: string | null;
+  }, [number]>(
+    "SELECT decisions_made, issues_found, issues_resolved FROM sessions WHERE id = ?"
+  ).get(sessionId);
+
+  // Session → Decisions (made)
+  const decisionsMade = safeJsonParse<number[]>(sessionData?.decisions_made || "[]", []);
+  if (decisionsMade.length > 0) {
+    autoRelateSessionDecisions(db, sessionId, decisionsMade);
+  }
+
+  // Session → Issues (found)
+  const issuesFound = safeJsonParse<number[]>(sessionData?.issues_found || "[]", []);
+  if (issuesFound.length > 0) {
+    autoRelateSessionIssues(db, sessionId, issuesFound, 'found');
+  }
+
+  // Session → Issues (resolved)
+  const issuesResolved = safeJsonParse<number[]>(sessionData?.issues_resolved || "[]", []);
+  if (issuesResolved.length > 0) {
+    autoRelateSessionIssues(db, sessionId, issuesResolved, 'resolved');
+  }
+
+  // Session → Learnings (from session_learnings table)
+  autoRelateSessionLearnings(db, sessionId);
+
+  // File ↔ File correlations (based on co-change patterns)
+  autoRelateFileCorrelations(db, projectId, 3);
+
+  // File ↔ File test relationships
+  autoRelateTestFiles(db, projectId);
 
   console.error(`\n✅ Session #${sessionId} ended`);
   if (outcome) {

@@ -20,6 +20,9 @@ import {
   issueToText,
   learningToText,
 } from "../embeddings";
+import { autoRelateIssueFiles, autoRelateLearningFiles } from "./relationships";
+import { trackDecisionMade } from "./session";
+import { safeJsonParse } from "../utils/errors";
 
 // ============================================================================
 // File Commands
@@ -155,6 +158,9 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
 
   const insertedId = Number(result.lastInsertRowid);
 
+  // Track decision in current session (for session → decision relationship)
+  trackDecisionMade(db, projectId, insertedId);
+
   // Generate embedding if Voyage API is available
   if (isEmbeddingAvailable()) {
     try {
@@ -239,6 +245,14 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
       }
     } catch (error) {
       logError("issueAdd:embedding", error);
+    }
+  }
+
+  // Auto-create relationships with affected files
+  if (values.files) {
+    const fileList = safeJsonParse<string[]>(values.files, []);
+    if (fileList.length > 0) {
+      autoRelateIssueFiles(db, projectId, insertedId, fileList);
     }
   }
 
@@ -342,6 +356,14 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
         }
       } catch (error) {
         logError("learnAdd:embedding", error);
+      }
+    }
+
+    // Auto-create relationships with related files
+    if (values.files) {
+      const fileList = safeJsonParse<string[]>(values.files, []);
+      if (fileList.length > 0) {
+        autoRelateLearningFiles(db, projectId, insertedId, fileList);
       }
     }
 

@@ -743,6 +743,17 @@ export interface PredictionBundle {
   applicableLearnings: Array<{ id: number; title: string; content: string }>;
   workflowPattern: { task_type: string; approach: string } | null;
   profileEntries: Array<{ key: string; value: string; confidence: number; category: string }>;
+  // Session context from relationship graph
+  lastSessionContext: {
+    sessionId: number;
+    goal: string | null;
+    decisionsMade: Array<{ id: number; title: string }>;
+    issuesFound: Array<{ id: number; title: string }>;
+    issuesResolved: Array<{ id: number; title: string }>;
+    learningsExtracted: Array<{ id: number; title: string }>;
+  } | null;
+  // Test files for input files (test → source relationships)
+  testFiles: Array<{ testPath: string; sourcePath: string }>;
 }
 
 // ============================================================================

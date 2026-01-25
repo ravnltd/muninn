@@ -28,6 +28,8 @@ export function predictContext(
     applicableLearnings: [],
     workflowPattern: null,
     profileEntries: [],
+    lastSessionContext: null,
+    testFiles: [],
   };
 
   // 1. Co-changing files from correlations
@@ -63,6 +65,14 @@ export function predictContext(
 
   // 6. Get top profile entries
   bundle.profileEntries = getTopProfileEntries(db, projectId, 5);
+
+  // 7. Get last session context from relationship graph
+  bundle.lastSessionContext = getLastSessionContext(db, projectId);
+
+  // 8. Get test files for input files
+  if (options.files && options.files.length > 0) {
+    bundle.testFiles = getTestFilesForSources(db, projectId, options.files);
+  }
 
   return bundle;
 }
@@ -275,6 +285,119 @@ function getApplicableWorkflow(
 }
 
 // ============================================================================
+// Session Context from Relationship Graph
+// ============================================================================
+
+/**
+ * Get context from the last session using relationship graph
+ * Uses "made", "found", "resolved", "learned" relationship types
+ */
+function getLastSessionContext(
+  db: Database,
+  projectId: number
+): PredictionBundle['lastSessionContext'] {
+  try {
+    // Get last completed session
+    const lastSession = db.query<{ id: number; goal: string | null }, [number]>(`
+      SELECT id, goal FROM sessions
+      WHERE project_id = ? AND ended_at IS NOT NULL
+      ORDER BY ended_at DESC
+      LIMIT 1
+    `).get(projectId);
+
+    if (!lastSession) return null;
+
+    const sessionId = lastSession.id;
+
+    // Get decisions made during session (via "made" relationship)
+    const decisionsMade = db.query<{ id: number; title: string }, [number]>(`
+      SELECT d.id, d.title FROM relationships r
+      JOIN decisions d ON r.target_id = d.id AND r.target_type = 'decision'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'made'
+      ORDER BY r.strength DESC
+    `).all(sessionId);
+
+    // Get issues found during session (via "found" relationship)
+    const issuesFound = db.query<{ id: number; title: string }, [number]>(`
+      SELECT i.id, i.title FROM relationships r
+      JOIN issues i ON r.target_id = i.id AND r.target_type = 'issue'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'found'
+      ORDER BY r.strength DESC
+    `).all(sessionId);
+
+    // Get issues resolved during session (via "resolved" relationship)
+    const issuesResolved = db.query<{ id: number; title: string }, [number]>(`
+      SELECT i.id, i.title FROM relationships r
+      JOIN issues i ON r.target_id = i.id AND r.target_type = 'issue'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'resolved'
+      ORDER BY r.strength DESC
+    `).all(sessionId);
+
+    // Get learnings extracted from session (via "learned" relationship)
+    const learningsExtracted = db.query<{ id: number; title: string }, [number]>(`
+      SELECT l.id, l.title FROM relationships r
+      JOIN learnings l ON r.target_id = l.id AND r.target_type = 'learning'
+      WHERE r.source_type = 'session' AND r.source_id = ?
+        AND r.relationship = 'learned'
+      ORDER BY r.strength DESC
+    `).all(sessionId);
+
+    return {
+      sessionId,
+      goal: lastSession.goal,
+      decisionsMade,
+      issuesFound,
+      issuesResolved,
+      learningsExtracted,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get test files that cover the given source files
+ * Uses "tests" relationship type
+ */
+function getTestFilesForSources(
+  db: Database,
+  projectId: number,
+  files: string[]
+): Array<{ testPath: string; sourcePath: string }> {
+  const results: Array<{ testPath: string; sourcePath: string }> = [];
+
+  for (const sourcePath of files) {
+    try {
+      // Find file ID for source
+      const sourceFile = db.query<{ id: number }, [number, string]>(
+        "SELECT id FROM files WHERE project_id = ? AND path = ?"
+      ).get(projectId, sourcePath);
+
+      if (!sourceFile) continue;
+
+      // Find test files via "tests" relationship (test → source)
+      const testFiles = db.query<{ path: string }, [number]>(`
+        SELECT f.path FROM relationships r
+        JOIN files f ON r.source_id = f.id AND r.source_type = 'file'
+        WHERE r.target_type = 'file' AND r.target_id = ?
+          AND r.relationship = 'tests'
+      `).all(sourceFile.id);
+
+      for (const { path } of testFiles) {
+        results.push({ testPath: path, sourcePath });
+      }
+    } catch {
+      // Skip on error
+    }
+  }
+
+  return results;
+}
+
+// ============================================================================
 // CLI Handler
 // ============================================================================
 
@@ -356,6 +479,37 @@ export function handlePredictCommand(db: Database, projectId: number, args: stri
     console.error("  👤 Profile Hints:");
     for (const p of bundle.profileEntries) {
       console.error(`     [${p.category}] ${p.key}: ${p.value.slice(0, 50)}`);
+    }
+    console.error("");
+  }
+
+  // New: Last session context from relationship graph
+  if (bundle.lastSessionContext) {
+    const ctx = bundle.lastSessionContext;
+    console.error(`  📍 Last Session (#${ctx.sessionId}):`);
+    if (ctx.goal) {
+      console.error(`     Goal: ${ctx.goal.slice(0, 60)}`);
+    }
+    if (ctx.decisionsMade.length > 0) {
+      console.error(`     Decisions made: ${ctx.decisionsMade.map(d => `D${d.id}`).join(', ')}`);
+    }
+    if (ctx.issuesFound.length > 0) {
+      console.error(`     Issues found: ${ctx.issuesFound.map(i => `#${i.id}`).join(', ')}`);
+    }
+    if (ctx.issuesResolved.length > 0) {
+      console.error(`     Issues resolved: ${ctx.issuesResolved.map(i => `#${i.id}`).join(', ')}`);
+    }
+    if (ctx.learningsExtracted.length > 0) {
+      console.error(`     Learnings: ${ctx.learningsExtracted.map(l => l.title.slice(0, 30)).join(', ')}`);
+    }
+    console.error("");
+  }
+
+  // New: Test files for input files
+  if (bundle.testFiles.length > 0) {
+    console.error("  🧪 Test Coverage:");
+    for (const t of bundle.testFiles) {
+      console.error(`     ${t.testPath} → ${t.sourcePath}`);
     }
     console.error("");
   }
