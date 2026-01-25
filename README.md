@@ -6,7 +6,7 @@ A semantic memory system for AI-assisted development. Persistent, queryable proj
 
 Every session automatically:
 1. Loads context from the last session (via `SessionStart` hook)
-2. Makes 20+ memory tools available as native MCP tools
+2. Makes 9 MCP tools available (8 core + 1 passthrough for full CLI access)
 3. Tracks file edits and session state (via `PostToolUse` and `Stop` hooks)
 
 Projects are auto-initialized on first session — no manual setup required.
@@ -14,13 +14,19 @@ Projects are auto-initialized on first session — no manual setup required.
 ## Setup
 
 ```bash
-# Install CLI (requires Bun)
-cd /path/to/muninn
+# Install Bun (if needed)
+curl -fsSL https://bun.sh/install | bash
+
+# Clone and build
+git clone https://github.com/your-repo/muninn.git
+cd muninn
 bun run build
+
+# Install globally
 cp muninn ~/.local/bin/
 
 # Register MCP server (user scope = all projects)
-claude mcp add --scope user --transport stdio muninn -- bun run /path/to/muninn/src/mcp-server.ts
+claude mcp add --scope user muninn -- bunx muninn-mcp
 
 # Verify
 claude mcp list
@@ -58,119 +64,55 @@ Each project gets a `.claude/` directory containing a SQLite database with:
 ```
 src/
 ├── index.ts                    # CLI entry point and command router
-├── mcp-server.ts               # MCP server (exposes tools via MCP)
+├── mcp-server.ts               # MCP server (9 tools: 8 core + 1 passthrough)
 ├── types.ts                    # All interfaces and type definitions
-├── analysis/
-│   └── chunker.ts              # Semantic code chunking for function-level search
-├── commands/
-│   ├── analysis.ts             # Project analysis, LLM API integration
-│   ├── blast.ts                # Blast radius computation
-│   ├── bookmark.ts             # Working memory bookmarks
-│   ├── chunk.ts                # Code chunking CLI
-│   ├── deps.ts                 # File dependency graph (imports/dependents)
-│   ├── embed.ts                # Vector embedding management
-│   ├── focus.ts                # Work area focus
-│   ├── git.ts                  # Git integration hooks
-│   ├── hooks.ts                # Hook-optimized commands
-│   ├── infra/                  # Infrastructure management (servers, services, routes)
-│   ├── intelligence.ts         # Drift detection, smart status, conflict checks
-│   ├── memory.ts               # File, decision, issue, learn CRUD
-│   ├── query.ts                # Semantic search (FTS5 + vector)
-│   ├── session.ts              # Session tracking with auto-learning
-│   └── ship.ts                 # Pre-deploy checklist
-├── database/
-│   ├── connection.ts           # Singleton DB connection manager
-│   ├── migrations.ts           # Schema migrations
-│   ├── schema.ts               # Drizzle ORM schema
-│   └── queries/
-│       ├── infra.ts            # Infrastructure queries
-│       ├── search.ts           # FTS5 search (parameterized)
-│       └── vector.ts           # Vector similarity search
-├── embeddings/
-│   ├── index.ts                # Embedding provider orchestration
-│   ├── local.ts                # Local Transformers.js embeddings
-│   └── voyage.ts               # Voyage AI embeddings (cloud)
-└── utils/
-    ├── api-keys.ts             # API key management
-    ├── errors.ts               # Result types, error logging
-    ├── format.ts               # Output formatting (CLI, JSON, Mermaid)
-    └── validation.ts           # Zod schemas for CLI inputs
+├── commands/                   # All CLI commands
+├── database/                   # SQLite connection, migrations, queries
+├── embeddings/                 # Vector embedding providers
+└── utils/                      # Validation, errors, formatting
 ```
 
 ## MCP Tools
 
 Once registered, these tools are available:
 
-### Status & Intelligence
+### Core Tools (Full Schemas)
 
 | Tool | Purpose |
 |------|---------|
-| `muninn_status` | Basic project state |
-| `muninn_smart_status` | Actionable status with recommendations |
-| `muninn_fragile` | List files with high fragility scores |
-| `muninn_resume` | Last session goal, outcome, next steps |
-| `muninn_drift` | Detect stale knowledge and git changes |
+| `muninn_query` | Search project memory (FTS/vector/smart) |
 | `muninn_check` | Pre-edit warnings (fragility, issues, staleness) |
-| `muninn_impact` | Blast radius analysis for a file |
-| `muninn_conflicts` | Check if files changed since last query |
-
-### Search
-
-| Tool | Purpose |
-|------|---------|
-| `muninn_query` | Hybrid search (FTS + vector) |
-| `muninn_vector_search` | Pure semantic similarity search |
-
-### Working Memory
-
-| Tool | Purpose |
-|------|---------|
-| `muninn_bookmark_add` | Save context for later recall |
-| `muninn_bookmark_get` | Retrieve bookmarked content |
-| `muninn_bookmark_list` | List all bookmarks |
-| `muninn_bookmark_delete` | Remove a bookmark |
-| `muninn_bookmark_clear` | Clear all bookmarks |
-
-### Focus
-
-| Tool | Purpose |
-|------|---------|
-| `muninn_focus_set` | Set current work area (boosts related results) |
-| `muninn_focus_get` | Show current focus |
-| `muninn_focus_clear` | Clear focus |
-
-### Memory Updates
-
-| Tool | Purpose |
-|------|---------|
-| `muninn_file_add` | Record file purpose and fragility |
+| `muninn_file_add` | Record file knowledge after modifying |
 | `muninn_decision_add` | Record architectural decisions |
-| `muninn_issue_add` | Track bugs and problems |
-| `muninn_issue_resolve` | Mark issues as fixed |
-| `muninn_learn_add` | Save learnings (project or global) |
+| `muninn_learn_add` | Save learnings for future sessions |
+| `muninn_issue` | Add or resolve issues (action: add/resolve) |
+| `muninn_session` | Start or end sessions (action: start/end) |
+| `muninn_predict` | Bundle all context for a task |
 
-### Session Management
+### Passthrough Tool
 
-| Tool | Purpose |
-|------|---------|
-| `muninn_session_start` | Start a work session with a goal |
-| `muninn_session_end` | End session with outcome summary |
+For all other commands, use the `muninn` passthrough:
 
-### Utilities
+```
+muninn "status"                     # Project state
+muninn "fragile"                    # List fragile files
+muninn "outcome record 5 succeeded" # Record decision outcome
+muninn "insights list"              # View cross-session insights
+muninn "insights ack 3"             # Acknowledge insight
+muninn "bookmark add --label x --content y"
+muninn "focus set --area auth"
+muninn "debt add --title X --severity 5"
+muninn "deps src/index.ts"          # Show file dependencies
+muninn "impact src/types.ts"        # Blast radius analysis
+```
 
-| Tool | Purpose |
-|------|---------|
-| `muninn_ship` | Pre-deploy checklist |
-| `muninn_debt_add` | Track technical debt |
-| `muninn_debt_list` | List all tech debt |
-| `muninn_embed` | Manage vector embeddings |
-| `muninn_deps` | Query file dependencies |
+This hybrid approach provides full CLI access while keeping context overhead minimal.
 
 ## CLI Reference
 
 ```bash
 # Project
-muninn init                        # Initialize .context/ for current project
+muninn init                        # Initialize .claude/ for current project
 muninn status                      # Full project state
 muninn fragile                     # List fragile files
 
@@ -248,4 +190,4 @@ PRs: not accepting at this time.
 
 ---
 
-Built in collaboration with [Claude Code](https://github.com/anthropics/claude-code).
+Built with [Claude Code](https://claude.ai/code).
