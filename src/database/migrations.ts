@@ -808,6 +808,21 @@ export const MIGRATIONS: Migration[] = [
       ).get();
       return !!col;
     }
+  },
+  // Version 16: Insight Auto-Dismiss
+  {
+    version: 16,
+    name: "insight_auto_dismiss",
+    description: "Track how many times insights are shown to auto-dismiss stale ones",
+    up: `
+      ALTER TABLE insights ADD COLUMN shown_count INTEGER DEFAULT 0;
+    `,
+    validate: (db) => {
+      const col = db.query<{ name: string }, []>(
+        `SELECT name FROM pragma_table_info('insights') WHERE name = 'shown_count'`
+      ).get();
+      return !!col;
+    }
   }
 ];
 

@@ -325,6 +325,30 @@ export function applyInsight(db: Database, insightId: number): void {
   }
 }
 
+/**
+ * Increment shown_count for an insight (called on session start).
+ * Auto-dismisses if shown >= 5 times without action.
+ */
+export function incrementInsightShown(db: Database, insightId: number): void {
+  try {
+    // Increment shown_count
+    db.run(`
+      UPDATE insights SET shown_count = COALESCE(shown_count, 0) + 1
+      WHERE id = ? AND status = 'new'
+    `, [insightId]);
+
+    // Auto-dismiss if shown >= 5 times
+    db.run(`
+      UPDATE insights SET
+        status = 'dismissed',
+        acknowledged_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND status = 'new' AND shown_count >= 5
+    `, [insightId]);
+  } catch {
+    // Column might not exist yet
+  }
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -419,7 +443,18 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
       break;
     }
 
+    case "shown": {
+      const id = parseInt(args[1]);
+      if (!id) {
+        console.error("Usage: muninn insights shown <id>");
+        return;
+      }
+      incrementInsightShown(db, id);
+      outputSuccess({ id, action: 'shown_incremented' });
+      break;
+    }
+
     default:
-      console.error("Usage: muninn insights <list|generate|ack|dismiss|apply> [args]");
+      console.error("Usage: muninn insights <list|generate|ack|dismiss|apply|shown> [args]");
   }
 }

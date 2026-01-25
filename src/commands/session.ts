@@ -214,6 +214,17 @@ export function sessionLast(db: Database, projectId: number): void {
 }
 
 // ============================================================================
+// Session Count
+// ============================================================================
+
+export function sessionCount(db: Database, projectId: number): number {
+  const result = db.query<{ count: number }, [number]>(
+    `SELECT COUNT(*) as count FROM sessions WHERE project_id = ?`
+  ).get(projectId);
+  return result?.count || 0;
+}
+
+// ============================================================================
 // Session List
 // ============================================================================
 
@@ -1015,33 +1026,18 @@ function parseExtractedLearnings(response: string): ExtractedLearning[] {
 // ============================================================================
 
 interface TranscriptAnalysis {
+  goal: string;
   outcome: string;
   learnings: ExtractedLearning[];
   nextSteps: string | null;
 }
 
-async function readStdinWithTimeout(timeoutMs: number): Promise<string> {
-  if (process.stdin.isTTY) return "";
+// Import the captured stdin from index.ts
+import { getCapturedStdin } from "../index";
 
-  return new Promise<string>((resolve) => {
-    let data = "";
-    const timeout = setTimeout(() => {
-      process.stdin.removeAllListeners();
-      resolve(data);
-    }, timeoutMs);
-
-    process.stdin.setEncoding("utf-8");
-    process.stdin.on("data", (chunk) => { data += chunk; });
-    process.stdin.on("end", () => {
-      clearTimeout(timeout);
-      resolve(data);
-    });
-    process.stdin.on("error", () => {
-      clearTimeout(timeout);
-      resolve(data);
-    });
-    process.stdin.resume();
-  });
+function getStdinContent(): string {
+  // Use pre-captured stdin from main() to avoid race conditions
+  return getCapturedStdin() || "";
 }
 
 async function analyzeTranscript(
@@ -1050,20 +1046,24 @@ async function analyzeTranscript(
   goal: string,
   files: string[]
 ): Promise<TranscriptAnalysis> {
-  const prompt = `Analyze this coding session transcript and extract:
-1. A concise outcome summary (1-2 sentences of what was accomplished)
-2. 0-3 reusable learnings (patterns, gotchas, conventions discovered)
-3. Recommended next steps (if any)
+  const prompt = `Analyze this coding session transcript and extract what was done.
 
-SESSION GOAL: ${goal}
+RULES:
+- ONLY report what is explicitly shown in the transcript
+- Do NOT infer, assume, or make up details not present
+- If the transcript is unclear, say "Session completed" for outcome
+- If no clear learnings, return empty array
+- Be concise and factual
+
 FILES MODIFIED: ${files.slice(0, 20).join(', ')}${files.length > 20 ? ` (+${files.length - 20} more)` : ''}
 
 TRANSCRIPT (last portion):
 ${transcript}
 
-Return ONLY valid JSON (no markdown, no explanation):
+Return ONLY valid JSON:
 {
-  "outcome": "What was accomplished (1-2 sentences)",
+  "goal": "Short phrase describing what user worked on (e.g., 'Fix auth bug', 'Add search feature')",
+  "outcome": "1-2 sentence summary of what was actually done",
   "learnings": [
     {
       "title": "Short title (max 50 chars)",
@@ -1072,7 +1072,7 @@ Return ONLY valid JSON (no markdown, no explanation):
       "confidence": 0.0-1.0
     }
   ],
-  "next_steps": "What to do next (or null)"
+  "next_steps": "What to do next (or null if none obvious)"
 }`;
 
   const response = await callLLMForExtraction(apiKey, prompt);
@@ -1081,6 +1081,7 @@ Return ONLY valid JSON (no markdown, no explanation):
   const parsed = JSON.parse(jsonStr.trim());
 
   return {
+    goal: parsed.goal || "Session",
     outcome: parsed.outcome || "Session completed",
     learnings: parseExtractedLearnings(JSON.stringify(parsed.learnings || [])),
     nextSteps: parsed.next_steps || null,
@@ -1114,12 +1115,12 @@ export async function sessionEndEnhanced(
 
   const filesTouched = safeJsonParse<string[]>(session.files_touched || values.files || "[]", []);
 
-  // If --analyze, read stdin transcript and use LLM to extract structured data
+  // If --analyze, use stdin transcript to extract structured data
   let analysisResult: TranscriptAnalysis | null = null;
   if (values.analyze) {
     const keyResult = getApiKey("anthropic");
     if (keyResult.ok) {
-      const transcript = await readStdinWithTimeout(5000);
+      const transcript = getStdinContent();
       if (transcript.length > 0) {
         const truncated = transcript.slice(-12000);
         try {
@@ -1137,6 +1138,7 @@ export async function sessionEndEnhanced(
   }
 
   // Use analysis results, falling back to manual args
+  const extractedGoal = analysisResult?.goal || null;
   const outcome = analysisResult?.outcome || values.outcome || null;
   const nextSteps = analysisResult?.nextSteps || values.next || null;
 
@@ -1148,10 +1150,12 @@ export async function sessionEndEnhanced(
     autoRelateSessionFiles(db, projectId, sessionId, filesTouched);
   }
 
-  // Standard end update
+  // Standard end update (goal only updated if extracted and original was generic)
+  const finalGoal = (extractedGoal && session.goal === "New session") ? extractedGoal : session.goal;
   db.run(`
     UPDATE sessions SET
       ended_at = CURRENT_TIMESTAMP,
+      goal = ?,
       outcome = ?,
       files_touched = ?,
       learnings = ?,
@@ -1159,6 +1163,7 @@ export async function sessionEndEnhanced(
       success = ?
     WHERE id = ?
   `, [
+    finalGoal,
     outcome,
     JSON.stringify(filesTouched),
     values.learnings || null,

@@ -10,7 +10,7 @@ import { handleInfraCommand } from "./commands/infra";
 import { handleQueryCommand } from "./commands/query";
 import { runAnalysis, showStatus, showFragile, generateBrief, showStack } from "./commands/analysis";
 import { fileAdd, fileGet, fileList, decisionAdd, decisionList, issueAdd, issueResolve, issueList, learnAdd, learnList, patternAdd, patternSearch, patternList, debtAdd, debtList, debtResolve } from "./commands/memory";
-import { sessionStart, sessionEnd, sessionLast, sessionList, generateResume, sessionEndEnhanced, handleCorrelationCommand } from "./commands/session";
+import { sessionStart, sessionEnd, sessionLast, sessionList, sessionCount, generateResume, sessionEndEnhanced, handleCorrelationCommand } from "./commands/session";
 import { handleShipCommand } from "./commands/ship";
 import { handleEmbedCommand } from "./commands/embed";
 import { checkFiles, analyzeImpact, getSmartStatus, checkConflicts } from "./commands/intelligence";
@@ -31,7 +31,7 @@ import { handlePredictCommand } from "./commands/predict";
 import { handleInsightsCommand, generateInsights } from "./commands/insights";
 import { handleRelationshipCommand } from "./commands/relationships";
 import { handleConsolidationCommand } from "./commands/consolidation";
-import { outputSuccess } from "./utils/format";
+import { outputSuccess, outputJson } from "./utils/format";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -176,7 +176,23 @@ Run 'muninn <command> --help' for more information on a command.
 // Main CLI Router
 // ============================================================================
 
+// Global stdin capture for commands that need it
+let capturedStdin: string | null = null;
+
+export function getCapturedStdin(): string | null {
+  return capturedStdin;
+}
+
 async function main(): Promise<void> {
+  // Capture stdin early before anything else can consume it
+  if (!process.stdin.isTTY) {
+    try {
+      capturedStdin = await Bun.stdin.text();
+    } catch {
+      capturedStdin = null;
+    }
+  }
+
   const args = process.argv.slice(2);
   const command = args[0];
   const subArgs = args.slice(1);
@@ -391,15 +407,15 @@ async function main(): Promise<void> {
         break;
 
       case "relate":
-        handleRelationshipCommand(db, ["add", ...subArgs]);
+        handleRelationshipCommand(db, projectId, ["add", ...subArgs]);
         break;
 
       case "relations":
-        handleRelationshipCommand(db, ["list", ...subArgs]);
+        handleRelationshipCommand(db, projectId, ["list", ...subArgs]);
         break;
 
       case "unrelate":
-        handleRelationshipCommand(db, ["remove", ...subArgs]);
+        handleRelationshipCommand(db, projectId, ["remove", ...subArgs]);
         break;
 
       case "consolidate":
@@ -439,12 +455,18 @@ async function main(): Promise<void> {
           case "list":
             sessionList(db, projectId);
             break;
+          case "count": {
+            const count = sessionCount(db, projectId);
+            console.error(`Total sessions: ${count}`);
+            outputJson({ count });
+            break;
+          }
           case "correlations":
           case "corr":
             handleCorrelationCommand(db, projectId, subArgs.slice(1));
             break;
           default:
-            console.error("Usage: muninn session <start|end|last|list|correlations> [args]");
+            console.error("Usage: muninn session <start|end|last|list|count|correlations> [args]");
         }
         break;
 

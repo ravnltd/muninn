@@ -153,6 +153,7 @@ export const LearnAddInput = z.object({
   content: NonEmptyString,
   context: OptionalString,
   global: z.boolean().default(false),
+  files: OptionalString,
 });
 
 export type LearnAddInput = z.infer<typeof LearnAddInput>;
@@ -406,6 +407,7 @@ export function parseLearnArgs(args: string[]): ParsedArgs<Partial<LearnAddInput
       content: { type: "string" },
       context: { type: "string" },
       global: { type: "boolean", short: "g" },
+      files: { type: "string", short: "f" },
     },
     allowPositionals: true,
   });
@@ -417,6 +419,7 @@ export function parseLearnArgs(args: string[]): ParsedArgs<Partial<LearnAddInput
       content: values.content,
       context: values.context,
       global: values.global || false,
+      files: values.files,
     },
     positionals,
   };
