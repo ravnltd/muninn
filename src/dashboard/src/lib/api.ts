@@ -12,6 +12,32 @@ async function fetchJson<T>(path: string): Promise<T> {
   return response.json();
 }
 
+async function postJson<T>(path: string, data: unknown): Promise<T> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || `API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+async function putJson<T>(path: string, data: unknown): Promise<T> {
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(error.error || `API error: ${response.status}`);
+  }
+  return response.json();
+}
+
 export interface ProjectInfo {
   id: number;
   name: string;
@@ -156,4 +182,49 @@ export async function search(query: string, projectId?: number): Promise<unknown
   const params = new URLSearchParams({ q: query });
   if (projectId) params.set("project_id", String(projectId));
   return fetchJson<unknown[]>(`/search?${params}`);
+}
+
+// ============================================================================
+// Mutation Input Types
+// ============================================================================
+
+export interface CreateIssueInput {
+  title: string;
+  description?: string;
+  type?: "bug" | "tech-debt" | "enhancement" | "question" | "potential";
+  severity?: number;
+  workaround?: string;
+}
+
+export interface CreateDecisionInput {
+  title: string;
+  decision: string;
+  reasoning?: string;
+}
+
+export interface CreateLearningInput {
+  title: string;
+  content: string;
+  category?: "pattern" | "gotcha" | "preference" | "convention" | "architecture";
+  context?: string;
+}
+
+// ============================================================================
+// Mutation Functions
+// ============================================================================
+
+export async function createIssue(projectId: number, data: CreateIssueInput): Promise<{ id: number }> {
+  return postJson(`/projects/${projectId}/issues`, data);
+}
+
+export async function resolveIssue(projectId: number, issueId: number, resolution: string): Promise<void> {
+  return putJson(`/projects/${projectId}/issues/${issueId}/resolve`, { resolution });
+}
+
+export async function createDecision(projectId: number, data: CreateDecisionInput): Promise<{ id: number }> {
+  return postJson(`/projects/${projectId}/decisions`, data);
+}
+
+export async function createLearning(projectId: number, data: CreateLearningInput): Promise<{ id: number }> {
+  return postJson(`/projects/${projectId}/learnings`, data);
 }

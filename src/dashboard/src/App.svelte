@@ -5,13 +5,20 @@
   import Memory from "./routes/Memory.svelte";
   import Timeline from "./routes/Timeline.svelte";
 
-  let currentRoute = $state(window.location.hash.slice(1) || "/");
+  // Parse hash like #/memory?tab=issues&type=tech-debt
+  function parseHash(hash: string): { path: string; params: URLSearchParams } {
+    const raw = hash.slice(1) || "/";
+    const [path, query] = raw.split("?");
+    return { path, params: new URLSearchParams(query || "") };
+  }
+
+  let currentHash = $state(parseHash(window.location.hash));
   let projects = $state<ProjectInfo[]>([]);
   let selectedProject = $state<number | null>(null);
 
   $effect(() => {
     const handler = () => {
-      currentRoute = window.location.hash.slice(1) || "/";
+      currentHash = parseHash(window.location.hash);
     };
     window.addEventListener("hashchange", handler);
     return () => window.removeEventListener("hashchange", handler);
@@ -29,6 +36,10 @@
   function navigate(path: string) {
     window.location.hash = path;
   }
+
+  // Derived route values
+  let currentRoute = $derived(currentHash.path);
+  let routeParams = $derived(currentHash.params);
 </script>
 
 <nav>
@@ -62,7 +73,7 @@
     {:else if currentRoute === "/graph"}
       <Graph projectId={selectedProject} />
     {:else if currentRoute === "/memory"}
-      <Memory projectId={selectedProject} />
+      <Memory projectId={selectedProject} {routeParams} />
     {:else if currentRoute === "/timeline"}
       <Timeline projectId={selectedProject} />
     {:else}

@@ -5,10 +5,72 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { serveStatic } from "hono/bun";
 import { Database } from "bun:sqlite";
 import { join } from "path";
 import { existsSync } from "fs";
+import { z } from "zod";
+
+// ============================================================================
+// Static File Serving Helper
+// ============================================================================
+// IMPORTANT: Hono + Bun requires explicit Content-Length when returning raw Response.
+// Using Bun.file().text() or passing Bun.file directly results in 0-byte responses.
+// Always use arrayBuffer() and set Content-Length explicitly.
+
+interface ServeFileOptions {
+  contentType: string;
+  cache?: "immutable" | "no-cache";
+}
+
+async function serveStaticFile(filePath: string, options: ServeFileOptions): Promise<Response | null> {
+  if (!existsSync(filePath)) return null;
+
+  const file = Bun.file(filePath);
+  const content = await file.arrayBuffer();
+  const cacheControl = options.cache === "immutable"
+    ? "public, max-age=31536000, immutable"
+    : "no-cache, no-store, must-revalidate";
+
+  return new Response(content, {
+    status: 200,
+    headers: {
+      "Content-Type": options.contentType,
+      "Content-Length": String(content.byteLength),
+      "Cache-Control": cacheControl,
+      ...(options.cache === "no-cache" && { "Pragma": "no-cache", "Expires": "0" }),
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+}
+
+// ============================================================================
+// API Input Schemas (for write operations)
+// ============================================================================
+
+const CreateIssueInput = z.object({
+  title: z.string().min(1),
+  description: z.string().optional(),
+  type: z.enum(['bug', 'tech-debt', 'enhancement', 'question', 'potential']).default('bug'),
+  severity: z.number().int().min(1).max(10).default(5),
+  workaround: z.string().optional(),
+});
+
+const ResolveIssueInput = z.object({
+  resolution: z.string().min(1),
+});
+
+const CreateDecisionInput = z.object({
+  title: z.string().min(1),
+  decision: z.string().min(1),
+  reasoning: z.string().optional(),
+});
+
+const CreateLearningInput = z.object({
+  title: z.string().min(1),
+  content: z.string().min(1),
+  category: z.enum(['pattern', 'gotcha', 'preference', 'convention', 'architecture']).default('pattern'),
+  context: z.string().optional(),
+});
 
 // ============================================================================
 // Database Connection
@@ -24,8 +86,11 @@ function getProjectDbPath(projectPath: string): string | null {
   return null;
 }
 
-function openDb(path: string): Database {
-  const db = new Database(path, { readonly: true });
+function openDb(path: string, readonly = true): Database {
+  // Bun's Database only accepts readonly option when true
+  const db = readonly
+    ? new Database(path, { readonly: true })
+    : new Database(path);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 3000");
   return db;
@@ -74,16 +139,19 @@ export function createApp(dbPath?: string): Hono {
   }
 
   // Look up project path and return its DB with the correct local project ID
-  function getDbForProject(projectId: number): { db: Database; project: Record<string, unknown>; localProjectId: number } | null {
+  function getDbForProject(projectId: number, readonly = true): { db: Database; project: Record<string, unknown>; localProjectId: number } | null {
     const globalDb = getGlobalDb();
     try {
       const project = globalDb.query(`SELECT * FROM projects WHERE id = ?`).get(projectId) as Record<string, unknown> | null;
-      if (!project) return null;
+      if (!project) {
+        globalDb.close();
+        return null;
+      }
       const projectPath = project.path as string;
       const projectDbPath = getProjectDbPath(projectPath);
       if (projectDbPath) {
         globalDb.close();
-        const db = openDb(projectDbPath);
+        const db = openDb(projectDbPath, readonly);
         // Find the local project ID by path
         const localProject = db.query<{ id: number }, [string]>(
           `SELECT id FROM projects WHERE path = ?`
@@ -91,7 +159,8 @@ export function createApp(dbPath?: string): Hono {
         return { db, project, localProjectId: localProject?.id ?? 1 };
       }
       return { db: globalDb, project, localProjectId: projectId };
-    } catch {
+    } catch (e) {
+      console.error("getDbForProject error:", e);
       globalDb.close();
       return null;
     }
@@ -347,35 +416,185 @@ export function createApp(dbPath?: string): Hono {
   });
 
   // ============================================================================
+  // Write API Routes (POST/PUT)
+  // ============================================================================
+
+  // Create Issue
+  app.post("/api/projects/:id/issues", async (c) => {
+    const projectId = parseInt(c.req.param("id"), 10);
+    const result = getDbForProject(projectId, false);
+    if (!result) return c.json({ error: "Project not found" }, 404);
+    const { db, localProjectId } = result;
+
+    try {
+      const body = await c.req.json();
+      const input = CreateIssueInput.parse(body);
+
+      const stmt = db.query(`
+        INSERT INTO issues (project_id, title, description, type, severity, status, workaround, created_at)
+        VALUES (?, ?, ?, ?, ?, 'open', ?, datetime('now'))
+      `);
+      stmt.run(localProjectId, input.title, input.description ?? null, input.type, input.severity, input.workaround ?? null);
+
+      const id = db.query<{ id: number }, []>(`SELECT last_insert_rowid() as id`).get()?.id;
+      return c.json({ id, message: "Issue created" }, 201);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return c.json({ error: "Validation failed", details: e.errors }, 400);
+      }
+      return c.json({ error: String(e) }, 500);
+    } finally {
+      db.close();
+    }
+  });
+
+  // Resolve Issue
+  app.put("/api/projects/:id/issues/:issueId/resolve", async (c) => {
+    const projectId = parseInt(c.req.param("id"), 10);
+    const issueId = parseInt(c.req.param("issueId"), 10);
+    const result = getDbForProject(projectId, false);
+    if (!result) return c.json({ error: "Project not found" }, 404);
+    const { db, localProjectId } = result;
+
+    try {
+      const body = await c.req.json();
+      const input = ResolveIssueInput.parse(body);
+
+      // Verify issue exists and belongs to this project
+      const issue = db.query<{ id: number }, [number, number]>(
+        `SELECT id FROM issues WHERE id = ? AND project_id = ?`
+      ).get(issueId, localProjectId);
+      if (!issue) return c.json({ error: "Issue not found" }, 404);
+
+      db.query(`
+        UPDATE issues SET status = 'resolved', resolution = ?, resolved_at = datetime('now')
+        WHERE id = ?
+      `).run(input.resolution, issueId);
+
+      return c.json({ message: "Issue resolved" });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return c.json({ error: "Validation failed", details: e.errors }, 400);
+      }
+      return c.json({ error: String(e) }, 500);
+    } finally {
+      db.close();
+    }
+  });
+
+  // Create Decision
+  app.post("/api/projects/:id/decisions", async (c) => {
+    const projectId = parseInt(c.req.param("id"), 10);
+    const result = getDbForProject(projectId, false);
+    if (!result) return c.json({ error: "Project not found" }, 404);
+    const { db, localProjectId } = result;
+
+    try {
+      const body = await c.req.json();
+      const input = CreateDecisionInput.parse(body);
+
+      const stmt = db.query(`
+        INSERT INTO decisions (project_id, title, decision, reasoning, status, created_at)
+        VALUES (?, ?, ?, ?, 'active', datetime('now'))
+      `);
+      stmt.run(localProjectId, input.title, input.decision, input.reasoning ?? null);
+
+      const id = db.query<{ id: number }, []>(`SELECT last_insert_rowid() as id`).get()?.id;
+      return c.json({ id, message: "Decision created" }, 201);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return c.json({ error: "Validation failed", details: e.errors }, 400);
+      }
+      return c.json({ error: String(e) }, 500);
+    } finally {
+      db.close();
+    }
+  });
+
+  // Create Learning
+  app.post("/api/projects/:id/learnings", async (c) => {
+    const projectId = parseInt(c.req.param("id"), 10);
+    const result = getDbForProject(projectId, false);
+    if (!result) return c.json({ error: "Project not found" }, 404);
+    const { db, localProjectId } = result;
+
+    try {
+      const body = await c.req.json();
+      const input = CreateLearningInput.parse(body);
+
+      const stmt = db.query(`
+        INSERT INTO learnings (project_id, title, content, category, context, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `);
+      stmt.run(localProjectId, input.title, input.content, input.category, input.context ?? null);
+
+      const id = db.query<{ id: number }, []>(`SELECT last_insert_rowid() as id`).get()?.id;
+      return c.json({ id, message: "Learning created" }, 201);
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return c.json({ error: "Validation failed", details: e.errors }, 400);
+      }
+      return c.json({ error: String(e) }, 500);
+    } finally {
+      db.close();
+    }
+  });
+
+  // ============================================================================
   // Static Assets (built Svelte dashboard)
   // ============================================================================
 
   const dashboardDist = join(import.meta.dir, "..", "dashboard-dist");
 
-  // Serve static assets directly with Bun.file for reliability
+  // Serve static assets (JS, CSS) - use helper to ensure correct Content-Length
   app.get("/assets/:filename", async (c) => {
     const filename = c.req.param("filename");
     const filePath = join(dashboardDist, "assets", filename);
-    if (!existsSync(filePath)) return c.notFound();
-    const file = Bun.file(filePath);
-    c.header("Cache-Control", "public, max-age=31536000, immutable");
-    if (filename.endsWith(".js")) c.header("Content-Type", "text/javascript; charset=utf-8");
-    else if (filename.endsWith(".css")) c.header("Content-Type", "text/css; charset=utf-8");
-    return c.body(await file.arrayBuffer());
+    const contentType = Bun.file(filePath).type || "application/octet-stream";
+    const response = await serveStaticFile(filePath, { contentType, cache: "no-cache" });
+    return response ?? c.notFound();
   });
 
-  // SPA fallback — never cache index.html
+  // Serve favicon
+  app.get("/favicon.svg", async (c) => {
+    const filePath = join(dashboardDist, "favicon.svg");
+    const response = await serveStaticFile(filePath, { contentType: "image/svg+xml", cache: "no-cache" });
+    return response ?? c.notFound();
+  });
+
+  // SPA fallback — serve index.html for all unmatched routes
   app.get("*", async (c) => {
     const indexPath = join(dashboardDist, "index.html");
-    if (existsSync(indexPath)) {
-      c.header("Cache-Control", "no-cache, no-store, must-revalidate");
-      const html = await Bun.file(indexPath).text();
-      return c.html(html);
-    }
-    return c.text("Dashboard not built. Run: cd src/dashboard && bun run build", 404);
+    const response = await serveStaticFile(indexPath, { contentType: "text/html; charset=utf-8", cache: "no-cache" });
+    return response ?? c.text("Dashboard not built. Run: cd src/dashboard && bun run build", 404);
   });
 
   return app;
+}
+
+// ============================================================================
+// Startup Health Check
+// ============================================================================
+
+async function verifyStaticServing(port: number): Promise<void> {
+  // Verify index.html serves with content
+  const indexRes = await fetch(`http://localhost:${port}/`);
+  const contentLength = indexRes.headers.get("content-length");
+
+  if (contentLength === "0" || contentLength === null) {
+    console.error("FATAL: Static file serving broken - index.html has content-length: " + contentLength);
+    console.error("This is the Hono+Bun bug. Check serveStaticFile() uses arrayBuffer().");
+    process.exit(1);
+  }
+
+  // Verify body is not empty
+  const body = await indexRes.text();
+  if (body.length === 0) {
+    console.error("FATAL: Static file serving broken - index.html body is empty");
+    process.exit(1);
+  }
+
+  console.log(`Health check passed: index.html serves ${contentLength} bytes`);
 }
 
 // ============================================================================
@@ -386,11 +605,17 @@ if (import.meta.main) {
   const port = parseInt(process.argv[2] || "3334", 10);
   const app = createApp();
 
-  console.log(`Muninn Dashboard: http://localhost:${port}`);
-
-  Bun.serve({
+  const server = Bun.serve({
     fetch: app.fetch,
     port,
+  });
+
+  console.log(`Muninn Dashboard: http://localhost:${port}`);
+
+  // Run health check after server starts
+  verifyStaticServing(port).catch((err) => {
+    console.error("Health check failed:", err.message);
+    process.exit(1);
   });
 }
 

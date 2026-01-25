@@ -19,6 +19,10 @@
     if (score >= 4) return "var(--accent-1)";
     return "var(--accent-4)";
   }
+
+  function navigate(path: string) {
+    window.location.hash = path;
+  }
 </script>
 
 <div class="health-page">
@@ -34,22 +38,22 @@
 
     <!-- Stats Grid -->
     <div class="grid grid-4 stats-grid">
-      <div class="card stat-card">
+      <button class="card stat-card clickable" onclick={() => navigate('/memory?tab=files')}>
         <div class="stat-value">{health.fileCount}</div>
         <div class="stat-label">Files</div>
-      </div>
-      <div class="card stat-card">
+      </button>
+      <button class="card stat-card clickable" onclick={() => navigate('/memory?tab=issues')}>
         <div class="stat-value" style="color: {health.openIssues > 0 ? 'var(--warning)' : 'var(--accent-4)'}">{health.openIssues}</div>
         <div class="stat-label">Open Issues</div>
-      </div>
-      <div class="card stat-card">
+      </button>
+      <button class="card stat-card clickable" onclick={() => navigate('/memory?tab=decisions')}>
         <div class="stat-value">{health.activeDecisions}</div>
         <div class="stat-label">Decisions</div>
-      </div>
-      <div class="card stat-card">
+      </button>
+      <button class="card stat-card clickable" onclick={() => navigate('/memory?tab=issues&type=tech-debt')}>
         <div class="stat-value" style="color: {health.techDebtScore > 50 ? 'var(--danger)' : 'var(--accent-4)'}">{health.techDebtScore}</div>
         <div class="stat-label">Debt Score</div>
-      </div>
+      </button>
     </div>
 
     <!-- Fragile Files -->
@@ -130,6 +134,22 @@
 
   .stat-card {
     text-align: center;
+  }
+
+  .stat-card.clickable {
+    cursor: pointer;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .stat-card.clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-color: var(--accent-1);
+  }
+
+  .stat-card.clickable:active {
+    transform: translateY(0);
   }
 
   .stat-value {
