@@ -159,7 +159,7 @@ function parsePythonImports(
         }
       } else {
         // Could be local or external — try to resolve as local first
-        const resolved = resolvePythonAbsoluteImport(modulePath, projectPath);
+        const resolved = resolvePythonAbsoluteImport(modulePath, filePath, projectPath);
         if (resolved) {
           localImports.push(resolved);
         } else {
@@ -196,10 +196,44 @@ function resolvePythonRelativeImport(fromFile: string, modulePath: string, proje
   return resolvePythonPath(basePath, projectPath);
 }
 
-function resolvePythonAbsoluteImport(modulePath: string, projectPath: string): string | null {
+function resolvePythonAbsoluteImport(modulePath: string, fromFile: string, projectPath: string): string | null {
   // Convert dots to path separators: foo.bar.baz -> foo/bar/baz
   const fsPath = modulePath.replace(/\./g, "/");
-  return resolvePythonPath(fsPath, projectPath);
+
+  // Try from project root first
+  const directResult = resolvePythonPath(fsPath, projectPath);
+  if (directResult) return directResult;
+
+  // Try from ancestor directories of the importing file
+  // e.g., for backend/app/api_v1/auth.py importing "app.models",
+  // try: backend/app/api_v1/, backend/app/, backend/, until we find app/models.py
+  const fromDir = dirname(fromFile);
+  const parts = fromDir.split("/").filter(Boolean);
+
+  for (let i = parts.length; i >= 0; i--) {
+    const ancestorPath = parts.slice(0, i).join("/") || ".";
+    const fullAncestor = join(projectPath, ancestorPath);
+
+    const result = resolvePythonPathFromBase(fsPath, fullAncestor);
+    if (result) {
+      return relative(projectPath, result);
+    }
+  }
+
+  return null;
+}
+
+function resolvePythonPathFromBase(fsPath: string, basePath: string): string | null {
+  // Try as direct .py file, then as package (__init__.py)
+  const candidates = [join(basePath, `${fsPath}.py`), join(basePath, fsPath, "__init__.py")];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate) && statSync(candidate).isFile()) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function resolvePythonPath(basePath: string, projectPath: string): string | null {
@@ -453,11 +487,12 @@ function computeFragilityFromGraph(dependentCount: number, _importCount: number)
 export function refreshDependencies(
   db: Database,
   projectId: number,
-  projectPath: string
+  projectPath: string,
+  maxFiles: number = 2000
 ): { processed: number; updated: number; errors: number } {
   console.error("🔄 Refreshing dependency graph...\n");
 
-  const graph = buildDependencyGraph(projectPath);
+  const graph = buildDependencyGraph(projectPath, maxFiles);
   let updated = 0;
 
   for (const [filePath, info] of graph.files) {
