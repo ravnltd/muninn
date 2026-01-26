@@ -20,6 +20,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Setup test environment
+        run: mkdir -p ~/.claude
+
       - name: Type check
         run: bun run typecheck
 
