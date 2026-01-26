@@ -1,7 +1,8 @@
 <script lang="ts">
   import { getSessions, type SessionInfo } from "../lib/api";
 
-  let { projectId }: { projectId: number } = $props();
+  let props: { projectId: number } = $props();
+  let projectId = $derived(props.projectId);
   let sessions = $state<SessionInfo[]>([]);
   let expandedSession = $state<number | null>(null);
 

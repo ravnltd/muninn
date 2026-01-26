@@ -11,7 +11,13 @@
     routeParams?: URLSearchParams;
   }
 
-  let { projectId, routeParams }: Props = $props();
+  let props: Props = $props();
+  // Derived to track prop changes reactively
+  let projectId = $derived(props.projectId);
+
+  // Loading and error state
+  let isLoading = $state(false);
+  let loadError = $state<string | null>(null);
 
   // Modal state
   let showCreateModal = $state(false);
@@ -27,27 +33,32 @@
 
   type TabType = "files" | "decisions" | "learnings" | "issues";
 
-  // Initialize from route params
-  function getInitialTab(): TabType {
-    const tab = routeParams?.get("tab");
-    if (tab === "files" || tab === "decisions" || tab === "learnings" || tab === "issues") {
-      return tab;
-    }
-    return "files";
-  }
-
-  let activeTab = $state<TabType>(getInitialTab());
-  let typeFilter = $state<string | null>(routeParams?.get("type") ?? null);
+  let activeTab = $state<TabType>("files");
+  let typeFilter = $state<string | null>(null);
   let searchQuery = $state("");
 
-  // Update when route params change
+  // Initialize from route params on mount
   $effect(() => {
-    const tab = routeParams?.get("tab");
-    if (tab === "files" || tab === "decisions" || tab === "learnings" || tab === "issues") {
-      activeTab = tab;
+    if (props.routeParams) {
+      const tab = props.routeParams.get("tab");
+      if (tab === "files" || tab === "decisions" || tab === "learnings" || tab === "issues") {
+        activeTab = tab;
+      }
+      typeFilter = props.routeParams.get("type") ?? null;
     }
-    typeFilter = routeParams?.get("type") ?? null;
   });
+  let searchInput = $state(""); // Raw input value for debouncing
+
+  // Debounce search input
+  let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+  function handleSearchInput(e: Event) {
+    const value = (e.target as HTMLInputElement).value;
+    searchInput = value;
+    if (searchTimeout) clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      searchQuery = value;
+    }, 300);
+  }
 
   let files = $state<FileInfo[]>([]);
   let decisions = $state<DecisionInfo[]>([]);
@@ -55,12 +66,29 @@
   let issues = $state<IssueInfo[]>([]);
   let selectedItem = $state<any>(null);
 
+  // Load data when projectId changes
   $effect(() => {
-    if (projectId) {
-      getFiles(projectId).then((f) => files = f).catch(() => {});
-      getDecisions(projectId).then((d) => decisions = d).catch(() => {});
-      getLearnings(projectId).then((l) => learnings = l).catch(() => {});
-      getIssues(projectId).then((i) => issues = i).catch(() => {});
+    if (projectId && typeof projectId === 'number') {
+      isLoading = true;
+      loadError = null;
+      Promise.all([
+        getFiles(projectId),
+        getDecisions(projectId),
+        getLearnings(projectId),
+        getIssues(projectId)
+      ])
+        .then(([f, d, l, i]) => {
+          files = f;
+          decisions = d;
+          learnings = l;
+          issues = i;
+        })
+        .catch((e) => {
+          loadError = e instanceof Error ? e.message : "Failed to load memory data";
+        })
+        .finally(() => {
+          isLoading = false;
+        });
     }
   });
 
@@ -91,10 +119,20 @@
 
   // Refresh data after mutations
   function refreshData() {
-    getFiles(projectId).then((f) => files = f).catch(() => {});
-    getDecisions(projectId).then((d) => decisions = d).catch(() => {});
-    getLearnings(projectId).then((l) => learnings = l).catch(() => {});
-    getIssues(projectId).then((i) => issues = i).catch(() => {});
+    if (!projectId || typeof projectId !== 'number') return;
+    Promise.all([
+      getFiles(projectId),
+      getDecisions(projectId),
+      getLearnings(projectId),
+      getIssues(projectId)
+    ])
+      .then(([f, d, l, i]) => {
+        files = f;
+        decisions = d;
+        learnings = l;
+        issues = i;
+      })
+      .catch(() => {});
   }
 
   // Form submission handlers
@@ -206,9 +244,21 @@
       class="search-input"
       type="text"
       placeholder="Search memories..."
-      bind:value={searchQuery}
+      value={searchInput}
+      oninput={handleSearchInput}
     />
   </div>
+
+  {#if loadError}
+    <div class="error-banner">
+      <span>Failed to load data: {loadError}</span>
+      <button class="btn" onclick={refreshData}>Retry</button>
+    </div>
+  {/if}
+
+  {#if isLoading}
+    <div class="loading-banner">Loading memory data...</div>
+  {/if}
 
   <div class="content-layout">
     <!-- List Panel -->
@@ -724,5 +774,28 @@
     border-radius: var(--radius-md);
     margin-bottom: 1rem;
     font-size: 0.875rem;
+  }
+
+  .error-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-md);
+    color: var(--danger);
+    margin-bottom: 1rem;
+  }
+
+  .loading-banner {
+    padding: 0.75rem 1rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    text-align: center;
   }
 </style>

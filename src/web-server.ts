@@ -260,11 +260,18 @@ export function createApp(dbPath?: string): Hono {
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
+
+    // Optional pagination
+    const limitParam = c.req.query("limit");
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
+    const offset = parseInt(c.req.query("offset") || "0", 10);
+
     try {
+      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const files = safeQuery(
         db,
-        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`,
-        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path`,
+        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path${limitClause}`,
+        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path${limitClause}`,
         [localProjectId]
       );
       return c.json(files);
@@ -279,11 +286,17 @@ export function createApp(dbPath?: string): Hono {
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
+
+    const limitParam = c.req.query("limit");
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
+    const offset = parseInt(c.req.query("offset") || "0", 10);
+
     try {
+      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const decisions = safeQuery(
         db,
-        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`,
-        `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC`,
+        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC${limitClause}`,
+        `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC${limitClause}`,
         [localProjectId]
       );
       return c.json(decisions);
@@ -298,11 +311,17 @@ export function createApp(dbPath?: string): Hono {
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
+
+    const limitParam = c.req.query("limit");
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
+    const offset = parseInt(c.req.query("offset") || "0", 10);
+
     try {
+      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const issues = safeQuery(
         db,
-        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`,
-        `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC`,
+        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC${limitClause}`,
+        `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC${limitClause}`,
         [localProjectId]
       );
       return c.json(issues);
@@ -317,14 +336,67 @@ export function createApp(dbPath?: string): Hono {
     const result = getDbForProject(projectId);
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
+
+    const limitParam = c.req.query("limit");
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
+    const offset = parseInt(c.req.query("offset") || "0", 10);
+
     try {
+      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const learnings = safeQuery(
         db,
-        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`,
-        `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC`,
+        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC${limitClause}`,
+        `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC${limitClause}`,
         [localProjectId]
       );
       return c.json(learnings);
+    } finally {
+      db.close();
+    }
+  });
+
+  // Batched memory endpoint - returns files, decisions, issues, learnings in one call
+  app.get("/api/projects/:id/memory", (c) => {
+    const projectId = parseProjectId(c.req.param("id"));
+    if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
+    const result = getDbForProject(projectId);
+    if (!result) return c.json({ error: "Project not found" }, 404);
+    const { db, localProjectId } = result;
+
+    // Parse pagination params with defaults
+    const limit = Math.min(parseInt(c.req.query("limit") || "100", 10), 500);
+    const offset = parseInt(c.req.query("offset") || "0", 10);
+
+    try {
+      const files = safeQuery(
+        db,
+        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path LIMIT ? OFFSET ?`,
+        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
+      );
+
+      const decisions = safeQuery(
+        db,
+        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
+      );
+
+      const issues = safeQuery(
+        db,
+        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
+      );
+
+      const learnings = safeQuery(
+        db,
+        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
+      );
+
+      return c.json({ files, decisions, issues, learnings });
     } finally {
       db.close();
     }

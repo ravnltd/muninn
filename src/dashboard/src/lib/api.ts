@@ -5,9 +5,16 @@
 const BASE_URL = "/api";
 
 async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`);
+  const url = `${BASE_URL}${path}`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (e) {
+    throw new Error(`Network error fetching ${url}: ${e instanceof Error ? e.message : String(e)}`);
+  }
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    const body = await response.text().catch(() => "");
+    throw new Error(`API error ${response.status}: ${body || response.statusText}`);
   }
   return response.json();
 }
@@ -138,6 +145,13 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export interface MemoryData {
+  files: FileInfo[];
+  decisions: DecisionInfo[];
+  issues: IssueInfo[];
+  learnings: LearningInfo[];
+}
+
 // ============================================================================
 // API Functions
 // ============================================================================
@@ -164,6 +178,13 @@ export async function getIssues(projectId: number): Promise<IssueInfo[]> {
 
 export async function getLearnings(projectId: number): Promise<LearningInfo[]> {
   return fetchJson<LearningInfo[]>(`/projects/${projectId}/learnings`);
+}
+
+export async function getMemory(projectId: number, limit = 100): Promise<MemoryData> {
+  if (!projectId || typeof projectId !== 'number') {
+    throw new Error(`Invalid projectId: ${projectId}`);
+  }
+  return fetchJson<MemoryData>(`/projects/${projectId}/memory?limit=${limit}`);
 }
 
 export async function getSessions(projectId: number): Promise<SessionInfo[]> {

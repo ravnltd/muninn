@@ -1,7 +1,8 @@
 <script lang="ts">
   import { getHealth, type HealthData } from "../lib/api";
 
-  let { projectId }: { projectId: number } = $props();
+  let props: { projectId: number } = $props();
+  let projectId = $derived(props.projectId);
   let health = $state<HealthData | null>(null);
   let error = $state<string | null>(null);
 

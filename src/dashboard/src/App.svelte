@@ -24,13 +24,19 @@
     return () => window.removeEventListener("hashchange", handler);
   });
 
+  let appError = $state<string | null>(null);
+
   $effect(() => {
-    getProjects().then((p) => {
-      projects = p;
-      if (p.length > 0 && !selectedProject) {
-        selectedProject = p[0].id;
-      }
-    });
+    getProjects()
+      .then((p) => {
+        projects = p;
+        if (p.length > 0 && !selectedProject) {
+          selectedProject = p[0].id;
+        }
+      })
+      .catch((e) => {
+        appError = e instanceof Error ? e.message : String(e);
+      });
   });
 
   function navigate(path: string) {
@@ -67,7 +73,11 @@
 </nav>
 
 <main>
-  {#if selectedProject}
+  {#if appError}
+    <div class="error-state">
+      <p>Error loading projects: {appError}</p>
+    </div>
+  {:else if selectedProject}
     {#if currentRoute === "/"}
       <Health projectId={selectedProject} />
     {:else if currentRoute === "/graph"}
@@ -139,5 +149,13 @@
     background: var(--bg-elevated);
     padding: 0.125rem 0.5rem;
     border-radius: var(--radius-sm);
+  }
+
+  .error-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--danger, #ef4444);
   }
 </style>

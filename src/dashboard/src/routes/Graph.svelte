@@ -35,64 +35,6 @@
     session: "hexagon",
   };
 
-  // Filter nodes based on settings
-  function getFilteredData(data: GraphData): GraphData {
-    const typeFilters: Record<string, boolean> = {
-      file: showFiles,
-      decision: showDecisions,
-      learning: showLearnings,
-      issue: showIssues,
-      session: showSessions,
-    };
-
-    // First filter by type
-    let filteredNodes = data.nodes.filter(n => typeFilters[n.type] ?? true);
-    const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
-
-    // Filter edges to only include those between filtered nodes
-    // Handle D3's mutation of source/target from strings to objects
-    let filteredEdges = data.edges.filter(e => {
-      const sourceId = typeof e.source === 'string' ? e.source : (e.source as any).id;
-      const targetId = typeof e.target === 'string' ? e.target : (e.target as any).id;
-      return filteredNodeIds.has(sourceId) && filteredNodeIds.has(targetId);
-    });
-
-    // Find connected node IDs
-    const connectedIds = new Set<string>();
-    for (const edge of filteredEdges) {
-      const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as any).id;
-      const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as any).id;
-      connectedIds.add(sourceId);
-      connectedIds.add(targetId);
-    }
-
-    // Connect orphan nodes to their nearest type-neighbor
-    if (connectOrphans) {
-      const orphanNodes = filteredNodes.filter(n => !connectedIds.has(n.id));
-
-      for (const orphan of orphanNodes) {
-        // Find a connected node of the same type, or any connected node
-        let target = filteredNodes.find(n => n.type === orphan.type && connectedIds.has(n.id));
-        if (!target) {
-          target = filteredNodes.find(n => connectedIds.has(n.id));
-        }
-
-        if (target) {
-          // Create a weak virtual edge
-          filteredEdges.push({
-            source: orphan.id,
-            target: target.id,
-            type: "virtual",
-            strength: 1,
-          } as GraphEdge);
-          connectedIds.add(orphan.id);
-        }
-      }
-    }
-
-    return { nodes: filteredNodes, edges: filteredEdges };
-  }
-
   // Get relationships for selected node
   function getNodeRelationships(nodeId: string): { incoming: RelationshipInfo[]; outgoing: RelationshipInfo[] } {
     const [type, id] = nodeId.split(":");
@@ -126,6 +68,11 @@
     updateHighlight();
   });
 
+  // Track if we need full rebuild or just visibility update
+  let lastProjectId: number | null = null;
+  let svgRendered = false;
+
+  // Load data when project changes
   $effect(() => {
     if (projectId) {
       Promise.all([
@@ -136,20 +83,56 @@
           graphData = g;
           relationships = r;
           error = null;
-          renderGraph(getFilteredData(g));
+          svgRendered = false; // Force rebuild on data change
+          lastProjectId = projectId;
+          renderGraph(g);
         })
         .catch((e) => { error = e.message; });
     }
   });
 
-  // Re-render when filters change
+  // Update visibility when filters change (no rebuild)
   $effect(() => {
-    if (graphData) {
+    if (graphData && svgRendered) {
       // Access filter states to trigger reactivity
       void [showFiles, showDecisions, showLearnings, showIssues, showSessions, connectOrphans];
-      renderGraph(getFilteredData(graphData));
+      updateVisibility();
     }
   });
+
+  // Get which types are currently visible
+  function getVisibleTypes(): Set<string> {
+    const visible = new Set<string>();
+    if (showFiles) visible.add("file");
+    if (showDecisions) visible.add("decision");
+    if (showLearnings) visible.add("learning");
+    if (showIssues) visible.add("issue");
+    if (showSessions) visible.add("session");
+    return visible;
+  }
+
+  // Update CSS visibility without rebuilding SVG
+  async function updateVisibility() {
+    if (!container || !graphData) return;
+    const d3 = await import("d3");
+    const visibleTypes = getVisibleTypes();
+
+    // Update node visibility
+    d3.select(container).selectAll("circle")
+      .style("display", (d: any) => visibleTypes.has(d.type) ? "block" : "none");
+
+    // Update label visibility
+    d3.select(container).selectAll("text")
+      .style("display", (d: any) => visibleTypes.has(d.type) ? "block" : "none");
+
+    // Update edge visibility (only show if both endpoints are visible)
+    d3.select(container).selectAll("line")
+      .style("display", (d: any) => {
+        const sourceType = typeof d.source === 'string' ? d.source.split(':')[0] : d.source.type;
+        const targetType = typeof d.target === 'string' ? d.target.split(':')[0] : d.target.type;
+        return visibleTypes.has(sourceType) && visibleTypes.has(targetType) ? "block" : "none";
+      });
+  }
 
   async function renderGraph(data: GraphData) {
     if (!container || !data || data.nodes.length === 0) return;
@@ -157,13 +140,37 @@
     // Dynamic import of D3
     const d3 = await import("d3");
 
+    // For connectOrphans, we still need to add virtual edges (data mutation)
+    const processedData = connectOrphans ? addVirtualEdges(data) : data;
+
     // Calculate connection count for each node (for sizing)
     const connectionCounts = new Map<string, number>();
-    for (const edge of data.edges) {
+    for (const edge of processedData.edges) {
       const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as any).id;
       const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as any).id;
       connectionCounts.set(sourceId, (connectionCounts.get(sourceId) || 0) + 1);
       connectionCounts.set(targetId, (connectionCounts.get(targetId) || 0) + 1);
+    }
+
+    // Helper to add virtual edges to orphan nodes
+    function addVirtualEdges(d: GraphData): GraphData {
+      const edges = [...d.edges];
+      const connectedIds = new Set<string>();
+      for (const edge of edges) {
+        const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as any).id;
+        const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as any).id;
+        connectedIds.add(sourceId);
+        connectedIds.add(targetId);
+      }
+      for (const orphan of d.nodes.filter(n => !connectedIds.has(n.id))) {
+        const target = d.nodes.find(n => n.type === orphan.type && connectedIds.has(n.id))
+          || d.nodes.find(n => connectedIds.has(n.id));
+        if (target) {
+          edges.push({ source: orphan.id, target: target.id, type: "virtual", strength: 1 });
+          connectedIds.add(orphan.id);
+        }
+      }
+      return { nodes: d.nodes, edges };
     }
 
     // Helper to calculate node radius (capped to prevent huge nodes)
@@ -195,9 +202,9 @@
         }) as any
     );
 
-    // Setup simulation
-    const simulation = d3.forceSimulation(data.nodes as any)
-      .force("link", d3.forceLink(data.edges)
+    // Setup simulation with all data (visibility controlled via CSS)
+    const simulation = d3.forceSimulation(processedData.nodes as any)
+      .force("link", d3.forceLink(processedData.edges)
         .id((d: any) => d.id)
         .distance((d: any) => {
           if (d.type === "virtual") return 900;
@@ -214,22 +221,33 @@
         .strength(1)
       )
       .force("x", d3.forceX(width / 2).strength(0.008))
-      .force("y", d3.forceY(height / 2).strength(0.008));
+      .force("y", d3.forceY(height / 2).strength(0.008))
+      .stop(); // Stop auto-ticking
 
-    // Draw edges
+    // Pre-compute layout (run simulation without DOM updates)
+    const tickCount = Math.min(300, Math.ceil(Math.log(processedData.nodes.length) * 50));
+    for (let i = 0; i < tickCount; i++) {
+      simulation.tick();
+    }
+
+    // Draw edges with pre-computed positions
     const link = g.append("g")
       .selectAll("line")
-      .data(data.edges)
+      .data(processedData.edges)
       .join("line")
       .attr("stroke", (d: GraphEdge) => d.type === "virtual" ? "#334155" : "#4a90a4")
       .attr("stroke-opacity", (d: GraphEdge) => d.type === "virtual" ? 0.3 : 0.6)
       .attr("stroke-width", (d: GraphEdge) => d.type === "virtual" ? 1 : Math.max(1, d.strength / 3))
-      .attr("stroke-dasharray", (d: GraphEdge) => d.type === "virtual" ? "3,3" : "none");
+      .attr("stroke-dasharray", (d: GraphEdge) => d.type === "virtual" ? "3,3" : "none")
+      .attr("x1", (d: any) => d.source.x)
+      .attr("y1", (d: any) => d.source.y)
+      .attr("x2", (d: any) => d.target.x)
+      .attr("y2", (d: any) => d.target.y);
 
-    // Draw nodes
+    // Draw nodes with pre-computed positions
     const node = g.append("g")
       .selectAll("circle")
-      .data(data.nodes)
+      .data(processedData.nodes)
       .join("circle")
       .attr("r", (d: GraphNode) => getNodeRadius(d.id))
       .attr("fill", (d: GraphNode) => NODE_COLORS[d.type] || "#64748b")
@@ -237,6 +255,8 @@
       .attr("stroke-width", (d: GraphNode) => highlightedNodes.has(d.id) ? 3 : 1.5)
       .attr("cursor", "pointer")
       .style("filter", (d: GraphNode) => highlightedNodes.size > 0 && !highlightedNodes.has(d.id) ? "opacity(0.3)" : "none")
+      .attr("cx", (d: any) => d.x)
+      .attr("cy", (d: any) => d.y)
       .on("click", (_event: any, d: GraphNode) => { selectedNode = d; })
       .call(d3.drag<any, any>()
         .on("start", (event, d) => {
@@ -255,18 +275,21 @@
         }) as any
       );
 
-    // Labels
+    // Labels with pre-computed positions
     const label = g.append("g")
       .selectAll("text")
-      .data(data.nodes)
+      .data(processedData.nodes)
       .join("text")
       .text((d: GraphNode) => d.label.length > 30 ? d.label.substring(0, 30) + "..." : d.label)
       .attr("font-size", "14px")
       .attr("font-weight", "500")
       .attr("fill", "#e2e8f0")
       .attr("dx", 16)
-      .attr("dy", 5);
+      .attr("dy", 5)
+      .attr("x", (d: any) => d.x)
+      .attr("y", (d: any) => d.y);
 
+    // Tick handler only runs during drag interactions
     simulation.on("tick", () => {
       link
         .attr("x1", (d: any) => d.source.x)
@@ -282,6 +305,10 @@
         .attr("x", (d: any) => d.x)
         .attr("y", (d: any) => d.y);
     });
+
+    // Mark as rendered and apply initial visibility
+    svgRendered = true;
+    updateVisibility();
   }
 </script>
 
@@ -336,8 +363,6 @@
   <div class="graph-container" bind:this={container}>
     {#if !graphData || graphData.nodes.length === 0}
       <div class="empty">No graph data available. Add files, decisions, and relationships to see the knowledge graph.</div>
-    {:else if getFilteredData(graphData).nodes.length === 0}
-      <div class="empty">No nodes match the current filters. Try adjusting filters or disabling "Hide disconnected".</div>
     {/if}
   </div>
 
