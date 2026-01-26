@@ -327,7 +327,9 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
   const { values } = parseLearnArgs(args);
 
   if (!values.title || !values.content) {
-    exitWithUsage("Usage: muninn learn add --title <title> --content <content> [--category pattern|gotcha] [--global]");
+    exitWithUsage(
+      "Usage: muninn learn add --title <title> --content <content> [--category pattern|gotcha] [--global] [--foundational] [--review-after N]"
+    );
   }
 
   if (values.global) {
@@ -349,12 +351,25 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
       global: true,
     });
   } else {
+    // Foundational learnings get review cycle settings
+    const isFoundational = values.foundational ? 1 : 0;
+    const reviewAfterSessions = values.foundational ? (values.reviewAfter || 30) : null;
+
     const result = db.run(
       `
-      INSERT INTO learnings (project_id, category, title, content, context)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO learnings (project_id, category, title, content, context, foundational, review_after_sessions, review_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      [projectId, values.category || "pattern", values.title, values.content, values.context || null]
+      [
+        projectId,
+        values.category || "pattern",
+        values.title,
+        values.content,
+        values.context || null,
+        isFoundational,
+        reviewAfterSessions,
+        isFoundational ? "pending" : null,
+      ]
     );
 
     const insertedId = Number(result.lastInsertRowid);
@@ -380,11 +395,14 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
       }
     }
 
-    console.error(`✅ Learning L${insertedId} recorded`);
+    const foundationalNote = isFoundational ? " (foundational, review every " + reviewAfterSessions + " sessions)" : "";
+    console.error(`✅ Learning L${insertedId} recorded${foundationalNote}`);
     outputSuccess({
       id: insertedId,
       title: values.title,
       global: false,
+      foundational: !!isFoundational,
+      reviewAfterSessions,
     });
   }
 }

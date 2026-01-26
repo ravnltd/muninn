@@ -118,6 +118,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             context: { type: "string", description: "When this applies" },
             global: { type: "boolean", description: "Apply to all projects" },
             files: { type: "string", description: "JSON array of related files" },
+            foundational: { type: "boolean", description: "Mark as foundational (reviewed every 30 sessions)" },
+            reviewAfter: { type: "number", description: "Custom review interval (sessions, default 30)" },
             cwd: { type: "string", description: "Working directory" },
           },
           required: ["title", "content"],
@@ -291,8 +293,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const context = typedArgs.context ? `--context "${typedArgs.context}"` : "";
         const global = typedArgs.global ? "--global" : "";
         const files = typedArgs.files ? `--files '${typedArgs.files}'` : "";
+        const foundational = typedArgs.foundational ? "--foundational" : "";
+        const reviewAfter = typedArgs.reviewAfter ? `--review-after ${typedArgs.reviewAfter}` : "";
         result = runContext(
-          `learn add --title "${title}" --content "${content}" ${category} ${context} ${global} ${files}`.trim(),
+          `learn add --title "${title}" --content "${content}" ${category} ${context} ${global} ${files} ${foundational} ${reviewAfter}`.trim(),
           cwd
         );
         break;
