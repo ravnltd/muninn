@@ -1,5 +1,7 @@
 # Muninn
 
+[![CI](https://github.com/ravnltd/muninn/actions/workflows/ci.yml/badge.svg)](https://github.com/ravnltd/muninn/actions/workflows/ci.yml)
+
 A semantic memory system for AI-assisted development. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
 
 **The more you use it, the smarter it gets** — Muninn learns your codebase patterns, tracks which files change together, remembers what worked (and what didn't), and adapts to your individual coding preferences over time.
