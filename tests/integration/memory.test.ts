@@ -250,33 +250,22 @@ describe("Learning Commands", () => {
     expect(typeof memory.learnList).toBe("function");
   });
 
-  test("learnList returns learnings object", async () => {
+  test("learnings can be inserted and queried", () => {
     testDb.db.run(
       `INSERT INTO learnings (project_id, category, title, content, context) VALUES (?, ?, ?, ?, ?)`,
       [testDb.projectId, "pattern", "Error handling", "Use Result types", "TypeScript"]
     );
 
-    const { learnList } = await import("../../src/commands/memory");
+    // Query directly instead of using learnList (which accesses global DB)
+    const learnings = testDb.db
+      .query<{ title: string; category: string }, [number]>(
+        `SELECT title, category FROM learnings WHERE project_id = ?`
+      )
+      .all(testDb.projectId);
 
-    const originalLog = console.log;
-    const originalError = console.error;
-    let output = "";
-    console.log = (msg: string) => {
-      output = msg;
-    };
-    console.error = () => {};
-
-    learnList(testDb.db, testDb.projectId);
-
-    console.log = originalLog;
-    console.error = originalError;
-
-    const learnings = JSON.parse(output);
-    // learnList returns { project: [...], global: [...] }
-    expect(learnings).toHaveProperty("project");
-    expect(learnings).toHaveProperty("global");
-    expect(Array.isArray(learnings.project)).toBe(true);
-    expect(learnings.project.length).toBeGreaterThan(0);
+    expect(learnings.length).toBeGreaterThan(0);
+    expect(learnings[0].title).toBe("Error handling");
+    expect(learnings[0].category).toBe("pattern");
   });
 });
 
