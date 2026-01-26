@@ -3,12 +3,12 @@
  * Tests Zod validation on API endpoints
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { createApp } from "../src/web-server";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "../src/web-server";
 
 describe("API Validation", () => {
   let app: ReturnType<typeof createApp>;
