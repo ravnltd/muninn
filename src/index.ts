@@ -40,7 +40,8 @@ import {
   learnList,
 } from "./commands/memory";
 import { handleObserveCommand } from "./commands/observe";
-import { handleOutcomeCommand, incrementSessionsSince } from "./commands/outcomes";
+import { handleFoundationalCommand, handleOutcomeCommand, incrementSessionsSince } from "./commands/outcomes";
+import { handlePromotionCommand } from "./commands/promotion";
 import { handlePredictCommand } from "./commands/predict";
 import { handleProfileCommand } from "./commands/profile";
 import { handleQueryCommand } from "./commands/query";
@@ -303,6 +304,14 @@ async function main(): Promise<void> {
 
       case "outcome":
         handleOutcomeCommand(db, projectId, subArgs);
+        break;
+
+      case "foundational":
+        handleFoundationalCommand(db, projectId, subArgs);
+        break;
+
+      case "promote":
+        handlePromotionCommand(db, projectId, process.cwd(), subArgs);
         break;
 
       case "temporal":

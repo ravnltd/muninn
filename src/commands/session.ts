@@ -9,7 +9,13 @@ import { exitWithUsage, logError, safeJsonParse } from "../utils/errors";
 import { getTimeAgo, outputJson, outputSuccess } from "../utils/format";
 import { parseSessionEndArgs } from "../utils/validation";
 import { generateInsights, listInsights } from "./insights";
-import { getDecisionsDue, incrementSessionsSince } from "./outcomes";
+import {
+  getDecisionsDue,
+  incrementSessionsSince,
+  getFoundationalLearningsDue,
+  incrementFoundationalSessionsSince,
+} from "./outcomes";
+import { getPromotionCandidates } from "./promotion";
 import { getTopProfileEntries } from "./profile";
 import { getOpenQuestionsForResume } from "./questions";
 import {
@@ -58,6 +64,7 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
   // Fire intelligence on session start
   assignSessionNumber(db, projectId, sessionId);
   incrementSessionsSince(db, projectId);
+  incrementFoundationalSessionsSince(db, projectId);
   generateInsightsIfDue(db, projectId);
 
   console.error(`\n🚀 Session #${sessionId} started`);
@@ -783,6 +790,18 @@ function buildSystemPrimer(db: Database, projectId: number): string {
     }
   }
 
+  // Foundational learnings due — show titles + age
+  const foundationalDue = getFoundationalLearningsDue(db, projectId);
+  if (foundationalDue.length > 0) {
+    md += `- Foundational learnings for review:\n`;
+    for (const l of foundationalDue.slice(0, 3)) {
+      md += `  - L${l.id}: "${l.title}" (${l.sessions_since_review} sessions)\n`;
+    }
+    if (foundationalDue.length > 3) {
+      md += `  - ...and ${foundationalDue.length - 3} more\n`;
+    }
+  }
+
   // Pending insights — show type + content
   const newInsights = listInsights(db, projectId, { status: "new" });
   if (newInsights.length > 0) {
@@ -804,6 +823,18 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   // Open questions count
   const openQuestions = getOpenQuestionsForResume(db, projectId);
   md += `- Open questions: ${openQuestions.length}\n`;
+
+  // Promotion candidates (learnings ready for CLAUDE.md)
+  const promotionCandidates = getPromotionCandidates(db, projectId);
+  if (promotionCandidates.length > 0) {
+    md += `- Promotion candidates (ready for CLAUDE.md):\n`;
+    for (const c of promotionCandidates.slice(0, 3)) {
+      md += `  - L${c.id}: "${c.title}" (conf ${c.confidence})\n`;
+    }
+    if (promotionCandidates.length > 3) {
+      md += `  - ...and ${promotionCandidates.length - 3} more\n`;
+    }
+  }
 
   md += `\n`;
 

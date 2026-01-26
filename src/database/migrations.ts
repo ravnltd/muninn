@@ -824,6 +824,57 @@ export const MIGRATIONS: Migration[] = [
       return !!col;
     },
   },
+
+  // Version 17: Foundational Learnings with Review Cycle
+  {
+    version: 17,
+    name: "foundational_learnings",
+    description: "Add foundational flag and review cycle for important learnings that should be periodically validated",
+    up: `
+      ALTER TABLE learnings ADD COLUMN foundational INTEGER DEFAULT 0;
+      ALTER TABLE learnings ADD COLUMN review_after_sessions INTEGER;
+      ALTER TABLE learnings ADD COLUMN sessions_since_review INTEGER DEFAULT 0;
+      ALTER TABLE learnings ADD COLUMN review_status TEXT DEFAULT 'pending';
+      ALTER TABLE learnings ADD COLUMN reviewed_at DATETIME;
+
+      CREATE INDEX IF NOT EXISTS idx_learnings_foundational_due
+      ON learnings(project_id, foundational, review_status, sessions_since_review);
+    `,
+    validate: (db) => {
+      const col = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('learnings') WHERE name = 'foundational'`)
+        .get();
+      return !!col;
+    },
+  },
+
+  // Version 18: Learning Promotion System
+  {
+    version: 18,
+    name: "learning_promotion",
+    description: "Add promotion system for graduating stable learnings to CLAUDE.md",
+    up: `
+      -- Promotion status: not_ready → candidate → promoted (or demoted)
+      ALTER TABLE learnings ADD COLUMN promotion_status TEXT DEFAULT 'not_ready';
+
+      -- Track confirmation count (confirms without revision)
+      ALTER TABLE learnings ADD COLUMN times_confirmed INTEGER DEFAULT 0;
+
+      -- When and where promoted
+      ALTER TABLE learnings ADD COLUMN promoted_at DATETIME;
+      ALTER TABLE learnings ADD COLUMN promoted_to_section TEXT;
+
+      -- Index for finding promotion candidates efficiently
+      CREATE INDEX IF NOT EXISTS idx_learnings_promotion
+      ON learnings(project_id, promotion_status, foundational, confidence);
+    `,
+    validate: (db) => {
+      const col = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('learnings') WHERE name = 'promotion_status'`)
+        .get();
+      return !!col;
+    },
+  },
 ];
 
 // ============================================================================

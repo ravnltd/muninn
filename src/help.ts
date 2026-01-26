@@ -102,6 +102,13 @@ export const HELP_TEXT = `Muninn — Elite Mode
   insights generate           Generate new insights from patterns
   insights ack|dismiss <id>   Acknowledge or dismiss an insight
 
+🎓 Promotion Commands:
+  promote candidates          List learnings ready for CLAUDE.md
+  promote <id> [--to section] Promote learning to CLAUDE.md
+  promote sync                Regenerate promoted section in CLAUDE.md
+  promote stale               Find stale promoted content
+  promote demote <id>         Remove learning from CLAUDE.md
+
 📋 Session Commands:
   session start <goal>        Start a work session
   session end <id> [options]  End a session (auto-extracts learnings)

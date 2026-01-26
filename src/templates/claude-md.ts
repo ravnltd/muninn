@@ -78,6 +78,12 @@ export const MUNINN_SECTION_START = "<!-- MUNINN:START -->";
 export const MUNINN_SECTION_END = "<!-- MUNINN:END -->";
 
 /**
+ * Markers for auto-managed promoted learnings section
+ */
+export const MUNINN_PROMOTED_START = "<!-- MUNINN:PROMOTED:START -->";
+export const MUNINN_PROMOTED_END = "<!-- MUNINN:PROMOTED:END -->";
+
+/**
  * Get the muninn section that can be appended to existing CLAUDE.md
  */
 export function getMuninnSection(): string {

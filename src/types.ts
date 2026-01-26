@@ -750,6 +750,12 @@ export interface DeveloperProfileEntry {
 export type OutcomeStatus = "pending" | "succeeded" | "failed" | "revised" | "unknown";
 
 // ============================================================================
+// Promotion Types
+// ============================================================================
+
+export type PromotionStatus = "not_ready" | "candidate" | "promoted" | "demoted";
+
+// ============================================================================
 // Prediction Types
 // ============================================================================
 
