@@ -3,7 +3,7 @@
  * Semantic similarity search using embeddings
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../adapter";
 import { reheatEntity } from "../../commands/consolidation";
 import {
   cosineSimilarity,
@@ -57,7 +57,7 @@ interface EmbeddingStats {
 /**
  * Get embedding coverage stats for all tables
  */
-export function getEmbeddingStats(db: Database, projectId: number): EmbeddingStats[] {
+export async function getEmbeddingStats(db: DatabaseAdapter, projectId: number): Promise<EmbeddingStats[]> {
   const tables = ["files", "decisions", "issues", "learnings", "symbols", "observations", "open_questions"];
   const stats: EmbeddingStats[] = [];
 
@@ -68,25 +68,23 @@ export function getEmbeddingStats(db: Database, projectId: number): EmbeddingSta
 
       // Symbols need special handling - they're linked through files
       if (table === "symbols") {
-        totalResult = db
-          .query<{ count: number }, [number]>(
-            `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ?`
-          )
-          .get(projectId);
-        withEmbResult = db
-          .query<{ count: number }, [number]>(
-            `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ? AND s.embedding IS NOT NULL`
-          )
-          .get(projectId);
+        totalResult = await db.get<{ count: number }>(
+          `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ?`,
+          [projectId]
+        );
+        withEmbResult = await db.get<{ count: number }>(
+          `SELECT COUNT(*) as count FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.project_id = ? AND s.embedding IS NOT NULL`,
+          [projectId]
+        );
       } else {
-        totalResult = db
-          .query<{ count: number }, [number]>(`SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`)
-          .get(projectId);
-        withEmbResult = db
-          .query<{ count: number }, [number]>(
-            `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ? AND embedding IS NOT NULL`
-          )
-          .get(projectId);
+        totalResult = await db.get<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`,
+          [projectId]
+        );
+        withEmbResult = await db.get<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${table} WHERE project_id = ? AND embedding IS NOT NULL`,
+          [projectId]
+        );
       }
 
       const total = totalResult?.count ?? 0;
@@ -109,8 +107,8 @@ export function getEmbeddingStats(db: Database, projectId: number): EmbeddingSta
 /**
  * Check if project has any embeddings
  */
-export function hasEmbeddings(db: Database, projectId: number): boolean {
-  const stats = getEmbeddingStats(db, projectId);
+export async function hasEmbeddings(db: DatabaseAdapter, projectId: number): Promise<boolean> {
+  const stats = await getEmbeddingStats(db, projectId);
   return stats.some((s) => s.withEmbedding > 0);
 }
 
@@ -121,9 +119,9 @@ export function hasEmbeddings(db: Database, projectId: number): boolean {
 /**
  * Update embedding for a record
  */
-export function updateEmbedding(db: Database, table: string, id: number, embedding: Float32Array): void {
+export async function updateEmbedding(db: DatabaseAdapter, table: string, id: number, embedding: Float32Array): Promise<void> {
   const blob = serializeEmbedding(embedding);
-  db.run(`UPDATE ${table} SET embedding = ? WHERE id = ?`, [blob, id]);
+  await db.run(`UPDATE ${table} SET embedding = ? WHERE id = ?`, [blob, id]);
 }
 
 // ============================================================================
@@ -134,7 +132,7 @@ export function updateEmbedding(db: Database, table: string, id: number, embeddi
  * Perform vector similarity search across all tables
  */
 export async function vectorSearch(
-  db: Database,
+  db: DatabaseAdapter,
   query: string,
   projectId: number,
   options: { limit?: number; minSimilarity?: number; tables?: string[] } = {}
@@ -167,7 +165,7 @@ export async function vectorSearch(
  * Search a single table for similar records
  */
 async function searchTable(
-  db: Database,
+  db: DatabaseAdapter,
   table: string,
   queryEmbedding: Float32Array,
   projectId: number,
@@ -181,23 +179,21 @@ async function searchTable(
     let records: RecordWithEmbedding[];
     const hasArchived = ["files", "decisions", "issues", "learnings"].includes(table);
     if (table === "symbols") {
-      records = db
-        .query<RecordWithEmbedding, [number]>(`
-        SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding, NULL as archived_at
+      records = await db.all<RecordWithEmbedding>(
+        `SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding, NULL as archived_at
         FROM symbols s
         JOIN files f ON s.file_id = f.id
-        WHERE f.project_id = ? AND s.embedding IS NOT NULL
-      `)
-        .all(projectId);
+        WHERE f.project_id = ? AND s.embedding IS NOT NULL`,
+        [projectId]
+      );
     } else {
       const archivedCol = hasArchived ? ", archived_at" : ", NULL as archived_at";
-      records = db
-        .query<RecordWithEmbedding, [number]>(`
-        SELECT id, ${titleCol} as title, ${contentCol} as content, embedding${archivedCol}
+      records = await db.all<RecordWithEmbedding>(
+        `SELECT id, ${titleCol} as title, ${contentCol} as content, embedding${archivedCol}
         FROM ${table}
-        WHERE project_id = ? AND embedding IS NOT NULL
-      `)
-        .all(projectId);
+        WHERE project_id = ? AND embedding IS NOT NULL`,
+        [projectId]
+      );
     }
 
     const results: VectorSearchResult[] = [];
@@ -213,7 +209,7 @@ async function searchTable(
           // Re-heat archived items that match vector search
           if (record.archived_at && hasArchived) {
             const tableForReheat = table as "files" | "decisions" | "issues" | "learnings";
-            reheatEntity(db, tableForReheat, record.id);
+            await reheatEntity(db, tableForReheat, record.id);
           }
 
           results.push({
@@ -272,7 +268,7 @@ function getTableMapping(table: string): {
  * Perform hybrid search combining FTS and vector similarity
  */
 export async function hybridSearch(
-  db: Database,
+  db: DatabaseAdapter,
   query: string,
   projectId: number,
   options: HybridSearchOptions = {}
@@ -285,7 +281,7 @@ export async function hybridSearch(
   } = options;
 
   // Check if embeddings are available
-  if (!isEmbeddingAvailable() || !hasEmbeddings(db, projectId)) {
+  if (!isEmbeddingAvailable() || !(await hasEmbeddings(db, projectId))) {
     // Fall back to FTS only
     return [];
   }
@@ -325,7 +321,7 @@ interface BackfillRecord {
 /**
  * Get records that need embeddings for a table
  */
-export function getRecordsNeedingEmbeddings(db: Database, table: string, projectId: number): BackfillRecord[] {
+export async function getRecordsNeedingEmbeddings(db: DatabaseAdapter, table: string, projectId: number): Promise<BackfillRecord[]> {
   const { titleCol, contentCol } = getTableMapping(table);
 
   // Build text representation matching the *ToText() functions (trimmed, no trailing spaces)
@@ -359,13 +355,12 @@ export function getRecordsNeedingEmbeddings(db: Database, table: string, project
     ? `(project_id = ? OR project_id IS NULL) AND embedding IS NULL`
     : `project_id = ? AND embedding IS NULL`;
 
-  return db
-    .query<BackfillRecord, [number]>(`
-    SELECT id, (${textExpr}) as text
+  return await db.all<BackfillRecord>(
+    `SELECT id, (${textExpr}) as text
     FROM ${table}
-    WHERE ${whereClause}
-  `)
-    .all(projectId);
+    WHERE ${whereClause}`,
+    [projectId]
+  );
 }
 
 /**
@@ -373,7 +368,7 @@ export function getRecordsNeedingEmbeddings(db: Database, table: string, project
  * Returns number of records updated
  */
 export async function backfillTable(
-  db: Database,
+  db: DatabaseAdapter,
   table: string,
   projectId: number,
   onProgress?: (current: number, total: number) => void
@@ -382,7 +377,7 @@ export async function backfillTable(
     return 0;
   }
 
-  const records = getRecordsNeedingEmbeddings(db, table, projectId);
+  const records = await getRecordsNeedingEmbeddings(db, table, projectId);
   if (records.length === 0) {
     return 0;
   }
@@ -401,7 +396,7 @@ export async function backfillTable(
       if (embeddings) {
         for (let j = 0; j < batch.length; j++) {
           if (embeddings[j]) {
-            updateEmbedding(db, table, batch[j].id, embeddings[j]);
+            await updateEmbedding(db, table, batch[j].id, embeddings[j]);
             updated++;
           }
         }
@@ -422,7 +417,7 @@ export async function backfillTable(
  * Backfill all tables
  */
 export async function backfillAll(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   onProgress?: (table: string, current: number, total: number) => void
 ): Promise<Record<string, number>> {

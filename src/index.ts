@@ -4,7 +4,7 @@
  * Main CLI entry point
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "./database/adapter";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { generateBrief, runAnalysis, showFragile, showStatus } from "./commands/analysis";
@@ -25,6 +25,7 @@ import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { handleDebtCommand, handlePatternCommand, handleStackCommand } from "./commands/global";
 import { hookBrain, hookCheck, hookInit, hookPostEdit } from "./commands/hooks";
 import { handleInfraCommand } from "./commands/infra";
+import { handleNetworkCommand } from "./commands/network";
 import { generateInsights, handleInsightsCommand } from "./commands/insights";
 import { analyzeImpact, checkConflicts, checkFiles, getSmartStatus } from "./commands/intelligence";
 import {
@@ -107,8 +108,8 @@ async function main(): Promise<void> {
 
   // Handle init (creates project DB and CLAUDE.md)
   if (command === "init") {
-    const db = initProjectDb(process.cwd());
-    const projectId = ensureProject(db);
+    const db = await initProjectDb(process.cwd());
+    const projectId = await ensureProject(db);
 
     // Install or update CLAUDE.md
     const claudeMdPath = join(process.cwd(), "CLAUDE.md");
@@ -153,7 +154,7 @@ async function main(): Promise<void> {
 
   // Handle infrastructure commands (uses global DB only)
   if (command === "infra") {
-    const globalDb = getGlobalDb();
+    const globalDb = await getGlobalDb();
     try {
       await handleInfraCommand(globalDb, subArgs);
     } finally {
@@ -162,9 +163,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Handle network commands
+  if (command === "network") {
+    const db = await getProjectDb();
+    try {
+      await handleNetworkCommand(db, subArgs);
+    } finally {
+      closeAll();
+    }
+    return;
+  }
+
   // Handle pattern commands (uses global DB only)
   if (command === "pattern") {
-    handlePatternCommand(getGlobalDb(), subArgs);
+    await handlePatternCommand(await getGlobalDb(), subArgs);
     return;
   }
 
@@ -181,21 +193,21 @@ async function main(): Promise<void> {
   }
 
   // All other commands need project DB
-  let db: Database;
+  let db: DatabaseAdapter;
   const dbPath = getProjectDbPath();
 
   // Auto-init if no DB exists
   if (!existsSync(dbPath) && dbPath.includes(LOCAL_DB_DIR)) {
     console.error("📁 No context database found. Initializing...\n");
-    db = initProjectDb(process.cwd());
+    db = await initProjectDb(process.cwd());
   } else if (command === "analyze" && !existsSync(join(process.cwd(), LOCAL_DB_DIR, LOCAL_DB_NAME))) {
     // Allow analyze to init if needed
-    db = initProjectDb(process.cwd());
+    db = await initProjectDb(process.cwd());
   } else {
-    db = getProjectDb();
+    db = await getProjectDb();
   }
 
-  const projectId = ensureProject(db);
+  const projectId = await ensureProject(db);
 
   try {
     switch (command) {
@@ -220,10 +232,10 @@ async function main(): Promise<void> {
             await fileAdd(db, projectId, subArgs.slice(1));
             break;
           case "get":
-            fileGet(db, projectId, subArgs[1]);
+            await fileGet(db, projectId, subArgs[1]);
             break;
           case "list":
-            fileList(db, projectId, subArgs[1]);
+            await fileList(db, projectId, subArgs[1]);
             break;
           default:
             console.error("Usage: muninn file <add|get|list> [args]");
@@ -239,7 +251,7 @@ async function main(): Promise<void> {
             await decisionAdd(db, projectId, subArgs.slice(1));
             break;
           case "list":
-            decisionList(db, projectId);
+            await decisionList(db, projectId);
             break;
           default:
             console.error("Usage: muninn decision <add|list> [args]");
@@ -255,10 +267,10 @@ async function main(): Promise<void> {
             await issueAdd(db, projectId, subArgs.slice(1));
             break;
           case "resolve":
-            issueResolve(db, parseInt(subArgs[1], 10), subArgs.slice(2).join(" "));
+            await issueResolve(db, parseInt(subArgs[1], 10), subArgs.slice(2).join(" "));
             break;
           case "list":
-            issueList(db, projectId, subArgs[1]);
+            await issueList(db, projectId, subArgs[1]);
             break;
           default:
             console.error("Usage: muninn issue <add|resolve|list> [args]");
@@ -274,7 +286,7 @@ async function main(): Promise<void> {
             await learnAdd(db, projectId, subArgs.slice(1));
             break;
           case "list":
-            learnList(db, projectId);
+            await learnList(db, projectId);
             break;
           default:
             console.error("Usage: muninn learn <add|list> [args]");
@@ -295,31 +307,31 @@ async function main(): Promise<void> {
 
       case "workflow":
       case "wf":
-        handleWorkflowCommand(db, projectId, subArgs);
+        await handleWorkflowCommand(db, projectId, subArgs);
         break;
 
       case "profile":
-        handleProfileCommand(db, projectId, subArgs);
+        await handleProfileCommand(db, projectId, subArgs);
         break;
 
       case "outcome":
-        handleOutcomeCommand(db, projectId, subArgs);
+        await handleOutcomeCommand(db, projectId, subArgs);
         break;
 
       case "foundational":
-        handleFoundationalCommand(db, projectId, subArgs);
+        await handleFoundationalCommand(db, projectId, subArgs);
         break;
 
       case "promote":
-        handlePromotionCommand(db, projectId, process.cwd(), subArgs);
+        await handlePromotionCommand(db, projectId, process.cwd(), subArgs);
         break;
 
       case "temporal":
-        handleTemporalCommand(db, projectId, subArgs);
+        await handleTemporalCommand(db, projectId, subArgs);
         break;
 
       case "predict":
-        handlePredictCommand(db, projectId, subArgs);
+        await handlePredictCommand(db, projectId, subArgs);
         break;
 
       case "suggest":
@@ -327,19 +339,19 @@ async function main(): Promise<void> {
         break;
 
       case "insights":
-        handleInsightsCommand(db, projectId, subArgs);
+        await handleInsightsCommand(db, projectId, subArgs);
         break;
 
       case "relate":
-        handleRelationshipCommand(db, projectId, ["add", ...subArgs]);
+        await handleRelationshipCommand(db, projectId, ["add", ...subArgs]);
         break;
 
       case "relations":
-        handleRelationshipCommand(db, projectId, ["list", ...subArgs]);
+        await handleRelationshipCommand(db, projectId, ["list", ...subArgs]);
         break;
 
       case "unrelate":
-        handleRelationshipCommand(db, projectId, ["remove", ...subArgs]);
+        await handleRelationshipCommand(db, projectId, ["remove", ...subArgs]);
         break;
 
       case "consolidate":
@@ -351,49 +363,50 @@ async function main(): Promise<void> {
         const sessCmd = subArgs[0];
         switch (sessCmd) {
           case "start": {
-            const newSessionId = sessionStart(db, projectId, subArgs.slice(1).join(" "));
-            incrementSessionsSince(db, projectId);
-            assignSessionNumber(db, projectId, newSessionId);
+            const newSessionId = await sessionStart(db, projectId, subArgs.slice(1).join(" "));
+            await incrementSessionsSince(db, projectId);
+            await assignSessionNumber(db, projectId, newSessionId);
             break;
           }
           case "end": {
             // Use enhanced session end with auto-learning extraction
             await sessionEndEnhanced(db, projectId, parseInt(subArgs[1], 10), subArgs.slice(2));
             // Update file velocities from session
-            const endedSession = db
-              .query<{ files_touched: string | null }, [number]>("SELECT files_touched FROM sessions WHERE id = ?")
-              .get(parseInt(subArgs[1], 10));
+            const endedSession = await db.get<{ files_touched: string | null }>(
+              "SELECT files_touched FROM sessions WHERE id = ?",
+              [parseInt(subArgs[1], 10)]
+            );
             if (endedSession?.files_touched) {
               try {
                 const touchedFiles = JSON.parse(endedSession.files_touched);
-                updateFileVelocity(db, projectId, touchedFiles);
+                await updateFileVelocity(db, projectId, touchedFiles);
               } catch {
                 /* invalid JSON */
               }
             }
             // Generate insights non-blocking (best effort)
             try {
-              generateInsights(db, projectId);
+              await generateInsights(db, projectId);
             } catch {
               /* optional */
             }
             break;
           }
           case "last":
-            sessionLast(db, projectId);
+            await sessionLast(db, projectId);
             break;
           case "list":
-            sessionList(db, projectId);
+            await sessionList(db, projectId);
             break;
           case "count": {
-            const count = sessionCount(db, projectId);
+            const count = await sessionCount(db, projectId);
             console.error(`Total sessions: ${count}`);
             outputJson({ count });
             break;
           }
           case "correlations":
           case "corr":
-            handleCorrelationCommand(db, projectId, subArgs.slice(1));
+            await handleCorrelationCommand(db, projectId, subArgs.slice(1));
             break;
           default:
             console.error("Usage: muninn session <start|end|last|list|count|correlations> [args]");
@@ -402,22 +415,22 @@ async function main(): Promise<void> {
       }
 
       case "status":
-        showStatus(db, projectId);
+        await showStatus(db, projectId);
         break;
 
       case "fragile":
-        showFragile(db, projectId);
+        await showFragile(db, projectId);
         break;
 
       case "brief": {
-        const brief = generateBrief(db, projectId, process.cwd());
+        const brief = await generateBrief(db, projectId, process.cwd());
         console.error(brief);
         outputSuccess({ markdown: brief });
         break;
       }
 
       case "resume": {
-        const resume = generateResume(db, projectId);
+        const resume = await generateResume(db, projectId);
         console.error(resume);
         outputSuccess({ markdown: resume });
         break;
@@ -444,7 +457,7 @@ async function main(): Promise<void> {
         if (subArgs.length === 0) {
           console.error("Usage: muninn check <file1> [file2] ...");
         } else {
-          checkFiles(db, projectId, process.cwd(), subArgs);
+          await checkFiles(db, projectId, process.cwd(), subArgs);
         }
         break;
 
@@ -452,24 +465,24 @@ async function main(): Promise<void> {
         if (subArgs.length === 0) {
           console.error("Usage: muninn impact <file>");
         } else {
-          analyzeImpact(db, projectId, process.cwd(), subArgs[0]);
+          await analyzeImpact(db, projectId, process.cwd(), subArgs[0]);
         }
         break;
 
       case "smart-status":
       case "ss":
-        getSmartStatus(db, projectId, process.cwd());
+        await getSmartStatus(db, projectId, process.cwd());
         break;
 
       case "drift":
-        detectDrift(db, projectId, process.cwd());
+        await detectDrift(db, projectId, process.cwd());
         break;
 
       case "conflicts":
         if (subArgs.length === 0) {
           console.error("Usage: muninn conflicts <file1> [file2] ...");
         } else {
-          checkConflicts(db, projectId, process.cwd(), subArgs);
+          await checkConflicts(db, projectId, process.cwd(), subArgs);
         }
         break;
 
@@ -478,20 +491,20 @@ async function main(): Promise<void> {
         break;
 
       case "sync-hashes":
-        syncFileHashes(db, projectId, process.cwd());
+        await syncFileHashes(db, projectId, process.cwd());
         break;
 
       // Dependency commands
       case "deps":
         if (subArgs.includes("--refresh")) {
-          refreshDependencies(db, projectId, process.cwd());
+          await refreshDependencies(db, projectId, process.cwd());
         } else if (subArgs.includes("--graph")) {
           const focusFile = subArgs.find((a) => !a.startsWith("--"));
-          generateDependencyGraph(db, projectId, process.cwd(), focusFile);
+          await generateDependencyGraph(db, projectId, process.cwd(), focusFile);
         } else if (subArgs.includes("--cycles")) {
           findCircularDependencies(process.cwd());
         } else if (subArgs.length > 0 && !subArgs[0].startsWith("--")) {
-          showDependencies(db, projectId, process.cwd(), subArgs[0]);
+          await showDependencies(db, projectId, process.cwd(), subArgs[0]);
         } else {
           console.error("Usage: muninn deps <file> | --refresh | --graph [file] | --cycles");
         }
@@ -500,11 +513,11 @@ async function main(): Promise<void> {
       // Blast radius commands
       case "blast":
         if (subArgs.includes("--refresh")) {
-          computeBlastRadius(db, projectId, process.cwd());
+          await computeBlastRadius(db, projectId, process.cwd());
         } else if (subArgs.includes("--high")) {
-          showHighImpactFiles(db, projectId);
+          await showHighImpactFiles(db, projectId);
         } else if (subArgs.length > 0 && !subArgs[0].startsWith("--")) {
-          showBlastRadius(db, projectId, process.cwd(), subArgs[0]);
+          await showBlastRadius(db, projectId, process.cwd(), subArgs[0]);
         } else {
           console.error("Usage: muninn blast <file> | --refresh | --high");
         }
@@ -513,17 +526,17 @@ async function main(): Promise<void> {
       // Working memory commands
       case "bookmark":
       case "bm":
-        handleBookmarkCommand(db, projectId, subArgs);
+        await handleBookmarkCommand(db, projectId, subArgs);
         break;
 
       // Focus commands
       case "focus":
-        handleFocusCommand(db, projectId, subArgs);
+        await handleFocusCommand(db, projectId, subArgs);
         break;
 
       // Database commands
       case "db":
-        handleDatabaseCommand(db, subArgs);
+        await handleDatabaseCommand(db, subArgs);
         break;
 
       // Hook commands (for automation)
@@ -538,21 +551,21 @@ async function main(): Promise<void> {
               console.error("Usage: muninn hook check <file1> [file2] [--threshold N]");
               process.exit(1);
             }
-            hookCheck(db, projectId, process.cwd(), hookFiles, threshold);
+            await hookCheck(db, projectId, process.cwd(), hookFiles, threshold);
             break;
           }
           case "init":
-            hookInit(db, projectId, process.cwd());
+            await hookInit(db, projectId, process.cwd());
             break;
           case "post-edit":
             if (!subArgs[1]) {
               console.error("Usage: muninn hook post-edit <file>");
               process.exit(1);
             }
-            hookPostEdit(db, projectId, subArgs[1]);
+            await hookPostEdit(db, projectId, subArgs[1]);
             break;
           case "brain":
-            hookBrain(db, projectId, process.cwd());
+            await hookBrain(db, projectId, process.cwd());
             break;
           default:
             console.error("Usage: muninn hook <check|init|post-edit|brain>");

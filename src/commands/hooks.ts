@@ -4,7 +4,7 @@
  * These commands are designed to be called by MCP client hooks
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { computeContentHash } from "../utils/format";
@@ -41,13 +41,13 @@ interface HookInitResult {
 // Pre-edit check that exits 1 if fragility >= threshold
 // ============================================================================
 
-export function hookCheck(
-  db: Database,
+export async function hookCheck(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   files: string[],
   threshold: number = 7
-): HookCheckResult {
+): Promise<HookCheckResult> {
   const result: HookCheckResult = {
     blocked: false,
     reason: null,
@@ -58,20 +58,16 @@ export function hookCheck(
   let blockingFile: string | null = null;
 
   for (const filePath of files) {
-    const fileRecord = db
-      .query<
-        {
-          fragility: number;
-          fragility_reason: string | null;
-          content_hash: string | null;
-        },
-        [number, string]
-      >(`
-      SELECT fragility, fragility_reason, content_hash
-      FROM files
-      WHERE project_id = ? AND path = ?
-    `)
-      .get(projectId, filePath);
+    const fileRecord = await db.get<{
+      fragility: number;
+      fragility_reason: string | null;
+      content_hash: string | null;
+    }>(
+      `SELECT fragility, fragility_reason, content_hash
+       FROM files
+       WHERE project_id = ? AND path = ?`,
+      [projectId, filePath]
+    );
 
     const warnings: string[] = [];
     let fragility = 0;
@@ -106,13 +102,12 @@ export function hookCheck(
     }
 
     // Check for related issues
-    const issues = db
-      .query<{ id: number }, [number, string, string]>(`
-      SELECT id FROM issues
-      WHERE project_id = ? AND status = 'open' AND severity >= 7
-      AND (affected_files LIKE ? OR related_symbols LIKE ?)
-    `)
-      .all(projectId, `%${filePath}%`, `%${filePath}%`);
+    const issues = await db.all<{ id: number }>(
+      `SELECT id FROM issues
+       WHERE project_id = ? AND status = 'open' AND severity >= 7
+       AND (affected_files LIKE ? OR related_symbols LIKE ?)`,
+      [projectId, `%${filePath}%`, `%${filePath}%`]
+    );
 
     if (issues.length > 0) {
       warnings.push(`${issues.length} critical issue(s) affect this file`);
@@ -163,7 +158,11 @@ export function hookCheck(
 // Returns session initialization context
 // ============================================================================
 
-export function hookInit(db: Database, projectId: number, projectPath: string): HookInitResult {
+export async function hookInit(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string
+): Promise<HookInitResult> {
   const result: HookInitResult = {
     hasContext: false,
     lastSession: null,
@@ -173,24 +172,20 @@ export function hookInit(db: Database, projectId: number, projectPath: string): 
   };
 
   // Get last session
-  const session = db
-    .query<
-      {
-        goal: string;
-        outcome: string | null;
-        next_steps: string | null;
-        ended_at: string | null;
-        started_at: string;
-      },
-      [number]
-    >(`
-    SELECT goal, outcome, next_steps, ended_at, started_at
-    FROM sessions
-    WHERE project_id = ?
-    ORDER BY started_at DESC
-    LIMIT 1
-  `)
-    .get(projectId);
+  const session = await db.get<{
+    goal: string;
+    outcome: string | null;
+    next_steps: string | null;
+    ended_at: string | null;
+    started_at: string;
+  }>(
+    `SELECT goal, outcome, next_steps, ended_at, started_at
+     FROM sessions
+     WHERE project_id = ?
+     ORDER BY started_at DESC
+     LIMIT 1`,
+    [projectId]
+  );
 
   if (session) {
     result.hasContext = true;
@@ -204,12 +199,11 @@ export function hookInit(db: Database, projectId: number, projectPath: string): 
   }
 
   // Check project health
-  const criticalIssues = db
-    .query<{ id: number }, [number]>(`
-    SELECT id FROM issues
-    WHERE project_id = ? AND status = 'open' AND severity >= 8
-  `)
-    .all(projectId);
+  const criticalIssues = await db.all<{ id: number }>(
+    `SELECT id FROM issues
+     WHERE project_id = ? AND status = 'open' AND severity >= 8`,
+    [projectId]
+  );
 
   if (criticalIssues.length > 0) {
     result.health = "critical";
@@ -217,7 +211,7 @@ export function hookInit(db: Database, projectId: number, projectPath: string): 
   }
 
   // Check for stale files
-  const staleCount = countStaleFiles(db, projectId, projectPath);
+  const staleCount = await countStaleFiles(db, projectId, projectPath);
   if (staleCount > 0) {
     result.warnings.push(`${staleCount} stale file(s)`);
     if (result.health === "good") result.health = "attention";
@@ -225,14 +219,13 @@ export function hookInit(db: Database, projectId: number, projectPath: string): 
 
   // Get top action
   if (criticalIssues.length > 0) {
-    const topIssue = db
-      .query<{ id: number; title: string }, [number]>(`
-      SELECT id, title FROM issues
-      WHERE project_id = ? AND status = 'open' AND severity >= 8
-      ORDER BY severity DESC
-      LIMIT 1
-    `)
-      .get(projectId);
+    const topIssue = await db.get<{ id: number; title: string }>(
+      `SELECT id, title FROM issues
+       WHERE project_id = ? AND status = 'open' AND severity >= 8
+       ORDER BY severity DESC
+       LIMIT 1`,
+      [projectId]
+    );
     if (topIssue) {
       result.topAction = `Fix #${topIssue.id}: ${topIssue.title}`;
     }
@@ -282,14 +275,17 @@ function outputInitContext(result: HookInitResult): void {
 // Returns reminder to update memory
 // ============================================================================
 
-export function hookPostEdit(db: Database, projectId: number, filePath: string): void {
+export async function hookPostEdit(
+  db: DatabaseAdapter,
+  projectId: number,
+  filePath: string
+): Promise<void> {
   // Check if file is tracked
-  const fileRecord = db
-    .query<{ id: number; fragility: number }, [number, string]>(`
-    SELECT id, fragility FROM files
-    WHERE project_id = ? AND path = ?
-  `)
-    .get(projectId, filePath);
+  const fileRecord = await db.get<{ id: number; fragility: number }>(
+    `SELECT id, fragility FROM files
+     WHERE project_id = ? AND path = ?`,
+    [projectId, filePath]
+  );
 
   if (!fileRecord) {
     console.error(`\n💡 New file modified: ${filePath}`);
@@ -302,27 +298,29 @@ export function hookPostEdit(db: Database, projectId: number, filePath: string):
   }
 
   // Track the edit in active session
-  const sessionId = db
-    .query<{ id: number }, [number]>(`
-    SELECT id FROM sessions
-    WHERE project_id = ? AND ended_at IS NULL
-    ORDER BY started_at DESC
-    LIMIT 1
-  `)
-    .get(projectId)?.id;
+  const activeSession = await db.get<{ id: number }>(
+    `SELECT id FROM sessions
+     WHERE project_id = ? AND ended_at IS NULL
+     ORDER BY started_at DESC
+     LIMIT 1`,
+    [projectId]
+  );
+  const sessionId = activeSession?.id;
 
   if (sessionId) {
     // Update files_touched in session
-    const session = db
-      .query<{ files_touched: string | null }, [number]>(`
-      SELECT files_touched FROM sessions WHERE id = ?
-    `)
-      .get(sessionId);
+    const session = await db.get<{ files_touched: string | null }>(
+      `SELECT files_touched FROM sessions WHERE id = ?`,
+      [sessionId]
+    );
 
     const filesTouched = JSON.parse(session?.files_touched || "[]") as string[];
     if (!filesTouched.includes(filePath)) {
       filesTouched.push(filePath);
-      db.run(`UPDATE sessions SET files_touched = ? WHERE id = ?`, [JSON.stringify(filesTouched), sessionId]);
+      await db.run(`UPDATE sessions SET files_touched = ? WHERE id = ?`, [
+        JSON.stringify(filesTouched),
+        sessionId,
+      ]);
     }
   }
 
@@ -334,27 +332,27 @@ export function hookPostEdit(db: Database, projectId: number, filePath: string):
 // Comprehensive brain dump for session start
 // ============================================================================
 
-export function hookBrain(db: Database, projectId: number, projectPath: string): void {
+export async function hookBrain(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string
+): Promise<void> {
   console.error("\n🧠 Loading Brain...\n");
 
   // 1. Resume point
-  const session = db
-    .query<
-      {
-        goal: string;
-        outcome: string | null;
-        next_steps: string | null;
-        started_at: string;
-      },
-      [number]
-    >(`
-    SELECT goal, outcome, next_steps, started_at
-    FROM sessions
-    WHERE project_id = ?
-    ORDER BY started_at DESC
-    LIMIT 1
-  `)
-    .get(projectId);
+  const session = await db.get<{
+    goal: string;
+    outcome: string | null;
+    next_steps: string | null;
+    started_at: string;
+  }>(
+    `SELECT goal, outcome, next_steps, started_at
+     FROM sessions
+     WHERE project_id = ?
+     ORDER BY started_at DESC
+     LIMIT 1`,
+    [projectId]
+  );
 
   if (session) {
     const timeAgo = getTimeAgo(session.started_at);
@@ -366,14 +364,13 @@ export function hookBrain(db: Database, projectId: number, projectPath: string):
   }
 
   // 2. Critical issues
-  const issues = db
-    .query<{ id: number; title: string; severity: number }, [number]>(`
-    SELECT id, title, severity FROM issues
-    WHERE project_id = ? AND status = 'open' AND severity >= 7
-    ORDER BY severity DESC
-    LIMIT 3
-  `)
-    .all(projectId);
+  const issues = await db.all<{ id: number; title: string; severity: number }>(
+    `SELECT id, title, severity FROM issues
+     WHERE project_id = ? AND status = 'open' AND severity >= 7
+     ORDER BY severity DESC
+     LIMIT 3`,
+    [projectId]
+  );
 
   if (issues.length > 0) {
     console.error(`🔴 Critical Issues:`);
@@ -384,14 +381,13 @@ export function hookBrain(db: Database, projectId: number, projectPath: string):
   }
 
   // 3. Fragile files
-  const fragile = db
-    .query<{ path: string; fragility: number }, [number]>(`
-    SELECT path, fragility FROM files
-    WHERE project_id = ? AND fragility >= 7
-    ORDER BY fragility DESC
-    LIMIT 5
-  `)
-    .all(projectId);
+  const fragile = await db.all<{ path: string; fragility: number }>(
+    `SELECT path, fragility FROM files
+     WHERE project_id = ? AND fragility >= 7
+     ORDER BY fragility DESC
+     LIMIT 5`,
+    [projectId]
+  );
 
   if (fragile.length > 0) {
     console.error(`⚠️  Fragile Files:`);
@@ -402,14 +398,13 @@ export function hookBrain(db: Database, projectId: number, projectPath: string):
   }
 
   // 4. Recent decisions
-  const decisions = db
-    .query<{ id: number; title: string }, [number]>(`
-    SELECT id, title FROM decisions
-    WHERE project_id = ? AND status = 'active'
-    ORDER BY created_at DESC
-    LIMIT 3
-  `)
-    .all(projectId);
+  const decisions = await db.all<{ id: number; title: string }>(
+    `SELECT id, title FROM decisions
+     WHERE project_id = ? AND status = 'active'
+     ORDER BY created_at DESC
+     LIMIT 3`,
+    [projectId]
+  );
 
   if (decisions.length > 0) {
     console.error(`📝 Recent Decisions:`);
@@ -420,7 +415,7 @@ export function hookBrain(db: Database, projectId: number, projectPath: string):
   }
 
   // 5. Stale file count
-  const staleCount = countStaleFiles(db, projectId, projectPath);
+  const staleCount = await countStaleFiles(db, projectId, projectPath);
   if (staleCount > 0) {
     console.error(`📊 ${staleCount} file(s) have drifted since last analysis`);
     console.error("");
@@ -449,21 +444,21 @@ function getTimeAgo(dateStr: string): string {
   return `${Math.floor(diffDays / 7)}w ago`;
 }
 
-function countStaleFiles(db: Database, projectId: number, projectPath: string): number {
+async function countStaleFiles(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string
+): Promise<number> {
   let count = 0;
 
-  const files = db
-    .query<
-      {
-        path: string;
-        content_hash: string | null;
-      },
-      [number]
-    >(`
-    SELECT path, content_hash FROM files
-    WHERE project_id = ? AND status = 'active' AND content_hash IS NOT NULL
-  `)
-    .all(projectId);
+  const files = await db.all<{
+    path: string;
+    content_hash: string | null;
+  }>(
+    `SELECT path, content_hash FROM files
+     WHERE project_id = ? AND status = 'active' AND content_hash IS NOT NULL`,
+    [projectId]
+  );
 
   for (const file of files) {
     const fullPath = join(projectPath, file.path);

@@ -3,7 +3,7 @@
  * Smart status, pre-edit checks, impact analysis
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -17,11 +17,11 @@ import { getCorrelatedFiles } from "./session";
 // Pre-Edit Check Command
 // ============================================================================
 
-export function checkFiles(db: Database, projectId: number, projectPath: string, files: string[]): FileCheck[] {
+export async function checkFiles(db: DatabaseAdapter, projectId: number, projectPath: string, files: string[]): Promise<FileCheck[]> {
   const results: FileCheck[] = [];
 
   for (const filePath of files) {
-    const check = checkSingleFile(db, projectId, projectPath, filePath);
+    const check = await checkSingleFile(db, projectId, projectPath, filePath);
     results.push(check);
   }
 
@@ -30,32 +30,27 @@ export function checkFiles(db: Database, projectId: number, projectPath: string,
   return results;
 }
 
-function checkSingleFile(db: Database, projectId: number, projectPath: string, filePath: string): FileCheck {
+async function checkSingleFile(db: DatabaseAdapter, projectId: number, projectPath: string, filePath: string): Promise<FileCheck> {
   const warnings: string[] = [];
   const suggestions: string[] = [];
   let fragility: number | undefined;
   let isStale = false;
 
   // Get file info from database
-  const fileRecord = db
-    .query<
-      {
-        id: number;
-        fragility: number;
-        fragility_reason: string | null;
-        content_hash: string | null;
-        last_analyzed: string | null;
-        purpose: string | null;
-        dependencies: string | null;
-        dependents: string | null;
-      },
-      [number, string]
-    >(`
+  const fileRecord = await db.get<{
+    id: number;
+    fragility: number;
+    fragility_reason: string | null;
+    content_hash: string | null;
+    last_analyzed: string | null;
+    purpose: string | null;
+    dependencies: string | null;
+    dependents: string | null;
+  }>(`
     SELECT id, fragility, fragility_reason, content_hash, last_analyzed, purpose, dependencies, dependents
     FROM files
     WHERE project_id = ? AND path = ?
-  `)
-    .get(projectId, filePath);
+  `, [projectId, filePath]);
 
   if (fileRecord) {
     fragility = fileRecord.fragility;
@@ -105,33 +100,29 @@ function checkSingleFile(db: Database, projectId: number, projectPath: string, f
   }
 
   // Get related issues
-  const relatedIssues = db
-    .query<{ id: number; title: string }, [number, string, string]>(`
+  const relatedIssues = await db.all<{ id: number; title: string }>(`
     SELECT id, title FROM issues
     WHERE project_id = ? AND status = 'open'
     AND (affected_files LIKE ? OR related_symbols LIKE ?)
-  `)
-    .all(projectId, `%${filePath}%`, `%${filePath}%`);
+  `, [projectId, `%${filePath}%`, `%${filePath}%`]);
 
   if (relatedIssues.length > 0) {
     warnings.push(`${relatedIssues.length} open issue(s) related to this file`);
   }
 
   // Get related decisions
-  const relatedDecisions = db
-    .query<{ id: number; title: string }, [number, string]>(`
+  const relatedDecisions = await db.all<{ id: number; title: string }>(`
     SELECT id, title FROM decisions
     WHERE project_id = ? AND status = 'active'
     AND affects LIKE ?
-  `)
-    .all(projectId, `%${filePath}%`);
+  `, [projectId, `%${filePath}%`]);
 
   if (relatedDecisions.length > 0) {
     suggestions.push(`${relatedDecisions.length} decision(s) affect this file`);
   }
 
   // Get correlated files (files that often change together)
-  const correlations = getCorrelatedFiles(db, projectId, filePath, 5);
+  const correlations = await getCorrelatedFiles(db, projectId, filePath, 5);
   const correlatedFiles = correlations.map((c) => ({
     file: c.file,
     cochange_count: c.cochange_count,
@@ -200,9 +191,9 @@ function displayCheckResults(results: FileCheck[]): void {
 // Impact Analysis Command
 // ============================================================================
 
-export function analyzeImpact(db: Database, projectId: number, projectPath: string, filePath: string): ImpactResult {
+export async function analyzeImpact(db: DatabaseAdapter, projectId: number, projectPath: string, filePath: string): Promise<ImpactResult> {
   // Get blast radius data (uses BFS for full transitive analysis)
-  const blastResult = getBlastRadius(db, projectId, projectPath, filePath);
+  const blastResult = await getBlastRadius(db, projectId, projectPath, filePath);
 
   let directDependents: string[] = [];
   let indirectDependents: string[] = [];
@@ -214,20 +205,15 @@ export function analyzeImpact(db: Database, projectId: number, projectPath: stri
     blastSummary = blastResult.summary;
   } else {
     // Fallback to basic lookup if blast radius not available
-    const fileRecord = db
-      .query<
-        {
-          id: number;
-          dependencies: string | null;
-          dependents: string | null;
-        },
-        [number, string]
-      >(`
+    const fileRecord = await db.get<{
+      id: number;
+      dependencies: string | null;
+      dependents: string | null;
+    }>(`
       SELECT id, dependencies, dependents
       FROM files
       WHERE project_id = ? AND path = ?
-    `)
-      .get(projectId, filePath);
+    `, [projectId, filePath]);
 
     if (fileRecord) {
       directDependents = safeJsonParse<string[]>(fileRecord.dependents || "[]", []);
@@ -235,11 +221,9 @@ export function analyzeImpact(db: Database, projectId: number, projectPath: stri
       // Get indirect dependents (files that depend on direct dependents)
       const indirectSet = new Set<string>();
       for (const dep of directDependents) {
-        const depRecord = db
-          .query<{ dependents: string | null }, [number, string]>(`
+        const depRecord = await db.get<{ dependents: string | null }>(`
           SELECT dependents FROM files WHERE project_id = ? AND path = ?
-        `)
-          .get(projectId, dep);
+        `, [projectId, dep]);
 
         if (depRecord?.dependents) {
           const deps = safeJsonParse<string[]>(depRecord.dependents, []);
@@ -255,21 +239,17 @@ export function analyzeImpact(db: Database, projectId: number, projectPath: stri
   }
 
   // Get decisions that affect this file
-  const affectedByDecisions = db
-    .query<{ id: number; title: string }, [number, string]>(`
+  const affectedByDecisions = await db.all<{ id: number; title: string }>(`
     SELECT id, title FROM decisions
     WHERE project_id = ? AND status = 'active' AND affects LIKE ?
-  `)
-    .all(projectId, `%${filePath}%`);
+  `, [projectId, `%${filePath}%`]);
 
   // Get related issues
-  const relatedIssues = db
-    .query<{ id: number; title: string }, [number, string, string]>(`
+  const relatedIssues = await db.all<{ id: number; title: string }>(`
     SELECT id, title FROM issues
     WHERE project_id = ? AND status = 'open'
     AND (affected_files LIKE ? OR related_symbols LIKE ?)
-  `)
-    .all(projectId, `%${filePath}%`, `%${filePath}%`);
+  `, [projectId, `%${filePath}%`, `%${filePath}%`]);
 
   // Suggest tests - now using blast radius data if available
   const suggestedTests: string[] = [];
@@ -406,18 +386,16 @@ function displayImpactResult(
 // Smart Status Command
 // ============================================================================
 
-export function getSmartStatus(db: Database, projectId: number, projectPath: string): SmartStatus {
+export async function getSmartStatus(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<SmartStatus> {
   const actions: Array<{ priority: number; action: string; reason: string }> = [];
   const warnings: string[] = [];
 
   // Check for critical issues
-  const criticalIssues = db
-    .query<{ id: number; title: string; severity: number }, [number]>(`
+  const criticalIssues = await db.all<{ id: number; title: string; severity: number }>(`
     SELECT id, title, severity FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 8
     ORDER BY severity DESC
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   for (const issue of criticalIssues) {
     actions.push({
@@ -428,7 +406,7 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
   }
 
   // Check for stale files
-  const staleFiles = findStaleFiles(db, projectId, projectPath);
+  const staleFiles = await findStaleFiles(db, projectId, projectPath);
   if (staleFiles.length > 0) {
     actions.push({
       priority: 2,
@@ -439,14 +417,12 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
   }
 
   // Check for ongoing session
-  const ongoingSession = db
-    .query<{ id: number; goal: string; started_at: string }, [number]>(`
+  const ongoingSession = await db.get<{ id: number; goal: string; started_at: string }>(`
     SELECT id, goal, started_at FROM sessions
     WHERE project_id = ? AND ended_at IS NULL
     ORDER BY started_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `, [projectId]);
 
   if (ongoingSession) {
     warnings.push(`Session #${ongoingSession.id} still in progress: "${ongoingSession.goal}"`);
@@ -462,13 +438,12 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
       .split("\n")
       .filter(Boolean);
 
-    const fragileChanged = db
-      .query<{ path: string; fragility: number }, [number]>(`
+    const fragileFiles = await db.all<{ path: string; fragility: number }>(`
       SELECT path, fragility FROM files
       WHERE project_id = ? AND fragility >= 7
-    `)
-      .all(projectId)
-      .filter((f) => gitChanges.includes(f.path));
+    `, [projectId]);
+
+    const fragileChanged = fragileFiles.filter((f) => gitChanges.includes(f.path));
 
     if (fragileChanged.length > 0) {
       warnings.push(`${fragileChanged.length} fragile file(s) recently modified`);
@@ -483,14 +458,12 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
   }
 
   // Check for pending next steps from last session
-  const lastSession = db
-    .query<{ next_steps: string | null }, [number]>(`
+  const lastSession = await db.get<{ next_steps: string | null }>(`
     SELECT next_steps FROM sessions
     WHERE project_id = ? AND ended_at IS NOT NULL
     ORDER BY ended_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `, [projectId]);
 
   if (lastSession?.next_steps) {
     actions.push({
@@ -501,14 +474,12 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
   }
 
   // Check for tech debt
-  const techDebt = db
-    .query<{ id: number; title: string; severity: number }, [number]>(`
+  const techDebt = await db.all<{ id: number; title: string; severity: number }>(`
     SELECT id, title, severity FROM issues
     WHERE project_id = ? AND type = 'tech-debt' AND status = 'open'
     ORDER BY severity DESC
     LIMIT 3
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   if (techDebt.length > 0) {
     actions.push({
@@ -519,7 +490,7 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
   }
 
   // Calculate project health
-  const projectHealth = calculateProjectHealth(db, projectId, criticalIssues.length, staleFiles.length);
+  const projectHealth = await calculateProjectHealth(db, projectId, criticalIssues.length, staleFiles.length);
 
   // Generate summary
   const summary = generateStatusSummary(projectHealth, actions.length, warnings.length);
@@ -536,24 +507,19 @@ export function getSmartStatus(db: Database, projectId: number, projectPath: str
   return result;
 }
 
-function findStaleFiles(db: Database, projectId: number, projectPath: string): StaleFile[] {
+async function findStaleFiles(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<StaleFile[]> {
   const staleFiles: StaleFile[] = [];
 
-  const trackedFiles = db
-    .query<
-      {
-        path: string;
-        content_hash: string | null;
-        last_analyzed: string | null;
-        fs_modified_at: string | null;
-      },
-      [number]
-    >(`
+  const trackedFiles = await db.all<{
+    path: string;
+    content_hash: string | null;
+    last_analyzed: string | null;
+    fs_modified_at: string | null;
+  }>(`
     SELECT path, content_hash, last_analyzed, fs_modified_at
     FROM files
     WHERE project_id = ? AND status = 'active'
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   for (const file of trackedFiles) {
     const fullPath = join(projectPath, file.path);
@@ -592,29 +558,25 @@ function findStaleFiles(db: Database, projectId: number, projectPath: string): S
   return staleFiles;
 }
 
-function calculateProjectHealth(
-  db: Database,
+async function calculateProjectHealth(
+  db: DatabaseAdapter,
   projectId: number,
   criticalCount: number,
   staleCount: number
-): ProjectHealth {
+): Promise<ProjectHealth> {
   if (criticalCount > 0) return "critical";
 
-  const openIssues =
-    db
-      .query<{ count: number }, [number]>(`
+  const openIssuesResult = await db.get<{ count: number }>(`
     SELECT COUNT(*) as count FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 5
-  `)
-      .get(projectId)?.count || 0;
+  `, [projectId]);
+  const openIssues = openIssuesResult?.count || 0;
 
-  const highFragilityFiles =
-    db
-      .query<{ count: number }, [number]>(`
+  const highFragilityResult = await db.get<{ count: number }>(`
     SELECT COUNT(*) as count FROM files
     WHERE project_id = ? AND fragility >= 8
-  `)
-      .get(projectId)?.count || 0;
+  `, [projectId]);
+  const highFragilityFiles = highFragilityResult?.count || 0;
 
   if (openIssues > 5 || staleCount > 10 || highFragilityFiles > 5) {
     return "attention";
@@ -662,27 +624,22 @@ function displaySmartStatus(status: SmartStatus): void {
 // Conflict Detection Command
 // ============================================================================
 
-export function checkConflicts(
-  db: Database,
+export async function checkConflicts(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   files: string[]
-): Array<{ path: string; hasConflict: boolean; reason: string }> {
+): Promise<Array<{ path: string; hasConflict: boolean; reason: string }>> {
   const results: Array<{ path: string; hasConflict: boolean; reason: string }> = [];
 
   for (const filePath of files) {
-    const fileRecord = db
-      .query<
-        {
-          last_queried_at: string | null;
-          content_hash: string | null;
-        },
-        [number, string]
-      >(`
+    const fileRecord = await db.get<{
+      last_queried_at: string | null;
+      content_hash: string | null;
+    }>(`
       SELECT last_queried_at, content_hash FROM files
       WHERE project_id = ? AND path = ?
-    `)
-      .get(projectId, filePath);
+    `, [projectId, filePath]);
 
     if (!fileRecord) {
       results.push({

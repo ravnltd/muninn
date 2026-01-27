@@ -7,7 +7,7 @@
  * Lifecycle: Learning → Foundational → Confirmed 3x → Candidate → Promoted → CLAUDE.md
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MUNINN_PROMOTED_START, MUNINN_PROMOTED_END } from "../templates/claude-md";
@@ -52,22 +52,24 @@ export interface StaleCLAUDEContent {
  * - promotion_status = 'not_ready'
  * - Not archived
  */
-export function getPromotionCandidates(db: Database, projectId: number): PromotionCandidate[] {
+export async function getPromotionCandidates(
+  db: DatabaseAdapter,
+  projectId: number
+): Promise<PromotionCandidate[]> {
   try {
-    return db
-      .query<PromotionCandidate, [number]>(`
-        SELECT id, title, content, category, confidence, times_applied, times_confirmed
-        FROM learnings
-        WHERE project_id = ?
-          AND foundational = 1
-          AND confidence >= 8
-          AND COALESCE(times_confirmed, 0) >= 3
-          AND times_applied >= 5
-          AND COALESCE(promotion_status, 'not_ready') = 'not_ready'
-          AND archived_at IS NULL
-        ORDER BY confidence DESC, times_applied DESC
-      `)
-      .all(projectId);
+    return await db.all<PromotionCandidate>(
+      `SELECT id, title, content, category, confidence, times_applied, times_confirmed
+       FROM learnings
+       WHERE project_id = ?
+         AND foundational = 1
+         AND confidence >= 8
+         AND COALESCE(times_confirmed, 0) >= 3
+         AND times_applied >= 5
+         AND COALESCE(promotion_status, 'not_ready') = 'not_ready'
+         AND archived_at IS NULL
+       ORDER BY confidence DESC, times_applied DESC`,
+      [projectId]
+    );
   } catch {
     return []; // Columns might not exist yet
   }
@@ -101,25 +103,27 @@ export function isPromotionReady(learning: {
 /**
  * Promote a learning to CLAUDE.md.
  */
-export function promoteLearning(db: Database, projectId: number, id: number, section: string): void {
-  const learning = db
-    .query<{ id: number; project_id: number; title: string }, [number, number]>(
-      "SELECT id, project_id, title FROM learnings WHERE id = ? AND project_id = ?"
-    )
-    .get(id, projectId);
+export async function promoteLearning(
+  db: DatabaseAdapter,
+  projectId: number,
+  id: number,
+  section: string
+): Promise<void> {
+  const learning = await db.get<{ id: number; project_id: number; title: string }>(
+    "SELECT id, project_id, title FROM learnings WHERE id = ? AND project_id = ?",
+    [id, projectId]
+  );
 
   if (!learning) {
     throw new Error(`Learning #${id} not found`);
   }
 
-  db.run(
-    `
-    UPDATE learnings SET
-      promotion_status = 'promoted',
-      promoted_at = CURRENT_TIMESTAMP,
-      promoted_to_section = ?
-    WHERE id = ?
-  `,
+  await db.run(
+    `UPDATE learnings SET
+       promotion_status = 'promoted',
+       promoted_at = CURRENT_TIMESTAMP,
+       promoted_to_section = ?
+     WHERE id = ?`,
     [section, id]
   );
 }
@@ -127,31 +131,33 @@ export function promoteLearning(db: Database, projectId: number, id: number, sec
 /**
  * Demote a learning (remove from CLAUDE.md).
  */
-export function demoteLearning(db: Database, projectId: number, id: number, reason: string): void {
-  const learning = db
-    .query<{ id: number; project_id: number; title: string }, [number, number]>(
-      "SELECT id, project_id, title FROM learnings WHERE id = ? AND project_id = ?"
-    )
-    .get(id, projectId);
+export async function demoteLearning(
+  db: DatabaseAdapter,
+  projectId: number,
+  id: number,
+  reason: string
+): Promise<void> {
+  const learning = await db.get<{ id: number; project_id: number; title: string }>(
+    "SELECT id, project_id, title FROM learnings WHERE id = ? AND project_id = ?",
+    [id, projectId]
+  );
 
   if (!learning) {
     throw new Error(`Learning #${id} not found`);
   }
 
-  db.run(
-    `
-    UPDATE learnings SET
-      promotion_status = 'demoted',
-      promoted_at = NULL,
-      promoted_to_section = NULL
-    WHERE id = ?
-  `,
+  await db.run(
+    `UPDATE learnings SET
+       promotion_status = 'demoted',
+       promoted_at = NULL,
+       promoted_to_section = NULL
+     WHERE id = ?`,
     [id]
   );
 
   // Log the demotion reason as an observation
   try {
-    db.run(
+    await db.run(
       `INSERT INTO observations (project_id, type, content)
        VALUES (?, 'insight', ?)`,
       [projectId, `Demoted L${id}: ${reason}`]
@@ -172,19 +178,21 @@ export function demoteLearning(db: Database, projectId: number, id: number, reas
  * - Confidence dropped below 6
  * - Not referenced in 90+ days
  */
-export function getStaleCLAUDEMDContent(db: Database, projectId: number): StaleCLAUDEContent[] {
+export async function getStaleCLAUDEMDContent(
+  db: DatabaseAdapter,
+  projectId: number
+): Promise<StaleCLAUDEContent[]> {
   const stale: StaleCLAUDEContent[] = [];
 
   try {
     // Confidence dropped
-    const lowConfidence = db
-      .query<{ id: number; title: string; confidence: number }, [number]>(`
-        SELECT id, title, confidence FROM learnings
-        WHERE project_id = ?
-          AND promotion_status = 'promoted'
-          AND confidence < 6
-      `)
-      .all(projectId);
+    const lowConfidence = await db.all<{ id: number; title: string; confidence: number }>(
+      `SELECT id, title, confidence FROM learnings
+       WHERE project_id = ?
+         AND promotion_status = 'promoted'
+         AND confidence < 6`,
+      [projectId]
+    );
 
     for (const l of lowConfidence) {
       stale.push({
@@ -196,14 +204,17 @@ export function getStaleCLAUDEMDContent(db: Database, projectId: number): StaleC
     }
 
     // Not referenced in 90+ days
-    const notReferenced = db
-      .query<{ id: number; title: string; last_referenced_at: string | null }, [number]>(`
-        SELECT id, title, last_referenced_at FROM learnings
-        WHERE project_id = ?
-          AND promotion_status = 'promoted'
-          AND (last_referenced_at IS NULL OR last_referenced_at < datetime('now', '-90 days'))
-      `)
-      .all(projectId);
+    const notReferenced = await db.all<{
+      id: number;
+      title: string;
+      last_referenced_at: string | null;
+    }>(
+      `SELECT id, title, last_referenced_at FROM learnings
+       WHERE project_id = ?
+         AND promotion_status = 'promoted'
+         AND (last_referenced_at IS NULL OR last_referenced_at < datetime('now', '-90 days'))`,
+      [projectId]
+    );
 
     for (const l of notReferenced) {
       // Avoid duplicates
@@ -230,22 +241,26 @@ export function getStaleCLAUDEMDContent(db: Database, projectId: number): StaleC
 /**
  * Get all promoted learnings grouped by section.
  */
-function getPromotedLearnings(
-  db: Database,
+async function getPromotedLearnings(
+  db: DatabaseAdapter,
   projectId: number
-): Map<string, Array<{ id: number; title: string; content: string }>> {
+): Promise<Map<string, Array<{ id: number; title: string; content: string }>>> {
   const bySection = new Map<string, Array<{ id: number; title: string; content: string }>>();
 
   try {
-    const promoted = db
-      .query<{ id: number; title: string; content: string; promoted_to_section: string }, [number]>(`
-        SELECT id, title, content, COALESCE(promoted_to_section, 'General') as promoted_to_section
-        FROM learnings
-        WHERE project_id = ?
-          AND promotion_status = 'promoted'
-        ORDER BY promoted_to_section, confidence DESC, id
-      `)
-      .all(projectId);
+    const promoted = await db.all<{
+      id: number;
+      title: string;
+      content: string;
+      promoted_to_section: string;
+    }>(
+      `SELECT id, title, content, COALESCE(promoted_to_section, 'General') as promoted_to_section
+       FROM learnings
+       WHERE project_id = ?
+         AND promotion_status = 'promoted'
+       ORDER BY promoted_to_section, confidence DESC, id`,
+      [projectId]
+    );
 
     for (const l of promoted) {
       const section = l.promoted_to_section;
@@ -268,8 +283,8 @@ function getPromotedLearnings(
 /**
  * Generate the promoted learnings markdown section.
  */
-function generatePromotedSection(db: Database, projectId: number): string {
-  const bySection = getPromotedLearnings(db, projectId);
+async function generatePromotedSection(db: DatabaseAdapter, projectId: number): Promise<string> {
+  const bySection = await getPromotedLearnings(db, projectId);
 
   if (bySection.size === 0) {
     return "";
@@ -299,14 +314,18 @@ function generatePromotedSection(db: Database, projectId: number): string {
 /**
  * Sync promoted learnings to CLAUDE.md.
  */
-export function syncPromotedToCLAUDEMD(db: Database, projectId: number, claudeMdPath: string): boolean {
+export async function syncPromotedToCLAUDEMD(
+  db: DatabaseAdapter,
+  projectId: number,
+  claudeMdPath: string
+): Promise<boolean> {
   if (!existsSync(claudeMdPath)) {
     console.error(`❌ CLAUDE.md not found at ${claudeMdPath}`);
     return false;
   }
 
   const existing = readFileSync(claudeMdPath, "utf-8");
-  const promotedSection = generatePromotedSection(db, projectId);
+  const promotedSection = await generatePromotedSection(db, projectId);
 
   let updated: string;
 
@@ -346,9 +365,9 @@ export function syncPromotedToCLAUDEMD(db: Database, projectId: number, claudeMd
  * Mark a learning as a promotion candidate.
  * Called automatically when a learning meets criteria.
  */
-export function markAsCandidate(db: Database, id: number): void {
+export async function markAsCandidate(db: DatabaseAdapter, id: number): Promise<void> {
   try {
-    db.run(`UPDATE learnings SET promotion_status = 'candidate' WHERE id = ?`, [id]);
+    await db.run(`UPDATE learnings SET promotion_status = 'candidate' WHERE id = ?`, [id]);
   } catch {
     // Column might not exist yet
   }
@@ -358,7 +377,12 @@ export function markAsCandidate(db: Database, id: number): void {
 // CLI Handler
 // ============================================================================
 
-export function handlePromotionCommand(db: Database, projectId: number, cwd: string, args: string[]): void {
+export async function handlePromotionCommand(
+  db: DatabaseAdapter,
+  projectId: number,
+  cwd: string,
+  args: string[]
+): Promise<void> {
   const subCmd = args[0];
   const claudeMdPath = join(cwd, "CLAUDE.md");
 
@@ -366,7 +390,7 @@ export function handlePromotionCommand(db: Database, projectId: number, cwd: str
     case "candidates":
     case "list":
     case undefined: {
-      const candidates = getPromotionCandidates(db, projectId);
+      const candidates = await getPromotionCandidates(db, projectId);
 
       if (candidates.length === 0) {
         console.error("No learnings ready for promotion.");
@@ -380,7 +404,9 @@ export function handlePromotionCommand(db: Database, projectId: number, cwd: str
       console.error(`\n🎓 Promotion Candidates (${candidates.length}):\n`);
       for (const c of candidates) {
         console.error(`  L${c.id}: ${c.title} [${c.category}]`);
-        console.error(`     Confidence: ${c.confidence}/10, Applied: ${c.times_applied}x, Confirmed: ${c.times_confirmed}x`);
+        console.error(
+          `     Confidence: ${c.confidence}/10, Applied: ${c.times_applied}x, Confirmed: ${c.times_confirmed}x`
+        );
         console.error(`     ${c.content.slice(0, 60)}...`);
         console.error("");
       }
@@ -392,7 +418,7 @@ export function handlePromotionCommand(db: Database, projectId: number, cwd: str
 
     case "sync": {
       console.error("🔄 Syncing promoted learnings to CLAUDE.md...");
-      const success = syncPromotedToCLAUDEMD(db, projectId, claudeMdPath);
+      const success = await syncPromotedToCLAUDEMD(db, projectId, claudeMdPath);
       if (success) {
         console.error("✅ CLAUDE.md updated with promoted learnings.");
         outputSuccess({ synced: true });
@@ -403,7 +429,7 @@ export function handlePromotionCommand(db: Database, projectId: number, cwd: str
     }
 
     case "stale": {
-      const stale = getStaleCLAUDEMDContent(db, projectId);
+      const stale = await getStaleCLAUDEMDContent(db, projectId);
 
       if (stale.length === 0) {
         console.error("No stale promoted content found.");
@@ -437,11 +463,11 @@ export function handlePromotionCommand(db: Database, projectId: number, cwd: str
       }
 
       try {
-        demoteLearning(db, projectId, id, reason);
+        await demoteLearning(db, projectId, id, reason);
         console.error(`✅ L${id} demoted from CLAUDE.md.`);
 
         // Auto-sync after demotion
-        syncPromotedToCLAUDEMD(db, projectId, claudeMdPath);
+        await syncPromotedToCLAUDEMD(db, projectId, claudeMdPath);
         outputSuccess({ id, status: "demoted", reason });
       } catch (error) {
         console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);
@@ -458,11 +484,11 @@ export function handlePromotionCommand(db: Database, projectId: number, cwd: str
         const section = toIdx !== -1 ? args.slice(toIdx + 1).join(" ") : "General";
 
         try {
-          promoteLearning(db, projectId, id, section);
+          await promoteLearning(db, projectId, id, section);
           console.error(`✅ L${id} promoted to CLAUDE.md section: ${section}`);
 
           // Auto-sync after promotion
-          syncPromotedToCLAUDEMD(db, projectId, claudeMdPath);
+          await syncPromotedToCLAUDEMD(db, projectId, claudeMdPath);
           outputSuccess({ id, status: "promoted", section });
         } catch (error) {
           console.error(`❌ ${error instanceof Error ? error.message : String(error)}`);

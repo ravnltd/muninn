@@ -7,9 +7,12 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DatabaseAdapter } from "../../src/database/adapter";
+import { LocalAdapter } from "../../src/database/adapters/local";
 
 export interface TestDb {
-  db: Database;
+  db: DatabaseAdapter;
+  rawDb: Database; // For seed functions that need sync access
   path: string;
   projectId: number;
   tempDir: string;
@@ -395,13 +398,17 @@ export function createTestDb(): TestDb {
   );
   const projectId = Number(result.lastInsertRowid);
 
+  // Wrap with LocalAdapter for async interface
+  const adapter = new LocalAdapter(db);
+
   return {
-    db,
+    db: adapter,
+    rawDb: db, // Keep raw reference for seed functions
     path: dbPath,
     projectId,
     tempDir,
     cleanup: () => {
-      db.close();
+      adapter.close();
       rmSync(tempDir, { recursive: true, force: true });
     },
   };

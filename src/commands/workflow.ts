@@ -3,7 +3,7 @@
  * Track how the user works on different task types
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { outputSuccess } from "../utils/format";
 
 // ============================================================================
@@ -18,13 +18,13 @@ const VALID_TASK_TYPES: TaskType[] = ["code_review", "debugging", "feature_build
 // Set Workflow (UPSERT)
 // ============================================================================
 
-export function workflowSet(
-  db: Database,
+export async function workflowSet(
+  db: DatabaseAdapter,
   projectId: number | null,
   taskType: TaskType,
   approach: string,
   options: { preferences?: string; examples?: string; global?: boolean } = {}
-): number {
+): Promise<number> {
   if (!taskType || !approach) {
     console.error("Usage: muninn workflow set <task_type> <approach> [--preferences <json>]");
     process.exit(1);
@@ -40,15 +40,13 @@ export function workflowSet(
   }
 
   // UPSERT: update if exists, insert if not
-  const existing = db
-    .query<{ id: number; times_used: number }, [number | null, string]>(`
+  const existing = await db.get<{ id: number; times_used: number }>(`
     SELECT id, times_used FROM workflow_patterns
     WHERE project_id = ? AND task_type = ?
-  `)
-    .get(projectId, taskType);
+  `, [projectId, taskType]);
 
   if (existing) {
-    db.run(
+    await db.run(
       `
       UPDATE workflow_patterns
       SET approach = ?, preferences = ?, examples = ?,
@@ -65,7 +63,7 @@ export function workflowSet(
     return existing.id;
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO workflow_patterns (project_id, task_type, approach, preferences, examples, last_used_at)
     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -81,22 +79,20 @@ export function workflowSet(
   return id;
 }
 
-function workflowSetGlobal(
-  db: Database,
+async function workflowSetGlobal(
+  db: DatabaseAdapter,
   taskType: TaskType,
   approach: string,
   preferences?: string,
   examples?: string
-): number {
+): Promise<number> {
   // UPSERT on global table
-  const existing = db
-    .query<{ id: number; times_used: number }, [string]>(`
+  const existing = await db.get<{ id: number; times_used: number }>(`
     SELECT id, times_used FROM global_workflow_patterns WHERE task_type = ?
-  `)
-    .get(taskType);
+  `, [taskType]);
 
   if (existing) {
-    db.run(
+    await db.run(
       `
       UPDATE global_workflow_patterns
       SET approach = ?, preferences = ?, examples = ?,
@@ -113,7 +109,7 @@ function workflowSetGlobal(
     return existing.id;
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO global_workflow_patterns (task_type, approach, preferences, examples, last_used_at)
     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -131,34 +127,29 @@ function workflowSetGlobal(
 // Get Workflow
 // ============================================================================
 
-export function workflowGet(
-  db: Database,
+export async function workflowGet(
+  db: DatabaseAdapter,
   projectId: number | null,
   taskType: TaskType,
   options: { global?: boolean } = {}
-): void {
+): Promise<void> {
   if (!taskType) {
     console.error("Usage: muninn workflow get <task_type>");
     process.exit(1);
   }
 
   if (options.global) {
-    const pattern = db
-      .query<
-        {
-          id: number;
-          task_type: string;
-          approach: string;
-          preferences: string | null;
-          examples: string | null;
-          times_used: number;
-          last_used_at: string | null;
-        },
-        [string]
-      >(`
+    const pattern = await db.get<{
+      id: number;
+      task_type: string;
+      approach: string;
+      preferences: string | null;
+      examples: string | null;
+      times_used: number;
+      last_used_at: string | null;
+    }>(`
       SELECT * FROM global_workflow_patterns WHERE task_type = ?
-    `)
-      .get(taskType);
+    `, [taskType]);
 
     if (!pattern) {
       console.error(`No global workflow found for "${taskType}"`);
@@ -175,23 +166,18 @@ export function workflowGet(
   }
 
   // Try project-local first, fall back to global
-  const pattern = db
-    .query<
-      {
-        id: number;
-        task_type: string;
-        approach: string;
-        preferences: string | null;
-        examples: string | null;
-        times_used: number;
-        last_used_at: string | null;
-      },
-      [number | null, string]
-    >(`
+  const pattern = await db.get<{
+    id: number;
+    task_type: string;
+    approach: string;
+    preferences: string | null;
+    examples: string | null;
+    times_used: number;
+    last_used_at: string | null;
+  }>(`
     SELECT * FROM workflow_patterns
     WHERE project_id = ? AND task_type = ?
-  `)
-    .get(projectId, taskType);
+  `, [projectId, taskType]);
 
   if (pattern) {
     console.error(`\n🔄 Workflow: ${taskType}`);
@@ -203,21 +189,16 @@ export function workflowGet(
   }
 
   // Fall back to global
-  const globalPattern = db
-    .query<
-      {
-        id: number;
-        task_type: string;
-        approach: string;
-        preferences: string | null;
-        examples: string | null;
-        times_used: number;
-      },
-      [string]
-    >(`
+  const globalPattern = await db.get<{
+    id: number;
+    task_type: string;
+    approach: string;
+    preferences: string | null;
+    examples: string | null;
+    times_used: number;
+  }>(`
     SELECT * FROM global_workflow_patterns WHERE task_type = ?
-  `)
-    .get(taskType);
+  `, [taskType]);
 
   if (globalPattern) {
     console.error(`\n🔄 Workflow (global): ${taskType}`);
@@ -234,24 +215,19 @@ export function workflowGet(
 // List Workflows
 // ============================================================================
 
-export function workflowList(db: Database, projectId: number | null, options: { global?: boolean } = {}): void {
+export async function workflowList(db: DatabaseAdapter, projectId: number | null, options: { global?: boolean } = {}): Promise<void> {
   if (options.global) {
-    const patterns = db
-      .query<
-        {
-          id: number;
-          task_type: string;
-          approach: string;
-          times_used: number;
-          last_used_at: string | null;
-        },
-        []
-      >(`
+    const patterns = await db.all<{
+      id: number;
+      task_type: string;
+      approach: string;
+      times_used: number;
+      last_used_at: string | null;
+    }>(`
       SELECT id, task_type, approach, times_used, last_used_at
       FROM global_workflow_patterns
       ORDER BY times_used DESC
-    `)
-      .all();
+    `, []);
 
     console.error(`\n🔄 Global Workflows (${patterns.length})\n`);
     for (const p of patterns) {
@@ -261,23 +237,18 @@ export function workflowList(db: Database, projectId: number | null, options: { 
     return;
   }
 
-  const patterns = db
-    .query<
-      {
-        id: number;
-        task_type: string;
-        approach: string;
-        times_used: number;
-        last_used_at: string | null;
-      },
-      [number | null]
-    >(`
+  const patterns = await db.all<{
+    id: number;
+    task_type: string;
+    approach: string;
+    times_used: number;
+    last_used_at: string | null;
+  }>(`
     SELECT id, task_type, approach, times_used, last_used_at
     FROM workflow_patterns
     WHERE project_id = ?
     ORDER BY times_used DESC
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   console.error(`\n🔄 Workflows (${patterns.length})\n`);
   for (const p of patterns) {
@@ -290,7 +261,7 @@ export function workflowList(db: Database, projectId: number | null, options: { 
 // CLI Handler
 // ============================================================================
 
-export function handleWorkflowCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleWorkflowCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -305,20 +276,20 @@ export function handleWorkflowCommand(db: Database, projectId: number, args: str
       const exIdx = args.indexOf("--examples");
       const examples = exIdx !== -1 ? args[exIdx + 1] : undefined;
       const isGlobal = args.includes("--global");
-      workflowSet(db, isGlobal ? null : projectId, taskType, approach, { preferences, examples, global: isGlobal });
+      await workflowSet(db, isGlobal ? null : projectId, taskType, approach, { preferences, examples, global: isGlobal });
       break;
     }
 
     case "get": {
       const taskType = args[1] as TaskType;
       const isGlobal = args.includes("--global");
-      workflowGet(db, isGlobal ? null : projectId, taskType, { global: isGlobal });
+      await workflowGet(db, isGlobal ? null : projectId, taskType, { global: isGlobal });
       break;
     }
 
     case "list": {
       const isGlobal = args.includes("--global");
-      workflowList(db, isGlobal ? null : projectId, { global: isGlobal });
+      await workflowList(db, isGlobal ? null : projectId, { global: isGlobal });
       break;
     }
 

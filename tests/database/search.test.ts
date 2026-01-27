@@ -21,8 +21,8 @@ describe("Search Queries", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Seed test data
-    seedTestFiles(testDb.db, testDb.projectId, [
+    // Seed test data (use rawDb for sync operations)
+    seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/auth/login.ts", purpose: "User authentication and login flow" },
       { path: "src/auth/session.ts", purpose: "Session management and tokens" },
       { path: "src/api/users.ts", purpose: "User API endpoints" },
@@ -30,7 +30,7 @@ describe("Search Queries", () => {
       { path: "src/database/queries.ts", purpose: "Database query helpers" },
     ]);
 
-    seedTestDecisions(testDb.db, testDb.projectId, [
+    seedTestDecisions(testDb.rawDb, testDb.projectId, [
       {
         title: "Use JWT for authentication",
         decision: "Implement JWT tokens for API authentication",
@@ -43,12 +43,12 @@ describe("Search Queries", () => {
       },
     ]);
 
-    seedTestIssues(testDb.db, testDb.projectId, [
+    seedTestIssues(testDb.rawDb, testDb.projectId, [
       { title: "Login timeout bug", description: "Users are logged out after 5 minutes", severity: 8 },
       { title: "Missing validation", description: "API endpoints lack input validation", severity: 6 },
     ]);
 
-    seedTestLearnings(testDb.db, testDb.projectId, [
+    seedTestLearnings(testDb.rawDb, testDb.projectId, [
       {
         category: "pattern",
         title: "Authentication best practices",
@@ -130,8 +130,8 @@ describe("Search Queries", () => {
 
   describe("Focus boosting", () => {
     test("boosts results matching focus keywords", async () => {
-      // Set focus on authentication
-      setTestFocus(testDb.db, testDb.projectId, "authentication", [], ["login", "session"]);
+      // Set focus on authentication (use rawDb for sync seed operations)
+      setTestFocus(testDb.rawDb, testDb.projectId, "authentication", [], ["login", "session"]);
 
       const results = await semanticQuery(testDb.db, "src", testDb.projectId);
 
@@ -140,11 +140,11 @@ describe("Search Queries", () => {
     });
 
     test("boosts results matching focus file patterns", async () => {
-      // Clear previous focus
-      testDb.db.run(`UPDATE focus SET cleared_at = CURRENT_TIMESTAMP WHERE project_id = ?`, [testDb.projectId]);
+      // Clear previous focus (use rawDb for direct SQL)
+      testDb.rawDb.run(`UPDATE focus SET cleared_at = CURRENT_TIMESTAMP WHERE project_id = ?`, [testDb.projectId]);
 
       // Set new focus
-      setTestFocus(testDb.db, testDb.projectId, "auth module", ["src/auth/*"], []);
+      setTestFocus(testDb.rawDb, testDb.projectId, "auth module", ["src/auth/*"], []);
 
       const results = await semanticQuery(testDb.db, "src", testDb.projectId);
       expect(Array.isArray(results)).toBe(true);
@@ -156,8 +156,8 @@ describe("Search Queries", () => {
       // Query for auth files
       await semanticQuery(testDb.db, "auth login", testDb.projectId);
 
-      // Check that temperature is set to hot for matched files
-      const hotFiles = testDb.db
+      // Check that temperature is set to hot for matched files (use rawDb for direct SQL)
+      const hotFiles = testDb.rawDb
         .query<{ path: string; temperature: string }, []>(
           `SELECT path, temperature FROM files WHERE temperature = 'hot'`
         )
@@ -175,22 +175,22 @@ describe("Global Search Functions", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Seed global learnings
-    testDb.db.run(
+    // Seed global learnings (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO global_learnings (category, title, content, context) VALUES (?, ?, ?, ?)`,
       ["pattern", "Error handling", "Use Result types", "TypeScript"]
     );
-    testDb.db.run(
+    testDb.rawDb.run(
       `INSERT INTO fts_global_learnings(rowid, title, content, context) VALUES (?, ?, ?, ?)`,
       [1, "Error handling", "Use Result types", "TypeScript"]
     );
 
     // Seed patterns
-    testDb.db.run(
+    testDb.rawDb.run(
       `INSERT INTO patterns (name, description, code_example) VALUES (?, ?, ?)`,
       ["Repository", "Data access pattern", "class UserRepo {}"]
     );
-    testDb.db.run(`INSERT INTO fts_patterns(rowid, name, description, code_example) VALUES (?, ?, ?, ?)`, [
+    testDb.rawDb.run(`INSERT INTO fts_patterns(rowid, name, description, code_example) VALUES (?, ?, ?, ?)`, [
       1,
       "Repository",
       "Data access pattern",
@@ -215,8 +215,8 @@ describe("Tech Debt Functions", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Seed tech debt
-    testDb.db.run(
+    // Seed tech debt (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO tech_debt (project_path, title, description, severity, effort) VALUES (?, ?, ?, ?, ?)`,
       [testDb.tempDir, "Refactor auth", "Auth code is messy", 7, "large"]
     );
@@ -228,29 +228,29 @@ describe("Tech Debt Functions", () => {
 
   test("lists tech debt for project", async () => {
     const { listTechDebt } = await import("../../src/database/queries/search");
-    const debt = listTechDebt(testDb.db, testDb.tempDir);
+    const debt = await listTechDebt(testDb.db, testDb.tempDir);
     expect(debt.length).toBeGreaterThan(0);
     expect(debt[0].title).toBe("Refactor auth");
   });
 
   test("lists all tech debt without project filter", async () => {
     const { listTechDebt } = await import("../../src/database/queries/search");
-    const debt = listTechDebt(testDb.db);
+    const debt = await listTechDebt(testDb.db);
     expect(debt.length).toBeGreaterThan(0);
   });
 
   test("adds tech debt", async () => {
     const { addTechDebt } = await import("../../src/database/queries/search");
-    const id = addTechDebt(testDb.db, testDb.tempDir, "New debt item", "Description", 5, "medium");
+    const id = await addTechDebt(testDb.db, testDb.tempDir, "New debt item", "Description", 5, "medium");
     expect(id).toBeGreaterThan(0);
   });
 
   test("resolves tech debt", async () => {
     const { addTechDebt, resolveTechDebt, listTechDebt } = await import("../../src/database/queries/search");
-    const id = addTechDebt(testDb.db, testDb.tempDir, "To resolve", "Will be resolved", 3);
-    resolveTechDebt(testDb.db, id);
+    const id = await addTechDebt(testDb.db, testDb.tempDir, "To resolve", "Will be resolved", 3);
+    await resolveTechDebt(testDb.db, id);
 
-    const debt = listTechDebt(testDb.db, testDb.tempDir);
+    const debt = await listTechDebt(testDb.db, testDb.tempDir);
     const resolved = debt.find((d) => d.id === id);
     expect(resolved).toBeUndefined(); // Resolved items not in open list
   });

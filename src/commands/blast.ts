@@ -5,7 +5,7 @@
  * Shows what files are affected when you change a file.
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import type { BlastComputeOptions, BlastResult, BlastSummary } from "../types";
 import { logError, safeJsonParse } from "../utils/errors";
 import { outputJson } from "../utils/format";
@@ -161,39 +161,37 @@ function computeTransitiveDependents(
 /**
  * Store blast radius data for a single file
  */
-function storeBlastRadius(db: Database, projectId: number, sourceFile: string, result: TransitiveResult): void {
+async function storeBlastRadius(db: DatabaseAdapter, projectId: number, sourceFile: string, result: TransitiveResult): Promise<void> {
   // Clear existing data for this file
-  db.run(`DELETE FROM blast_radius WHERE project_id = ? AND source_file = ?`, [projectId, sourceFile]);
+  await db.run(`DELETE FROM blast_radius WHERE project_id = ? AND source_file = ?`, [projectId, sourceFile]);
 
   // Insert new edges
-  const insertStmt = db.prepare(`
-    INSERT INTO blast_radius
-    (project_id, source_file, affected_file, distance, dependency_path, is_test, is_route, computed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `);
-
   for (const [affectedFile, info] of result.affected) {
-    insertStmt.run(
+    await db.run(`
+      INSERT INTO blast_radius
+      (project_id, source_file, affected_file, distance, dependency_path, is_test, is_route, computed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `, [
       projectId,
       sourceFile,
       affectedFile,
       info.distance,
       JSON.stringify(info.path),
       isTestFile(affectedFile) ? 1 : 0,
-      isRouteFile(affectedFile) ? 1 : 0
-    );
+      isRouteFile(affectedFile) ? 1 : 0,
+    ]);
   }
 }
 
 /**
  * Compute and store blast summary for a file
  */
-function storeBlastSummary(
-  db: Database,
+async function storeBlastSummary(
+  db: DatabaseAdapter,
   projectId: number,
   sourceFile: string,
   result: TransitiveResult
-): BlastSummary {
+): Promise<BlastSummary> {
   let directCount = 0;
   let transitiveCount = 0;
   let testCount = 0;
@@ -213,7 +211,7 @@ function storeBlastSummary(
   const blastScore = calculateBlastScore(totalAffected, testCount, routeCount, result.maxDepth);
 
   // Upsert summary
-  db.run(
+  await db.run(
     `
     INSERT INTO blast_summary
     (project_id, file_path, direct_dependents, transitive_dependents, total_affected,
@@ -262,12 +260,12 @@ function storeBlastSummary(
  * Compute blast radius for the entire project.
  * Builds dependency graph and calculates transitive impact for all files.
  */
-export function computeBlastRadius(
-  db: Database,
+export async function computeBlastRadius(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   options: BlastComputeOptions = {}
-): { processed: number; highImpact: number; errors: number } {
+): Promise<{ processed: number; highImpact: number; errors: number }> {
   const { maxDepth = 10, maxFiles = 500 } = options;
 
   console.error("🔥 Computing blast radius...\n");
@@ -291,8 +289,8 @@ export function computeBlastRadius(
       const result = computeTransitiveDependents(filePath, dependentsMap, maxDepth);
 
       if (result.affected.size > 0) {
-        storeBlastRadius(db, projectId, filePath, result);
-        const summary = storeBlastSummary(db, projectId, filePath, result);
+        await storeBlastRadius(db, projectId, filePath, result);
+        const summary = await storeBlastSummary(db, projectId, filePath, result);
 
         if (summary.blast_score >= 50) {
           highImpact++;
@@ -322,42 +320,35 @@ export function computeBlastRadius(
  * Get blast radius for a specific file.
  * Uses cached data if available, otherwise computes on demand.
  */
-export function getBlastRadius(
-  db: Database,
+export async function getBlastRadius(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   filePath: string,
   options: BlastComputeOptions = {}
-): BlastResult | null {
+): Promise<BlastResult | null> {
   const { forceRefresh = false } = options;
 
   // Check for cached summary
   if (!forceRefresh) {
-    const cached = db
-      .query<BlastSummary, [number, string]>(`
+    const cached = await db.get<BlastSummary>(`
       SELECT * FROM blast_summary WHERE project_id = ? AND file_path = ?
-    `)
-      .get(projectId, filePath);
+    `, [projectId, filePath]);
 
     if (cached) {
       // Get cached edges
-      const edges = db
-        .query<
-          {
-            affected_file: string;
-            distance: number;
-            dependency_path: string | null;
-            is_test: number;
-            is_route: number;
-          },
-          [number, string]
-        >(`
+      const edges = await db.all<{
+        affected_file: string;
+        distance: number;
+        dependency_path: string | null;
+        is_test: number;
+        is_route: number;
+      }>(`
         SELECT affected_file, distance, dependency_path, is_test, is_route
         FROM blast_radius
         WHERE project_id = ? AND source_file = ?
         ORDER BY distance ASC
-      `)
-        .all(projectId, filePath);
+      `, [projectId, filePath]);
 
       const directDependents: string[] = [];
       const transitiveDependents: Array<{ file: string; distance: number; path: string[] }> = [];
@@ -426,8 +417,8 @@ export function getBlastRadius(
   }
 
   // Store for future use
-  storeBlastRadius(db, projectId, filePath, result);
-  const summary = storeBlastSummary(db, projectId, filePath, result);
+  await storeBlastRadius(db, projectId, filePath, result);
+  const summary = await storeBlastSummary(db, projectId, filePath, result);
 
   const directDependents: string[] = [];
   const transitiveDependents: Array<{ file: string; distance: number; path: string[] }> = [];
@@ -463,22 +454,20 @@ export function getBlastRadius(
 /**
  * Get high-impact files for the project.
  */
-export function getHighImpactFiles(db: Database, projectId: number, minScore: number = 50): BlastSummary[] {
-  return db
-    .query<BlastSummary, [number, number]>(`
+export async function getHighImpactFiles(db: DatabaseAdapter, projectId: number, minScore: number = 50): Promise<BlastSummary[]> {
+  return await db.all<BlastSummary>(`
     SELECT * FROM blast_summary
     WHERE project_id = ? AND blast_score >= ?
     ORDER BY blast_score DESC
     LIMIT 20
-  `)
-    .all(projectId, minScore);
+  `, [projectId, minScore]);
 }
 
 /**
  * Display blast radius for a file (CLI output)
  */
-export function showBlastRadius(db: Database, projectId: number, projectPath: string, filePath: string): void {
-  const result = getBlastRadius(db, projectId, projectPath, filePath);
+export async function showBlastRadius(db: DatabaseAdapter, projectId: number, projectPath: string, filePath: string): Promise<void> {
+  const result = await getBlastRadius(db, projectId, projectPath, filePath);
 
   if (!result) {
     console.error(`❌ Could not compute blast radius for ${filePath}`);
@@ -551,8 +540,8 @@ export function showBlastRadius(db: Database, projectId: number, projectPath: st
 /**
  * Show high-impact files in the project
  */
-export function showHighImpactFiles(db: Database, projectId: number): void {
-  const files = getHighImpactFiles(db, projectId, 30);
+export async function showHighImpactFiles(db: DatabaseAdapter, projectId: number): Promise<void> {
+  const files = await getHighImpactFiles(db, projectId, 30);
 
   if (files.length === 0) {
     console.error("\n✅ No high-impact files found (all files have blast score < 30)\n");

@@ -3,7 +3,7 @@
  * Add, list, remove routes (domain -> service mappings)
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../../database/adapter";
 import { getAllRoutes, getServiceByName, logInfraEvent } from "../../database/queries/infra";
 import { exitWithUsage } from "../../utils/errors";
 import { outputJson, outputSuccess } from "../../utils/format";
@@ -13,7 +13,7 @@ import { parseRouteArgs, RouteAddInput } from "../../utils/validation";
 // Route Add
 // ============================================================================
 
-export function routeAdd(db: Database, args: string[]): void {
+export async function routeAdd(db: DatabaseAdapter, args: string[]): Promise<void> {
   const { values } = parseRouteArgs(args);
 
   if (!values.domain || !values.service) {
@@ -29,23 +29,21 @@ export function routeAdd(db: Database, args: string[]): void {
   const input = parsed.data;
 
   // Verify service exists
-  const service = getServiceByName(db, input.service);
+  const service = await getServiceByName(db, input.service);
   if (!service) {
     console.error(`❌ Service '${input.service}' not found. Add it first with: context infra service add`);
     process.exit(1);
   }
 
   // Check if route already exists
-  const existing = db
-    .query<{ id: number }, [string, string]>("SELECT id FROM routes WHERE domain = ? AND path = ?")
-    .get(input.domain, input.path);
+  const existing = await db.get<{ id: number }>("SELECT id FROM routes WHERE domain = ? AND path = ?", [input.domain, input.path]);
 
   if (existing) {
     console.error(`❌ Route for ${input.domain}${input.path} already exists`);
     process.exit(1);
   }
 
-  db.run(
+  await db.run(
     `
     INSERT INTO routes (domain, path, service_id, proxy_type, ssl_type, notes)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -53,7 +51,7 @@ export function routeAdd(db: Database, args: string[]): void {
     [input.domain, input.path, service.id, input.proxy || null, input.ssl || null, input.notes || null]
   );
 
-  logInfraEvent(db, {
+  await logInfraEvent(db, {
     serviceId: service.id,
     eventType: "route_added",
     severity: "info",
@@ -69,8 +67,8 @@ export function routeAdd(db: Database, args: string[]): void {
 // Route List
 // ============================================================================
 
-export function routeList(db: Database): void {
-  const routes = getAllRoutes(db);
+export async function routeList(db: DatabaseAdapter): Promise<void> {
+  const routes = await getAllRoutes(db);
 
   if (routes.length === 0) {
     console.error("No routes registered. Add one with: context infra route add <domain> --service <service>");
@@ -95,25 +93,24 @@ export function routeList(db: Database): void {
 // Route Remove
 // ============================================================================
 
-export function routeRemove(db: Database, domain: string | undefined): void {
+export async function routeRemove(db: DatabaseAdapter, domain: string | undefined): Promise<void> {
   if (!domain) {
     exitWithUsage("Usage: context infra route remove <domain>");
   }
 
-  const route = db
-    .query<{ id: number; domain: string; path: string; service_id: number }, [string]>(
-      "SELECT id, domain, path, service_id FROM routes WHERE domain = ?"
-    )
-    .get(domain);
+  const route = await db.get<{ id: number; domain: string; path: string; service_id: number }>(
+    "SELECT id, domain, path, service_id FROM routes WHERE domain = ?",
+    [domain]
+  );
 
   if (!route) {
     console.error(`❌ Route for '${domain}' not found`);
     process.exit(1);
   }
 
-  db.run("DELETE FROM routes WHERE id = ?", [route.id]);
+  await db.run("DELETE FROM routes WHERE id = ?", [route.id]);
 
-  logInfraEvent(db, {
+  await logInfraEvent(db, {
     serviceId: route.service_id,
     eventType: "route_removed",
     severity: "warning",
@@ -128,14 +125,13 @@ export function routeRemove(db: Database, domain: string | undefined): void {
 // Route Check (DNS and Connectivity)
 // ============================================================================
 
-export async function routeCheck(db: Database, domain?: string): Promise<void> {
+export async function routeCheck(db: DatabaseAdapter, domain?: string): Promise<void> {
   const routes = domain
-    ? db
-        .query<{ domain: string; path: string; service_id: number }, [string]>(
-          "SELECT domain, path, service_id FROM routes WHERE domain = ?"
-        )
-        .all(domain)
-    : getAllRoutes(db);
+    ? await db.all<{ domain: string; path: string; service_id: number }>(
+        "SELECT domain, path, service_id FROM routes WHERE domain = ?",
+        [domain]
+      )
+    : await getAllRoutes(db);
 
   if (routes.length === 0) {
     console.error(domain ? `❌ No routes found for domain '${domain}'` : "No routes to check");

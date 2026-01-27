@@ -3,7 +3,7 @@
  * Add, list, remove, check servers
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../../database/adapter";
 import { getAllServers, getServerByName, logInfraEvent } from "../../database/queries/infra";
 import type { Server } from "../../types";
 import { exitWithUsage } from "../../utils/errors";
@@ -14,7 +14,7 @@ import { parseServerArgs, ServerAddInput } from "../../utils/validation";
 // Server Add
 // ============================================================================
 
-export function serverAdd(db: Database, args: string[]): void {
+export async function serverAdd(db: DatabaseAdapter, args: string[]): Promise<void> {
   const { values } = parseServerArgs(args);
 
   if (!values.name) {
@@ -33,7 +33,7 @@ export function serverAdd(db: Database, args: string[]): void {
   const input = parsed.data;
 
   // Check if server already exists
-  const existing = getServerByName(db, input.name);
+  const existing = await getServerByName(db, input.name);
   if (existing) {
     console.error(`❌ Server '${input.name}' already exists. Use 'muninn infra server remove' first.`);
     process.exit(1);
@@ -42,7 +42,7 @@ export function serverAdd(db: Database, args: string[]): void {
   const ipAddresses = input.ip ? JSON.stringify([input.ip]) : null;
   const tags = input.tags ? JSON.stringify(input.tags.split(",").map((t) => t.trim())) : null;
 
-  db.run(
+  await db.run(
     `
     INSERT INTO servers (name, hostname, ip_addresses, role, ssh_user, ssh_port, ssh_key_path, ssh_jump_host, os, tags, notes, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown')
@@ -62,7 +62,7 @@ export function serverAdd(db: Database, args: string[]): void {
     ]
   );
 
-  logInfraEvent(db, {
+  await logInfraEvent(db, {
     eventType: "server_added",
     severity: "info",
     title: `Server ${input.name} added`,
@@ -77,8 +77,8 @@ export function serverAdd(db: Database, args: string[]): void {
 // Server List
 // ============================================================================
 
-export function serverList(db: Database): void {
-  const servers = getAllServers(db);
+export async function serverList(db: DatabaseAdapter): Promise<void> {
+  const servers = await getAllServers(db);
   formatServerList(servers);
   outputJson(servers);
 }
@@ -87,25 +87,24 @@ export function serverList(db: Database): void {
 // Server Remove
 // ============================================================================
 
-export function serverRemove(db: Database, name: string | undefined): void {
+export async function serverRemove(db: DatabaseAdapter, name: string | undefined): Promise<void> {
   if (!name) {
     exitWithUsage("Usage: context infra server remove <name>");
   }
 
-  const server = getServerByName(db, name);
+  const server = await getServerByName(db, name);
   if (!server) {
     console.error(`❌ Server '${name}' not found`);
     process.exit(1);
   }
 
   // Get service count for logging
-  const serviceCount =
-    db.query<{ count: number }, [number]>("SELECT COUNT(*) as count FROM services WHERE server_id = ?").get(server.id)
-      ?.count || 0;
+  const serviceCountResult = await db.get<{ count: number }>("SELECT COUNT(*) as count FROM services WHERE server_id = ?", [server.id]);
+  const serviceCount = serviceCountResult?.count || 0;
 
-  db.run("DELETE FROM servers WHERE name = ?", [name]);
+  await db.run("DELETE FROM servers WHERE name = ?", [name]);
 
-  logInfraEvent(db, {
+  await logInfraEvent(db, {
     eventType: "server_removed",
     severity: "warning",
     title: `Server ${name} removed`,
@@ -120,8 +119,8 @@ export function serverRemove(db: Database, name: string | undefined): void {
 // Server Check (SSH Connectivity)
 // ============================================================================
 
-export async function serverCheck(db: Database, targetName?: string): Promise<void> {
-  const servers = targetName ? ([getServerByName(db, targetName)].filter(Boolean) as Server[]) : getAllServers(db);
+export async function serverCheck(db: DatabaseAdapter, targetName?: string): Promise<void> {
+  const servers = targetName ? ([await getServerByName(db, targetName)].filter(Boolean) as Server[]) : await getAllServers(db);
 
   if (servers.length === 0) {
     console.error(
@@ -173,7 +172,7 @@ export async function serverCheck(db: Database, targetName?: string): Promise<vo
         results.push({ name: server.name, status: "online", latency });
 
         // Update server status in DB
-        db.run(
+        await db.run(
           `
           UPDATE servers SET status = 'online', last_seen = CURRENT_TIMESTAMP, last_health_check = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -188,7 +187,7 @@ export async function serverCheck(db: Database, targetName?: string): Promise<vo
         }
         results.push({ name: server.name, status: "offline", error: errorOutput });
 
-        db.run(
+        await db.run(
           `
           UPDATE servers SET status = 'offline', last_health_check = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -196,7 +195,7 @@ export async function serverCheck(db: Database, targetName?: string): Promise<vo
           [server.id]
         );
 
-        logInfraEvent(db, {
+        await logInfraEvent(db, {
           serverId: server.id,
           eventType: "server_check_failed",
           severity: "error",

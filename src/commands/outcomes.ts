@@ -4,7 +4,7 @@
  * Decisions are reviewed after N sessions to determine success/failure.
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import type { OutcomeStatus } from "../types";
 import { outputJson, outputSuccess } from "../utils/format";
 
@@ -12,24 +12,23 @@ import { outputJson, outputSuccess } from "../utils/format";
 // Record Outcome
 // ============================================================================
 
-export function recordOutcome(
-  db: Database,
+export async function recordOutcome(
+  db: DatabaseAdapter,
   projectId: number,
   decisionId: number,
   status: OutcomeStatus,
   notes?: string
-): void {
-  const decision = db
-    .query<{ id: number; title: string; project_id: number }, [number, number]>(
-      "SELECT id, title, project_id FROM decisions WHERE id = ? AND project_id = ?"
-    )
-    .get(decisionId, projectId);
+): Promise<void> {
+  const decision = await db.get<{ id: number; title: string; project_id: number }>(
+    "SELECT id, title, project_id FROM decisions WHERE id = ? AND project_id = ?",
+    [decisionId, projectId]
+  );
 
   if (!decision) {
     throw new Error(`Decision #${decisionId} not found`);
   }
 
-  db.run(
+  await db.run(
     `
     UPDATE decisions SET
       outcome_status = ?,
@@ -45,30 +44,26 @@ export function recordOutcome(
 // Get Decisions Due for Review
 // ============================================================================
 
-export function getDecisionsDue(
-  db: Database,
+export async function getDecisionsDue(
+  db: DatabaseAdapter,
   projectId: number
-): Array<{
+): Promise<Array<{
   id: number;
   title: string;
   decision: string;
   sessions_since: number;
   check_after_sessions: number;
   decided_at: string;
-}> {
+}>> {
   try {
-    return db
-      .query<
-        {
-          id: number;
-          title: string;
-          decision: string;
-          sessions_since: number;
-          check_after_sessions: number;
-          decided_at: string;
-        },
-        [number]
-      >(`
+    return await db.all<{
+      id: number;
+      title: string;
+      decision: string;
+      sessions_since: number;
+      check_after_sessions: number;
+      decided_at: string;
+    }>(`
       SELECT id, title, decision, sessions_since, check_after_sessions, decided_at
       FROM decisions
       WHERE project_id = ?
@@ -77,8 +72,7 @@ export function getDecisionsDue(
         AND sessions_since >= check_after_sessions
       ORDER BY sessions_since DESC
       LIMIT 10
-    `)
-      .all(projectId);
+    `, [projectId]);
   } catch {
     return []; // Columns might not exist yet
   }
@@ -88,9 +82,9 @@ export function getDecisionsDue(
 // Increment Sessions Since (called on session start)
 // ============================================================================
 
-export function incrementSessionsSince(db: Database, projectId: number): void {
+export async function incrementSessionsSince(db: DatabaseAdapter, projectId: number): Promise<void> {
   try {
-    db.run(
+    await db.run(
       `
       UPDATE decisions SET sessions_since = sessions_since + 1
       WHERE project_id = ?
@@ -108,7 +102,7 @@ export function incrementSessionsSince(db: Database, projectId: number): void {
 // CLI Handler
 // ============================================================================
 
-export function handleOutcomeCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleOutcomeCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -123,7 +117,7 @@ export function handleOutcomeCommand(db: Database, projectId: number, args: stri
         return;
       }
 
-      recordOutcome(db, projectId, id, status, notes);
+      await recordOutcome(db, projectId, id, status, notes);
       console.error(`✅ Decision #${id} outcome recorded: ${status}`);
       outputSuccess({ id, status, notes });
       break;
@@ -133,7 +127,7 @@ export function handleOutcomeCommand(db: Database, projectId: number, args: stri
     case "review":
     case "list":
     case undefined: {
-      const due = getDecisionsDue(db, projectId);
+      const due = await getDecisionsDue(db, projectId);
 
       if (due.length === 0) {
         console.error("No decisions due for review.");
@@ -175,10 +169,9 @@ export interface FoundationalLearning {
 /**
  * Get foundational learnings due for review
  */
-export function getFoundationalLearningsDue(db: Database, projectId: number): FoundationalLearning[] {
+export async function getFoundationalLearningsDue(db: DatabaseAdapter, projectId: number): Promise<FoundationalLearning[]> {
   try {
-    return db
-      .query<FoundationalLearning, [number]>(`
+    return await db.all<FoundationalLearning>(`
         SELECT id, title, content, category, sessions_since_review, review_after_sessions, confidence, created_at
         FROM learnings
         WHERE project_id = ?
@@ -187,8 +180,7 @@ export function getFoundationalLearningsDue(db: Database, projectId: number): Fo
           AND sessions_since_review >= review_after_sessions
         ORDER BY sessions_since_review DESC
         LIMIT 10
-      `)
-      .all(projectId);
+      `, [projectId]);
   } catch {
     return []; // Columns might not exist yet
   }
@@ -198,9 +190,9 @@ export function getFoundationalLearningsDue(db: Database, projectId: number): Fo
  * Increment sessions_since_review for all foundational learnings
  * Called on session start
  */
-export function incrementFoundationalSessionsSince(db: Database, projectId: number): void {
+export async function incrementFoundationalSessionsSince(db: DatabaseAdapter, projectId: number): Promise<void> {
   try {
-    db.run(
+    await db.run(
       `
       UPDATE learnings
       SET sessions_since_review = sessions_since_review + 1
@@ -220,35 +212,31 @@ export function incrementFoundationalSessionsSince(db: Database, projectId: numb
  * Resets the review counter, increments confidence, and increments times_confirmed.
  * Auto-detects if learning is now ready for promotion.
  */
-export function confirmFoundationalLearning(db: Database, projectId: number, id: number, _notes?: string): void {
-  const learning = db
-    .query<
-      {
-        id: number;
-        project_id: number;
-        confidence: number;
-        foundational: number;
-        times_applied: number;
-        times_confirmed: number | null;
-        promotion_status: string | null;
-        archived_at: string | null;
-      },
-      [number, number]
-    >(
-      `SELECT id, project_id, confidence, foundational, times_applied,
-              COALESCE(times_confirmed, 0) as times_confirmed,
-              COALESCE(promotion_status, 'not_ready') as promotion_status,
-              archived_at
-       FROM learnings WHERE id = ? AND project_id = ?`
-    )
-    .get(id, projectId);
+export async function confirmFoundationalLearning(db: DatabaseAdapter, projectId: number, id: number, _notes?: string): Promise<void> {
+  const learning = await db.get<{
+    id: number;
+    project_id: number;
+    confidence: number;
+    foundational: number;
+    times_applied: number;
+    times_confirmed: number | null;
+    promotion_status: string | null;
+    archived_at: string | null;
+  }>(
+    `SELECT id, project_id, confidence, foundational, times_applied,
+            COALESCE(times_confirmed, 0) as times_confirmed,
+            COALESCE(promotion_status, 'not_ready') as promotion_status,
+            archived_at
+     FROM learnings WHERE id = ? AND project_id = ?`,
+    [id, projectId]
+  );
 
   if (!learning) {
     throw new Error(`Learning #${id} not found`);
   }
 
   // Update: increment confidence and times_confirmed
-  db.run(
+  await db.run(
     `
     UPDATE learnings SET
       review_status = 'confirmed',
@@ -262,7 +250,7 @@ export function confirmFoundationalLearning(db: Database, projectId: number, id:
   );
 
   // After confirming, switch back to pending for next review cycle
-  db.run(
+  await db.run(
     `
     UPDATE learnings SET review_status = 'pending'
     WHERE id = ?
@@ -284,7 +272,7 @@ export function confirmFoundationalLearning(db: Database, projectId: number, id:
     !learning.archived_at
   ) {
     try {
-      db.run(`UPDATE learnings SET promotion_status = 'candidate' WHERE id = ?`, [id]);
+      await db.run(`UPDATE learnings SET promotion_status = 'candidate' WHERE id = ?`, [id]);
       console.error(`\n💡 L${id} is now ready for CLAUDE.md promotion!`);
       console.error(`   Run \`muninn promote ${id} --to "## Section"\` to promote.\n`);
     } catch {
@@ -297,24 +285,23 @@ export function confirmFoundationalLearning(db: Database, projectId: number, id:
  * Revise a foundational learning with new content
  * Resets the review counter and times_confirmed (content changed, needs re-validation)
  */
-export function reviseFoundationalLearning(
-  db: Database,
+export async function reviseFoundationalLearning(
+  db: DatabaseAdapter,
   projectId: number,
   id: number,
   newContent: string,
   _notes?: string
-): void {
-  const learning = db
-    .query<{ id: number; project_id: number }, [number, number]>(
-      "SELECT id, project_id FROM learnings WHERE id = ? AND project_id = ?"
-    )
-    .get(id, projectId);
+): Promise<void> {
+  const learning = await db.get<{ id: number; project_id: number }>(
+    "SELECT id, project_id FROM learnings WHERE id = ? AND project_id = ?",
+    [id, projectId]
+  );
 
   if (!learning) {
     throw new Error(`Learning #${id} not found`);
   }
 
-  db.run(
+  await db.run(
     `
     UPDATE learnings SET
       content = ?,
@@ -332,7 +319,7 @@ export function reviseFoundationalLearning(
   );
 
   // After revising, switch back to pending for next review cycle
-  db.run(
+  await db.run(
     `
     UPDATE learnings SET review_status = 'pending'
     WHERE id = ?
@@ -344,7 +331,7 @@ export function reviseFoundationalLearning(
 /**
  * CLI handler for foundational learning commands
  */
-export function handleFoundationalCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleFoundationalCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -352,7 +339,7 @@ export function handleFoundationalCommand(db: Database, projectId: number, args:
     case "review":
     case "list":
     case undefined: {
-      const due = getFoundationalLearningsDue(db, projectId);
+      const due = await getFoundationalLearningsDue(db, projectId);
 
       if (due.length === 0) {
         console.error("No foundational learnings due for review.");
@@ -381,7 +368,7 @@ export function handleFoundationalCommand(db: Database, projectId: number, args:
       }
 
       try {
-        confirmFoundationalLearning(db, projectId, id, notes);
+        await confirmFoundationalLearning(db, projectId, id, notes);
         console.error(`✅ Foundational learning L${id} confirmed (still valid)`);
         outputSuccess({ id, status: "confirmed", notes });
       } catch (error) {
@@ -400,7 +387,7 @@ export function handleFoundationalCommand(db: Database, projectId: number, args:
       }
 
       try {
-        reviseFoundationalLearning(db, projectId, id, newContent);
+        await reviseFoundationalLearning(db, projectId, id, newContent);
         console.error(`✅ Foundational learning L${id} revised`);
         outputSuccess({ id, status: "revised", newContent });
       } catch (error) {

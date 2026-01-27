@@ -6,7 +6,7 @@
  * - stack
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { closeAll } from "../database/connection";
 import { showStack } from "./analysis";
 import { debtAdd, debtList, debtResolve, patternAdd, patternList, patternSearch } from "./memory";
@@ -14,15 +14,15 @@ import { debtAdd, debtList, debtResolve, patternAdd, patternList, patternSearch 
 /**
  * Handle pattern commands (uses global DB only)
  */
-export function handlePatternCommand(globalDb: Database, subArgs: string[]): void {
+export async function handlePatternCommand(globalDb: DatabaseAdapter, subArgs: string[]): Promise<void> {
   const subCmd = subArgs[0];
 
   try {
     if (subCmd === "add") {
-      patternAdd(globalDb, subArgs.slice(1));
+      await patternAdd(globalDb, subArgs.slice(1));
     } else if (subCmd === "search" || subCmd === "find") {
       const query = subArgs.slice(1).join(" ");
-      patternSearch(globalDb, query);
+      await patternSearch(globalDb, query);
     } else if (subCmd === "list") {
       patternList();
     } else {

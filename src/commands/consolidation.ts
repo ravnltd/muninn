@@ -5,7 +5,7 @@
  * Vector match on archived item → re-heats it
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { generateEmbedding, serializeEmbedding } from "../embeddings";
 import { logError } from "../utils/errors";
 import { outputJson } from "../utils/format";
@@ -55,20 +55,19 @@ export function getTemperatureTier(sessionsSinceRef: number): string {
  * Get cold entities that haven't been referenced recently
  * Uses session count from last reference to determine coldness
  */
-function getColdEntities(
-  db: Database,
+async function getColdEntities(
+  db: DatabaseAdapter,
   projectId: number,
   table: ConsolidatableTable,
   currentSessionNumber: number
-): ColdEntity[] {
+): Promise<ColdEntity[]> {
   const titleCol = table === "files" ? "path" : "title";
   const contentCol =
     table === "files" ? "purpose" : table === "decisions" ? "decision" : table === "issues" ? "description" : "content";
 
   try {
-    return db
-      .query<ColdEntity, [number, number]>(`
-      SELECT id, ${titleCol} as title, COALESCE(${contentCol}, '') as content,
+    return await db.all<ColdEntity>(
+      `SELECT id, ${titleCol} as title, COALESCE(${contentCol}, '') as content,
              temperature, last_referenced_at as lastReferencedAt
       FROM ${table}
       WHERE project_id = ?
@@ -84,9 +83,9 @@ function getColdEntities(
             ) AS INTEGER) >= ${COLD_SESSION_THRESHOLD}
           )
         )
-      ORDER BY last_referenced_at ASC NULLS FIRST
-    `)
-      .all(projectId, currentSessionNumber);
+      ORDER BY last_referenced_at ASC NULLS FIRST`,
+      [projectId, currentSessionNumber]
+    );
   } catch (error) {
     logError(`consolidation:getCold:${table}`, error);
     return [];
@@ -122,12 +121,12 @@ function generateSummary(entities: ColdEntity[], entityType: string): { title: s
  * Returns the consolidation result or null if nothing to consolidate
  */
 async function consolidateTable(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   table: ConsolidatableTable,
   currentSessionNumber: number
 ): Promise<ConsolidationResult | null> {
-  const coldEntities = getColdEntities(db, projectId, table, currentSessionNumber);
+  const coldEntities = await getColdEntities(db, projectId, table, currentSessionNumber);
 
   if (coldEntities.length < MIN_COLD_FOR_CONSOLIDATION) {
     return null;
@@ -154,7 +153,7 @@ async function consolidateTable(
     }
 
     // Create consolidation record
-    const insertResult = db.run(
+    const insertResult = await db.run(
       `INSERT INTO consolidations (project_id, entity_type, source_ids, summary_title, summary_content, entity_count, embedding)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [projectId, table, JSON.stringify(sourceIds), title, content, batch.length, embeddingBlob]
@@ -165,7 +164,7 @@ async function consolidateTable(
     // Archive source entities
     const now = new Date().toISOString();
     const idPlaceholders = sourceIds.map(() => "?").join(",");
-    db.run(`UPDATE ${table} SET archived_at = ?, consolidated_into = ? WHERE id IN (${idPlaceholders})`, [
+    await db.run(`UPDATE ${table} SET archived_at = ?, consolidated_into = ? WHERE id IN (${idPlaceholders})`, [
       now,
       consolidationId,
       ...sourceIds,
@@ -189,9 +188,9 @@ async function consolidateTable(
  * Re-heat an archived entity when it's matched by vector search
  * Sets archived_at = NULL and temperature = 'warm'
  */
-export function reheatEntity(db: Database, table: ConsolidatableTable, id: number): void {
+export async function reheatEntity(db: DatabaseAdapter, table: ConsolidatableTable, id: number): Promise<void> {
   try {
-    db.run(
+    await db.run(
       `UPDATE ${table} SET archived_at = NULL, temperature = 'warm', last_referenced_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [id]
     );
@@ -208,19 +207,18 @@ export function reheatEntity(db: Database, table: ConsolidatableTable, id: numbe
  * Check if consolidation should run (signal-based, called on session start)
  * Returns true if there are enough cold entities to warrant consolidation
  */
-export function shouldConsolidate(db: Database, projectId: number): boolean {
+export async function shouldConsolidate(db: DatabaseAdapter, projectId: number): Promise<boolean> {
   const tables: ConsolidatableTable[] = ["files", "decisions", "issues", "learnings"];
 
   for (const table of tables) {
     try {
-      const result = db
-        .query<{ count: number }, [number]>(`
-        SELECT COUNT(*) as count FROM ${table}
+      const result = await db.get<{ count: number }>(
+        `SELECT COUNT(*) as count FROM ${table}
         WHERE project_id = ?
           AND archived_at IS NULL
-          AND (temperature = 'cold' OR temperature IS NULL)
-      `)
-        .get(projectId);
+          AND (temperature = 'cold' OR temperature IS NULL)`,
+        [projectId]
+      );
 
       if (result && result.count >= MIN_COLD_FOR_CONSOLIDATION) {
         return true;
@@ -236,13 +234,12 @@ export function shouldConsolidate(db: Database, projectId: number): boolean {
 /**
  * Run consolidation across all tables
  */
-export async function runConsolidation(db: Database, projectId: number): Promise<ConsolidationResult[]> {
+export async function runConsolidation(db: DatabaseAdapter, projectId: number): Promise<ConsolidationResult[]> {
   // Get current session number
-  const sessionRow = db
-    .query<{ session_number: number | null }, [number]>(`
-    SELECT MAX(session_number) as session_number FROM sessions WHERE project_id = ?
-  `)
-    .get(projectId);
+  const sessionRow = await db.get<{ session_number: number | null }>(
+    `SELECT MAX(session_number) as session_number FROM sessions WHERE project_id = ?`,
+    [projectId]
+  );
   const currentSession = sessionRow?.session_number ?? 0;
 
   const tables: ConsolidatableTable[] = ["files", "decisions", "issues", "learnings"];
@@ -262,7 +259,7 @@ export async function runConsolidation(db: Database, projectId: number): Promise
 // CLI Handler
 // ============================================================================
 
-export async function handleConsolidationCommand(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function handleConsolidationCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0] || "status";
 
   switch (subCmd) {
@@ -271,19 +268,17 @@ export async function handleConsolidationCommand(db: Database, projectId: number
       console.error("\n📦 Consolidation Status\n");
 
       for (const table of tables) {
-        const coldResult = db
-          .query<{ count: number }, [number]>(`
-          SELECT COUNT(*) as count FROM ${table}
-          WHERE project_id = ? AND archived_at IS NULL AND (temperature = 'cold' OR temperature IS NULL)
-        `)
-          .get(projectId);
+        const coldResult = await db.get<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${table}
+          WHERE project_id = ? AND archived_at IS NULL AND (temperature = 'cold' OR temperature IS NULL)`,
+          [projectId]
+        );
 
-        const archivedResult = db
-          .query<{ count: number }, [number]>(`
-          SELECT COUNT(*) as count FROM ${table}
-          WHERE project_id = ? AND archived_at IS NOT NULL
-        `)
-          .get(projectId);
+        const archivedResult = await db.get<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${table}
+          WHERE project_id = ? AND archived_at IS NOT NULL`,
+          [projectId]
+        );
 
         const coldCount = coldResult?.count ?? 0;
         const archivedCount = archivedResult?.count ?? 0;
@@ -291,15 +286,16 @@ export async function handleConsolidationCommand(db: Database, projectId: number
         console.error(`  ${table}: ${coldCount} cold, ${archivedCount} archived`);
       }
 
-      const consolidationCount = db
-        .query<{ count: number }, [number]>("SELECT COUNT(*) as count FROM consolidations WHERE project_id = ?")
-        .get(projectId);
+      const consolidationCount = await db.get<{ count: number }>(
+        "SELECT COUNT(*) as count FROM consolidations WHERE project_id = ?",
+        [projectId]
+      );
 
       console.error(`\n  Total consolidation summaries: ${consolidationCount?.count ?? 0}`);
       console.error(`  Threshold: ${MIN_COLD_FOR_CONSOLIDATION} cold items triggers consolidation`);
       console.error("");
 
-      const ready = shouldConsolidate(db, projectId);
+      const ready = await shouldConsolidate(db, projectId);
       if (ready) {
         console.error("  ⚡ Ready for consolidation. Run: muninn consolidate run");
       } else {
@@ -328,20 +324,16 @@ export async function handleConsolidationCommand(db: Database, projectId: number
     }
 
     case "list": {
-      const rows = db
-        .query<
-          {
-            id: number;
-            entity_type: string;
-            summary_title: string;
-            entity_count: number;
-            created_at: string;
-          },
-          [number]
-        >(
-          "SELECT id, entity_type, summary_title, entity_count, created_at FROM consolidations WHERE project_id = ? ORDER BY created_at DESC LIMIT 20"
-        )
-        .all(projectId);
+      const rows = await db.all<{
+        id: number;
+        entity_type: string;
+        summary_title: string;
+        entity_count: number;
+        created_at: string;
+      }>(
+        "SELECT id, entity_type, summary_title, entity_count, created_at FROM consolidations WHERE project_id = ? ORDER BY created_at DESC LIMIT 20",
+        [projectId]
+      );
 
       if (rows.length === 0) {
         console.error("\nNo consolidation records yet.");

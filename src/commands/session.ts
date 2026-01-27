@@ -3,7 +3,7 @@
  * Track work sessions with goals, outcomes, and next steps
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { getApiKey } from "../utils/api-keys";
 import { exitWithUsage, logError, safeJsonParse } from "../utils/errors";
 import { getTimeAgo, outputJson, outputSuccess } from "../utils/format";
@@ -43,15 +43,15 @@ import {
 // Session Start
 // ============================================================================
 
-export function sessionStart(db: Database, projectId: number, goal: string): number {
+export async function sessionStart(db: DatabaseAdapter, projectId: number, goal: string): Promise<number> {
   if (!goal) {
     exitWithUsage("Usage: muninn session start <goal>");
   }
 
   // Decay temperatures on session start
-  decayTemperatures(db, projectId);
+  await decayTemperatures(db, projectId);
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO sessions (project_id, goal)
     VALUES (?, ?)
@@ -62,10 +62,10 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
   const sessionId = Number(result.lastInsertRowid);
 
   // Fire intelligence on session start
-  assignSessionNumber(db, projectId, sessionId);
-  incrementSessionsSince(db, projectId);
-  incrementFoundationalSessionsSince(db, projectId);
-  generateInsightsIfDue(db, projectId);
+  await assignSessionNumber(db, projectId, sessionId);
+  await incrementSessionsSince(db, projectId);
+  await incrementFoundationalSessionsSince(db, projectId);
+  await generateInsightsIfDue(db, projectId);
 
   console.error(`\n🚀 Session #${sessionId} started`);
   console.error(`   Goal: ${goal}`);
@@ -80,13 +80,12 @@ export function sessionStart(db: Database, projectId: number, goal: string): num
  * Check if there's meaningful new data since last insight generation.
  * Signals: completed sessions, file correlation updates, new decisions.
  */
-function shouldGenerateInsights(db: Database, projectId: number): boolean {
+async function shouldGenerateInsights(db: DatabaseAdapter, projectId: number): Promise<boolean> {
   try {
-    const last = db
-      .query<{ generated_at: string | null }, [number]>(
-        `SELECT MAX(generated_at) as generated_at FROM insights WHERE project_id = ?`
-      )
-      .get(projectId);
+    const last = await db.get<{ generated_at: string | null }>(
+      `SELECT MAX(generated_at) as generated_at FROM insights WHERE project_id = ?`,
+      [projectId]
+    );
 
     // Never generated — bootstrap
     if (!last?.generated_at) return true;
@@ -94,30 +93,27 @@ function shouldGenerateInsights(db: Database, projectId: number): boolean {
     const since = last.generated_at;
 
     // 3+ completed sessions since last generation
-    const sessions = db
-      .query<{ count: number }, [number, string]>(
-        `SELECT COUNT(*) as count FROM sessions
-       WHERE project_id = ? AND ended_at > ?`
-      )
-      .get(projectId, since);
+    const sessions = await db.get<{ count: number }>(
+      `SELECT COUNT(*) as count FROM sessions
+       WHERE project_id = ? AND ended_at > ?`,
+      [projectId, since]
+    );
     if ((sessions?.count ?? 0) >= 3) return true;
 
     // 5+ correlation updates since last generation
-    const correlations = db
-      .query<{ count: number }, [number, string]>(
-        `SELECT COUNT(*) as count FROM file_correlations
-       WHERE project_id = ? AND last_cochange > ?`
-      )
-      .get(projectId, since);
+    const correlations = await db.get<{ count: number }>(
+      `SELECT COUNT(*) as count FROM file_correlations
+       WHERE project_id = ? AND last_cochange > ?`,
+      [projectId, since]
+    );
     if ((correlations?.count ?? 0) >= 5) return true;
 
     // 2+ new decisions since last generation
-    const decisions = db
-      .query<{ count: number }, [number, string]>(
-        `SELECT COUNT(*) as count FROM decisions
-       WHERE project_id = ? AND decided_at > ?`
-      )
-      .get(projectId, since);
+    const decisions = await db.get<{ count: number }>(
+      `SELECT COUNT(*) as count FROM decisions
+       WHERE project_id = ? AND decided_at > ?`,
+      [projectId, since]
+    );
     if ((decisions?.count ?? 0) >= 2) return true;
 
     return false;
@@ -126,9 +122,9 @@ function shouldGenerateInsights(db: Database, projectId: number): boolean {
   }
 }
 
-function generateInsightsIfDue(db: Database, projectId: number): void {
-  if (shouldGenerateInsights(db, projectId)) {
-    generateInsights(db, projectId);
+async function generateInsightsIfDue(db: DatabaseAdapter, projectId: number): Promise<void> {
+  if (await shouldGenerateInsights(db, projectId)) {
+    await generateInsights(db, projectId);
   }
 }
 
@@ -136,7 +132,7 @@ function generateInsightsIfDue(db: Database, projectId: number): void {
 // Session End
 // ============================================================================
 
-export function sessionEnd(db: Database, sessionId: number, args: string[]): void {
+export async function sessionEnd(db: DatabaseAdapter, sessionId: number, args: string[]): Promise<void> {
   const { values } = parseSessionEndArgs(args);
 
   if (!sessionId) {
@@ -144,16 +140,17 @@ export function sessionEnd(db: Database, sessionId: number, args: string[]): voi
   }
 
   // Verify session exists
-  const session = db
-    .query<{ id: number; goal: string }, [number]>("SELECT id, goal FROM sessions WHERE id = ?")
-    .get(sessionId);
+  const session = await db.get<{ id: number; goal: string }>(
+    "SELECT id, goal FROM sessions WHERE id = ?",
+    [sessionId]
+  );
 
   if (!session) {
     console.error(`❌ Session #${sessionId} not found`);
     process.exit(1);
   }
 
-  db.run(
+  await db.run(
     `
     UPDATE sessions SET
       ended_at = CURRENT_TIMESTAMP,
@@ -190,15 +187,16 @@ export function sessionEnd(db: Database, sessionId: number, args: string[]): voi
 // Session Last
 // ============================================================================
 
-export function sessionLast(db: Database, projectId: number): void {
-  const session = db
-    .query<Record<string, unknown>, [number]>(`
+export async function sessionLast(db: DatabaseAdapter, projectId: number): Promise<void> {
+  const session = await db.get<Record<string, unknown>>(
+    `
     SELECT * FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `,
+    [projectId]
+  );
 
   if (!session) {
     console.error("No sessions found. Start one with: muninn session start <goal>");
@@ -233,10 +231,11 @@ export function sessionLast(db: Database, projectId: number): void {
 // Session Count
 // ============================================================================
 
-export function sessionCount(db: Database, projectId: number): number {
-  const result = db
-    .query<{ count: number }, [number]>(`SELECT COUNT(*) as count FROM sessions WHERE project_id = ?`)
-    .get(projectId);
+export async function sessionCount(db: DatabaseAdapter, projectId: number): Promise<number> {
+  const result = await db.get<{ count: number }>(
+    `SELECT COUNT(*) as count FROM sessions WHERE project_id = ?`,
+    [projectId]
+  );
   return result?.count || 0;
 }
 
@@ -244,16 +243,17 @@ export function sessionCount(db: Database, projectId: number): number {
 // Session List
 // ============================================================================
 
-export function sessionList(db: Database, projectId: number, limit: number = 10): void {
-  const sessions = db
-    .query<Record<string, unknown>, [number, number]>(`
+export async function sessionList(db: DatabaseAdapter, projectId: number, limit: number = 10): Promise<void> {
+  const sessions = await db.all<Record<string, unknown>>(
+    `
     SELECT id, goal, outcome, started_at, ended_at, success
     FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT ?
-  `)
-    .all(projectId, limit);
+  `,
+    [projectId, limit]
+  );
 
   if (sessions.length === 0) {
     console.error("No sessions found.");
@@ -280,22 +280,23 @@ export function sessionList(db: Database, projectId: number, limit: number = 10)
 // Resume from Last Session
 // ============================================================================
 
-export function generateResume(db: Database, projectId: number): string {
-  const lastSession = db
-    .query<Record<string, unknown>, [number]>(`
+export async function generateResume(db: DatabaseAdapter, projectId: number): Promise<string> {
+  const lastSession = await db.get<Record<string, unknown>>(
+    `
     SELECT * FROM sessions
     WHERE project_id = ?
     ORDER BY started_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `,
+    [projectId]
+  );
 
   if (!lastSession) {
     return 'No previous sessions found. Start fresh with `muninn session start "Your goal"`';
   }
 
   // Build system primer section
-  let md = buildSystemPrimer(db, projectId);
+  let md = await buildSystemPrimer(db, projectId);
 
   const timeAgo = getTimeAgo((lastSession.ended_at || lastSession.started_at) as string);
   const isOngoing = !lastSession.ended_at;
@@ -402,7 +403,7 @@ export function generateResume(db: Database, projectId: number): string {
   }
 
   // Session accomplishments from relationship graph (more reliable than JSON fields)
-  const sessionRelationships = getSessionRelationships(db, Number(lastSession.id));
+  const sessionRelationships = await getSessionRelationships(db, Number(lastSession.id));
   if (sessionRelationships.hasData) {
     md += `## Session Accomplishments\n`;
     if (sessionRelationships.decisionsMade.length > 0) {
@@ -418,7 +419,7 @@ export function generateResume(db: Database, projectId: number): string {
   }
 
   // Hot entities (actively in-flight context)
-  const hotEntities = getHotEntities(db, projectId);
+  const hotEntities = await getHotEntities(db, projectId);
   const hasHot = hotEntities.files.length > 0 || hotEntities.decisions.length > 0 || hotEntities.learnings.length > 0;
 
   if (hasHot) {
@@ -436,7 +437,7 @@ export function generateResume(db: Database, projectId: number): string {
   }
 
   // Open questions
-  const openQuestions = getOpenQuestionsForResume(db, projectId);
+  const openQuestions = await getOpenQuestionsForResume(db, projectId);
   if (openQuestions.length > 0) {
     md += `## Open Questions\n`;
     for (const q of openQuestions) {
@@ -447,7 +448,7 @@ export function generateResume(db: Database, projectId: number): string {
   }
 
   // Recent observations
-  const recentObs = getRecentObservations(db, projectId);
+  const recentObs = await getRecentObservations(db, projectId);
   if (recentObs.length > 0) {
     md += `## Recent Observations\n`;
     for (const obs of recentObs) {
@@ -477,15 +478,15 @@ export function generateResume(db: Database, projectId: number): string {
  * Get session accomplishments from relationship graph
  * Uses "made", "resolved", "learned" relationship types
  */
-export function getSessionRelationships(
-  db: Database,
+export async function getSessionRelationships(
+  db: DatabaseAdapter,
   sessionId: number
-): {
+): Promise<{
   hasData: boolean;
   decisionsMade: Array<{ id: number; title: string }>;
   issuesResolved: Array<{ id: number; title: string }>;
   learningsExtracted: Array<{ id: number; title: string }>;
-} {
+}> {
   const result = {
     hasData: false,
     decisionsMade: [] as Array<{ id: number; title: string }>,
@@ -495,34 +496,37 @@ export function getSessionRelationships(
 
   try {
     // Decisions made (via "made" relationship)
-    result.decisionsMade = db
-      .query<{ id: number; title: string }, [number]>(`
+    result.decisionsMade = await db.all<{ id: number; title: string }>(
+      `
       SELECT d.id, d.title FROM relationships r
       JOIN decisions d ON r.target_id = d.id AND r.target_type = 'decision'
       WHERE r.source_type = 'session' AND r.source_id = ?
         AND r.relationship = 'made'
-    `)
-      .all(sessionId);
+    `,
+      [sessionId]
+    );
 
     // Issues resolved (via "resolved" relationship)
-    result.issuesResolved = db
-      .query<{ id: number; title: string }, [number]>(`
+    result.issuesResolved = await db.all<{ id: number; title: string }>(
+      `
       SELECT i.id, i.title FROM relationships r
       JOIN issues i ON r.target_id = i.id AND r.target_type = 'issue'
       WHERE r.source_type = 'session' AND r.source_id = ?
         AND r.relationship = 'resolved'
-    `)
-      .all(sessionId);
+    `,
+      [sessionId]
+    );
 
     // Learnings extracted (via "learned" relationship)
-    result.learningsExtracted = db
-      .query<{ id: number; title: string }, [number]>(`
+    result.learningsExtracted = await db.all<{ id: number; title: string }>(
+      `
       SELECT l.id, l.title FROM relationships r
       JOIN learnings l ON r.target_id = l.id AND r.target_type = 'learning'
       WHERE r.source_type = 'session' AND r.source_id = ?
         AND r.relationship = 'learned'
-    `)
-      .all(sessionId);
+    `,
+      [sessionId]
+    );
 
     result.hasData =
       result.decisionsMade.length > 0 || result.issuesResolved.length > 0 || result.learningsExtracted.length > 0;
@@ -542,7 +546,7 @@ export function getSessionRelationships(
  * Supports --analyze flag to read transcript from stdin for richer extraction.
  */
 export async function sessionEndEnhanced(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   sessionId: number,
   args: string[]
@@ -550,11 +554,10 @@ export async function sessionEndEnhanced(
   const { values } = parseSessionEndArgs(args);
 
   // Get session
-  const session = db
-    .query<{ id: number; goal: string; started_at: string; files_touched: string | null }, [number]>(
-      "SELECT id, goal, started_at, files_touched FROM sessions WHERE id = ?"
-    )
-    .get(sessionId);
+  const session = await db.get<{ id: number; goal: string; started_at: string; files_touched: string | null }>(
+    "SELECT id, goal, started_at, files_touched FROM sessions WHERE id = ?",
+    [sessionId]
+  );
 
   if (!session) {
     throw new Error(`Session #${sessionId} not found`);
@@ -585,16 +588,16 @@ export async function sessionEndEnhanced(
   const nextSteps = analysisResult?.nextSteps || values.next || null;
 
   // Update correlations
-  updateFileCorrelations(db, projectId, filesTouched);
+  await updateFileCorrelations(db, projectId, filesTouched);
 
   // Auto-create relationships between session and files touched
   if (filesTouched.length > 0) {
-    autoRelateSessionFiles(db, projectId, sessionId, filesTouched);
+    await autoRelateSessionFiles(db, projectId, sessionId, filesTouched);
   }
 
   // Standard end update (goal only updated if extracted and original was generic)
   const finalGoal = extractedGoal && session.goal === "New session" ? extractedGoal : session.goal;
-  db.run(
+  await db.run(
     `
     UPDATE sessions SET
       ended_at = CURRENT_TIMESTAMP,
@@ -622,7 +625,7 @@ export async function sessionEndEnhanced(
   if (analysisResult?.learnings && analysisResult.learnings.length > 0) {
     for (const learning of analysisResult.learnings) {
       if (learning.confidence >= 0.7) {
-        db.run(
+        await db.run(
           `INSERT INTO learnings (project_id, category, title, content, source, confidence)
            VALUES (?, ?, ?, ?, ?, ?)`,
           [
@@ -651,43 +654,41 @@ export async function sessionEndEnhanced(
   // ========================================================================
 
   // Get session data for relationships
-  const sessionData = db
-    .query<
-      {
-        decisions_made: string | null;
-        issues_found: string | null;
-        issues_resolved: string | null;
-      },
-      [number]
-    >("SELECT decisions_made, issues_found, issues_resolved FROM sessions WHERE id = ?")
-    .get(sessionId);
+  const sessionData = await db.get<{
+    decisions_made: string | null;
+    issues_found: string | null;
+    issues_resolved: string | null;
+  }>(
+    "SELECT decisions_made, issues_found, issues_resolved FROM sessions WHERE id = ?",
+    [sessionId]
+  );
 
   // Session → Decisions (made)
   const decisionsMade = safeJsonParse<number[]>(sessionData?.decisions_made || "[]", []);
   if (decisionsMade.length > 0) {
-    autoRelateSessionDecisions(db, sessionId, decisionsMade);
+    await autoRelateSessionDecisions(db, sessionId, decisionsMade);
   }
 
   // Session → Issues (found)
   const issuesFound = safeJsonParse<number[]>(sessionData?.issues_found || "[]", []);
   if (issuesFound.length > 0) {
-    autoRelateSessionIssues(db, sessionId, issuesFound, "found");
+    await autoRelateSessionIssues(db, sessionId, issuesFound, "found");
   }
 
   // Session → Issues (resolved)
   const issuesResolved = safeJsonParse<number[]>(sessionData?.issues_resolved || "[]", []);
   if (issuesResolved.length > 0) {
-    autoRelateSessionIssues(db, sessionId, issuesResolved, "resolved");
+    await autoRelateSessionIssues(db, sessionId, issuesResolved, "resolved");
   }
 
   // Session → Learnings (from session_learnings table)
-  autoRelateSessionLearnings(db, sessionId);
+  await autoRelateSessionLearnings(db, sessionId);
 
   // File ↔ File correlations (based on co-change patterns)
-  autoRelateFileCorrelations(db, projectId, 3);
+  await autoRelateFileCorrelations(db, projectId, 3);
 
   // File ↔ File test relationships
-  autoRelateTestFiles(db, projectId);
+  await autoRelateTestFiles(db, projectId);
 
   console.error(`\n✅ Session #${sessionId} ended`);
   if (outcome) {
@@ -719,7 +720,7 @@ export async function sessionEndEnhanced(
  * Build the system primer section that teaches the AI the available tools
  * and surfaces the developer profile + active state.
  */
-function buildSystemPrimer(db: Database, projectId: number): string {
+async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promise<string> {
   let md = `# Context Intelligence System\n\n`;
 
   md += `## Your Tools (use proactively)\n`;
@@ -735,7 +736,7 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   md += `\n`;
 
   // Developer profile top entries
-  const profileEntries = getTopProfileEntries(db, projectId, 5);
+  const profileEntries = await getTopProfileEntries(db, projectId, 5);
   if (profileEntries.length > 0) {
     md += `## Developer Profile (top preferences)\n`;
     for (const entry of profileEntries) {
@@ -750,13 +751,14 @@ function buildSystemPrimer(db: Database, projectId: number): string {
 
   // Focus
   try {
-    const focus = db
-      .query<{ area: string }, [number]>(`
+    const focus = await db.get<{ area: string }>(
+      `
       SELECT area FROM focus
       WHERE project_id = ? AND cleared_at IS NULL
       ORDER BY created_at DESC LIMIT 1
-    `)
-      .get(projectId);
+    `,
+      [projectId]
+    );
     md += `- Focus: ${focus?.area || "none"}\n`;
   } catch {
     md += `- Focus: none\n`;
@@ -764,13 +766,14 @@ function buildSystemPrimer(db: Database, projectId: number): string {
 
   // Hot files
   try {
-    const hotFiles = db
-      .query<{ path: string }, [number]>(`
+    const hotFiles = await db.all<{ path: string }>(
+      `
       SELECT path FROM files
       WHERE project_id = ? AND temperature = 'hot'
       ORDER BY last_referenced_at DESC LIMIT 3
-    `)
-      .all(projectId);
+    `,
+      [projectId]
+    );
     if (hotFiles.length > 0) {
       md += `- Hot files: ${hotFiles.map((f) => f.path).join(", ")}\n`;
     }
@@ -779,7 +782,7 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   }
 
   // Decisions due — show titles + age
-  const decisionsDue = getDecisionsDue(db, projectId);
+  const decisionsDue = await getDecisionsDue(db, projectId);
   if (decisionsDue.length > 0) {
     md += `- Decisions due for review:\n`;
     for (const d of decisionsDue.slice(0, 3)) {
@@ -791,7 +794,7 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   }
 
   // Foundational learnings due — show titles + age
-  const foundationalDue = getFoundationalLearningsDue(db, projectId);
+  const foundationalDue = await getFoundationalLearningsDue(db, projectId);
   if (foundationalDue.length > 0) {
     md += `- Foundational learnings for review:\n`;
     for (const l of foundationalDue.slice(0, 3)) {
@@ -803,7 +806,7 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   }
 
   // Pending insights — show type + content
-  const newInsights = listInsights(db, projectId, { status: "new" });
+  const newInsights = await listInsights(db, projectId, { status: "new" });
   if (newInsights.length > 0) {
     md += `- New insights:\n`;
     for (const i of newInsights.slice(0, 3)) {
@@ -815,17 +818,17 @@ function buildSystemPrimer(db: Database, projectId: number): string {
   }
 
   // Velocity anomalies — hot-changing files
-  const anomalies = detectAnomalies(db, projectId);
+  const anomalies = await detectAnomalies(db, projectId);
   if (anomalies.length > 0) {
     md += `- Velocity anomalies: ${anomalies.map((a) => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
   }
 
   // Open questions count
-  const openQuestions = getOpenQuestionsForResume(db, projectId);
+  const openQuestions = await getOpenQuestionsForResume(db, projectId);
   md += `- Open questions: ${openQuestions.length}\n`;
 
   // Promotion candidates (learnings ready for CLAUDE.md)
-  const promotionCandidates = getPromotionCandidates(db, projectId);
+  const promotionCandidates = await getPromotionCandidates(db, projectId);
   if (promotionCandidates.length > 0) {
     md += `- Promotion candidates (ready for CLAUDE.md):\n`;
     for (const c of promotionCandidates.slice(0, 3)) {

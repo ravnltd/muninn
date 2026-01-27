@@ -3,7 +3,7 @@
  * Status overview, map visualization, events log
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../../database/adapter";
 import { parseArgs } from "node:util";
 import {
   getAllDependencies,
@@ -28,8 +28,8 @@ import {
 // Infrastructure Status
 // ============================================================================
 
-export function infraStatus(db: Database): void {
-  const status = getInfraStatus(db);
+export async function infraStatus(db: DatabaseAdapter): Promise<void> {
+  const status = await getInfraStatus(db);
   formatInfraStatus(status);
   outputJson(status);
 }
@@ -38,8 +38,8 @@ export function infraStatus(db: Database): void {
 // Infrastructure Map
 // ============================================================================
 
-export function infraMap(db: Database, format: "ascii" | "mermaid" = "ascii"): void {
-  const mapData = getMapData(db);
+export async function infraMap(db: DatabaseAdapter, format: "ascii" | "mermaid" = "ascii"): Promise<void> {
+  const mapData = await getMapData(db);
 
   if (mapData.servers.length === 0) {
     console.error("No infrastructure to map.");
@@ -61,7 +61,7 @@ export function infraMap(db: Database, format: "ascii" | "mermaid" = "ascii"): v
 // Dependency Management
 // ============================================================================
 
-export function depAdd(db: Database, args: string[]): void {
+export async function depAdd(db: DatabaseAdapter, args: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
     options: {
@@ -81,7 +81,7 @@ export function depAdd(db: Database, args: string[]): void {
     );
   }
 
-  const service = getServiceByName(db, serviceName);
+  const service = await getServiceByName(db, serviceName);
   if (!service) {
     console.error(`❌ Service '${serviceName}' not found`);
     process.exit(1);
@@ -89,7 +89,7 @@ export function depAdd(db: Database, args: string[]): void {
 
   let dependsOnId: number | null = null;
   if (values.depends) {
-    const depService = getServiceByName(db, values.depends);
+    const depService = await getServiceByName(db, values.depends);
     if (!depService) {
       console.error(`❌ Service '${values.depends}' not found`);
       process.exit(1);
@@ -97,7 +97,7 @@ export function depAdd(db: Database, args: string[]): void {
     dependsOnId = depService.id;
   }
 
-  db.run(
+  await db.run(
     `
     INSERT INTO service_deps (service_id, depends_on_service_id, depends_on_external, dependency_type, connection_env_var, required)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -110,17 +110,17 @@ export function depAdd(db: Database, args: string[]): void {
   outputJson({ success: true, service: serviceName, depends_on: target });
 }
 
-export function depsList(db: Database, serviceName?: string): void {
+export async function depsList(db: DatabaseAdapter, serviceName?: string): Promise<void> {
   if (serviceName) {
     // Show deps for specific service
-    const service = getServiceByName(db, serviceName);
+    const service = await getServiceByName(db, serviceName);
     if (!service) {
       console.error(`❌ Service '${serviceName}' not found`);
       process.exit(1);
     }
 
-    const deps = getServiceDependencies(db, service.id);
-    const reverseDeps = getServiceDependents(db, service.id);
+    const deps = await getServiceDependencies(db, service.id);
+    const reverseDeps = await getServiceDependents(db, service.id);
 
     console.error(`\n📦 ${serviceName} Dependencies:\n`);
 
@@ -145,7 +145,7 @@ export function depsList(db: Database, serviceName?: string): void {
     outputJson({ service: serviceName, dependencies: deps, dependents: reverseDeps });
   } else {
     // Show all deps
-    const allDeps = getAllDependencies(db);
+    const allDeps = await getAllDependencies(db);
 
     console.error("\n📦 Service Dependencies:\n");
     for (const d of allDeps) {
@@ -164,8 +164,8 @@ export function depsList(db: Database, serviceName?: string): void {
 // Events Log
 // ============================================================================
 
-export function infraEvents(db: Database, limit: number = 20): void {
-  const events = getRecentEvents(db, limit);
+export async function infraEvents(db: DatabaseAdapter, limit: number = 20): Promise<void> {
+  const events = await getRecentEvents(db, limit);
 
   console.error("\n📋 Recent Infrastructure Events:\n");
 
@@ -197,7 +197,7 @@ import { routeAdd, routeCheck, routeList, routeRemove } from "./route";
 import { serverAdd, serverCheck, serverList, serverRemove } from "./server";
 import { serviceAdd, serviceList, serviceLogs, serviceRemove, serviceStatus } from "./service";
 
-export async function handleInfraCommand(db: Database, args: string[]): Promise<void> {
+export async function handleInfraCommand(db: DatabaseAdapter, args: string[]): Promise<void> {
   const subCmd = args[0];
   const subSubCmd = args[1];
   const restArgs = args.slice(2);
@@ -206,15 +206,15 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
     case "server":
       switch (subSubCmd) {
         case "add":
-          serverAdd(db, restArgs);
+          await serverAdd(db, restArgs);
           break;
         case "list":
         case "ls":
-          serverList(db);
+          await serverList(db);
           break;
         case "remove":
         case "rm":
-          serverRemove(db, restArgs[0]);
+          await serverRemove(db, restArgs[0]);
           break;
         case "check":
         case "ping":
@@ -229,15 +229,15 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
     case "svc":
       switch (subSubCmd) {
         case "add":
-          serviceAdd(db, restArgs);
+          await serviceAdd(db, restArgs);
           break;
         case "list":
         case "ls":
-          serviceList(db, restArgs.includes("--server") ? restArgs[restArgs.indexOf("--server") + 1] : undefined);
+          await serviceList(db, restArgs.includes("--server") ? restArgs[restArgs.indexOf("--server") + 1] : undefined);
           break;
         case "remove":
         case "rm":
-          serviceRemove(
+          await serviceRemove(
             db,
             restArgs[0],
             restArgs.includes("--server") ? restArgs[restArgs.indexOf("--server") + 1] : undefined
@@ -257,15 +257,15 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
     case "route":
       switch (subSubCmd) {
         case "add":
-          routeAdd(db, restArgs);
+          await routeAdd(db, restArgs);
           break;
         case "list":
         case "ls":
-          routeList(db);
+          await routeList(db);
           break;
         case "remove":
         case "rm":
-          routeRemove(db, restArgs[0]);
+          await routeRemove(db, restArgs[0]);
           break;
         case "check":
           await routeCheck(db, restArgs[0]);
@@ -278,21 +278,21 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
     case "dep":
     case "deps":
       if (subSubCmd === "add") {
-        depAdd(db, restArgs);
+        await depAdd(db, restArgs);
       } else {
         // Show deps, optionally for a specific service
-        depsList(db, subSubCmd && subSubCmd !== "list" ? subSubCmd : undefined);
+        await depsList(db, subSubCmd && subSubCmd !== "list" ? subSubCmd : undefined);
       }
       break;
 
     case "status":
     case "st":
-      infraStatus(db);
+      await infraStatus(db);
       break;
 
     case "map": {
       const format = args.includes("--mermaid") ? "mermaid" : "ascii";
-      infraMap(db, format);
+      await infraMap(db, format);
       break;
     }
 
@@ -300,7 +300,7 @@ export async function handleInfraCommand(db: Database, args: string[]): Promise<
     case "log": {
       const limitIdx = args.indexOf("--limit");
       const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1], 10) : 20;
-      infraEvents(db, limit);
+      await infraEvents(db, limit);
       break;
     }
 

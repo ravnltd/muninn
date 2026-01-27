@@ -3,7 +3,7 @@
  * Extract learnings from sessions using LLM analysis
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
 import { logError } from "../utils/errors";
 
@@ -25,7 +25,7 @@ export interface TranscriptAnalysis {
  * Extract learnings from a completed session using LLM
  */
 export async function extractSessionLearnings(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   sessionId: number,
   context: {
@@ -54,7 +54,7 @@ export async function extractSessionLearnings(
     for (const learning of learnings) {
       if (learning.confidence >= 0.7) {
         // High confidence - auto-save
-        const result = db.run(
+        const result = await db.run(
           `INSERT INTO learnings (project_id, category, title, content, source, confidence)
            VALUES (?, ?, ?, ?, ?, ?)`,
           [
@@ -68,7 +68,7 @@ export async function extractSessionLearnings(
         );
 
         try {
-          db.run(
+          await db.run(
             `INSERT INTO session_learnings (session_id, learning_id, confidence, auto_applied)
              VALUES (?, ?, ?, 1)`,
             [sessionId, Number(result.lastInsertRowid), learning.confidence]
@@ -79,7 +79,7 @@ export async function extractSessionLearnings(
       } else {
         // Lower confidence - record but don't auto-save
         try {
-          db.run(
+          await db.run(
             `INSERT INTO session_learnings (session_id, confidence, auto_applied)
              VALUES (?, ?, 0)`,
             [sessionId, learning.confidence]

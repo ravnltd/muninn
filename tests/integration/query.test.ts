@@ -20,8 +20,8 @@ describe("Query Command", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Seed comprehensive test data
-    seedTestFiles(testDb.db, testDb.projectId, [
+    // Seed comprehensive test data (use rawDb for sync seed operations)
+    seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/auth/login.ts", purpose: "User authentication flow" },
       { path: "src/auth/session.ts", purpose: "Session management" },
       { path: "src/api/users.ts", purpose: "User API endpoints" },
@@ -30,7 +30,7 @@ describe("Query Command", () => {
       { path: "src/database/queries.ts", purpose: "Database query helpers" },
     ]);
 
-    seedTestDecisions(testDb.db, testDb.projectId, [
+    seedTestDecisions(testDb.rawDb, testDb.projectId, [
       {
         title: "Use JWT for auth",
         decision: "JSON Web Tokens for authentication",
@@ -43,12 +43,12 @@ describe("Query Command", () => {
       },
     ]);
 
-    seedTestIssues(testDb.db, testDb.projectId, [
+    seedTestIssues(testDb.rawDb, testDb.projectId, [
       { title: "Session timeout", description: "Sessions expire too quickly", severity: 7 },
       { title: "API rate limiting", description: "Need rate limiting", severity: 5 },
     ]);
 
-    seedTestLearnings(testDb.db, testDb.projectId, [
+    seedTestLearnings(testDb.rawDb, testDb.projectId, [
       {
         category: "pattern",
         title: "Auth best practices",
@@ -68,7 +68,8 @@ describe("Query Command", () => {
 
   test("FTS search works on test database", () => {
     // Test FTS directly without going through handleQueryCommand (which accesses global DB)
-    const results = testDb.db
+    // Use rawDb for direct SQL
+    const results = testDb.rawDb
       .query<{ path: string }, [string]>(
         `SELECT path FROM fts_files WHERE fts_files MATCH ?`
       )
@@ -85,7 +86,8 @@ describe("Suggest Command", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    seedTestFiles(testDb.db, testDb.projectId, [
+    // Use rawDb for sync seed operations
+    seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/auth/login.ts", purpose: "Login functionality" },
       { path: "src/auth/logout.ts", purpose: "Logout functionality" },
       { path: "src/api/auth.ts", purpose: "Auth API endpoints" },
@@ -121,20 +123,21 @@ describe("Predict Command", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    seedTestFiles(testDb.db, testDb.projectId, [
+    // Use rawDb for sync seed operations
+    seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/auth/login.ts", purpose: "Login flow", fragility: 7 },
       { path: "src/auth/session.ts", purpose: "Sessions", fragility: 5 },
     ]);
 
-    seedTestDecisions(testDb.db, testDb.projectId, [
+    seedTestDecisions(testDb.rawDb, testDb.projectId, [
       { title: "Auth pattern", decision: "Use OAuth", reasoning: "Industry standard" },
     ]);
 
-    seedTestIssues(testDb.db, testDb.projectId, [
+    seedTestIssues(testDb.rawDb, testDb.projectId, [
       { title: "Login bug", description: "Affects auth", severity: 8 },
     ]);
 
-    seedTestLearnings(testDb.db, testDb.projectId, [
+    seedTestLearnings(testDb.rawDb, testDb.projectId, [
       { category: "gotcha", title: "Auth gotcha", content: "Watch session expiry" },
     ]);
   });
@@ -152,7 +155,7 @@ describe("Predict Command", () => {
   test("predictContext bundles context for task", async () => {
     const { predictContext } = await import("../../src/commands/predict");
 
-    const result = predictContext(testDb.db, testDb.projectId, { task: "fix auth login" });
+    const result = await predictContext(testDb.db, testDb.projectId, { task: "fix auth login" });
 
     expect(result).toBeDefined();
     expect(result).toHaveProperty("relatedFiles");
@@ -165,7 +168,7 @@ describe("Predict Command", () => {
   test("predictContext includes files when provided", async () => {
     const { predictContext } = await import("../../src/commands/predict");
 
-    const result = predictContext(testDb.db, testDb.projectId, {
+    const result = await predictContext(testDb.db, testDb.projectId, {
       task: "auth",
       files: ["src/auth/login.ts"],
     });
@@ -181,7 +184,8 @@ describe("Focus Integration", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    seedTestFiles(testDb.db, testDb.projectId, [
+    // Use rawDb for sync seed operations
+    seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/auth/login.ts", purpose: "Login" },
       { path: "src/api/users.ts", purpose: "Users API" },
       { path: "src/utils/format.ts", purpose: "Formatting" },
@@ -193,13 +197,13 @@ describe("Focus Integration", () => {
   });
 
   test("focus can be set for project", () => {
-    // Set focus on auth
-    const focusId = setTestFocus(testDb.db, testDb.projectId, "authentication", ["src/auth/*"], ["login", "session"]);
+    // Set focus on auth (use rawDb for sync operations)
+    const focusId = setTestFocus(testDb.rawDb, testDb.projectId, "authentication", ["src/auth/*"], ["login", "session"]);
 
     expect(focusId).toBeGreaterThan(0);
 
-    // Verify focus was set
-    const focus = testDb.db
+    // Verify focus was set (use rawDb for direct SQL)
+    const focus = testDb.rawDb
       .query<{ area: string }, [number]>(`SELECT area FROM focus WHERE id = ?`)
       .get(focusId);
 

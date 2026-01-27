@@ -3,20 +3,20 @@
  * Track entity heat (hot/warm/cold) based on recent reference patterns
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 
 /**
  * Decay temperature based on session count since last reference.
  * Called on session start.
  * Hot = referenced in last 3 sessions, Warm = 3-10, Cold = 10+
  */
-export function decayTemperatures(db: Database, projectId: number): void {
+export async function decayTemperatures(db: DatabaseAdapter, projectId: number): Promise<void> {
   const tables = ["files", "decisions", "issues", "learnings"];
 
   for (const table of tables) {
     try {
       // Set cold: last_referenced_at more than 10 sessions ago or null
-      db.run(
+      await db.run(
         `
         UPDATE ${table}
         SET temperature = 'cold'
@@ -28,7 +28,7 @@ export function decayTemperatures(db: Database, projectId: number): void {
       );
 
       // Set warm: last_referenced between 3-10 sessions ago
-      db.run(
+      await db.run(
         `
         UPDATE ${table}
         SET temperature = 'warm'
@@ -47,9 +47,9 @@ export function decayTemperatures(db: Database, projectId: number): void {
 /**
  * Heat an entity when it's queried/referenced
  */
-export function heatEntity(db: Database, table: string, id: number): void {
+export async function heatEntity(db: DatabaseAdapter, table: string, id: number): Promise<void> {
   try {
-    db.run(
+    await db.run(
       `
       UPDATE ${table}
       SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
@@ -65,14 +65,14 @@ export function heatEntity(db: Database, table: string, id: number): void {
 /**
  * Get hot entities for resume display
  */
-export function getHotEntities(
-  db: Database,
+export async function getHotEntities(
+  db: DatabaseAdapter,
   projectId: number
-): {
+): Promise<{
   files: Array<{ path: string; purpose: string | null }>;
   decisions: Array<{ id: number; title: string }>;
   learnings: Array<{ id: number; title: string }>;
-} {
+}> {
   const result = {
     files: [] as Array<{ path: string; purpose: string | null }>,
     decisions: [] as Array<{ id: number; title: string }>,
@@ -80,37 +80,34 @@ export function getHotEntities(
   };
 
   try {
-    result.files = db
-      .query<{ path: string; purpose: string | null }, [number]>(`
-      SELECT path, purpose FROM files
+    result.files = await db.all<{ path: string; purpose: string | null }>(
+      `SELECT path, purpose FROM files
       WHERE project_id = ? AND temperature = 'hot'
-      ORDER BY last_referenced_at DESC LIMIT 5
-    `)
-      .all(projectId);
+      ORDER BY last_referenced_at DESC LIMIT 5`,
+      [projectId]
+    );
   } catch {
     /* temperature column may not exist */
   }
 
   try {
-    result.decisions = db
-      .query<{ id: number; title: string }, [number]>(`
-      SELECT id, title FROM decisions
+    result.decisions = await db.all<{ id: number; title: string }>(
+      `SELECT id, title FROM decisions
       WHERE project_id = ? AND temperature = 'hot' AND status = 'active'
-      ORDER BY last_referenced_at DESC LIMIT 5
-    `)
-      .all(projectId);
+      ORDER BY last_referenced_at DESC LIMIT 5`,
+      [projectId]
+    );
   } catch {
     /* temperature column may not exist */
   }
 
   try {
-    result.learnings = db
-      .query<{ id: number; title: string }, [number]>(`
-      SELECT id, title FROM learnings
+    result.learnings = await db.all<{ id: number; title: string }>(
+      `SELECT id, title FROM learnings
       WHERE (project_id = ? OR project_id IS NULL) AND temperature = 'hot'
-      ORDER BY last_referenced_at DESC LIMIT 5
-    `)
-      .all(projectId);
+      ORDER BY last_referenced_at DESC LIMIT 5`,
+      [projectId]
+    );
   } catch {
     /* temperature column may not exist */
   }
@@ -121,24 +118,23 @@ export function getHotEntities(
 /**
  * Get recent observations for resume
  */
-export function getRecentObservations(
-  db: Database,
+export async function getRecentObservations(
+  db: DatabaseAdapter,
   projectId: number,
   limit: number = 3
-): Array<{
+): Promise<Array<{
   type: string;
   content: string;
   frequency: number;
-}> {
+}>> {
   try {
-    return db
-      .query<{ type: string; content: string; frequency: number }, [number, number]>(`
-      SELECT type, content, frequency FROM observations
+    return await db.all<{ type: string; content: string; frequency: number }>(
+      `SELECT type, content, frequency FROM observations
       WHERE (project_id = ? OR project_id IS NULL)
       ORDER BY last_seen_at DESC
-      LIMIT ?
-    `)
-      .all(projectId, limit);
+      LIMIT ?`,
+      [projectId, limit]
+    );
   } catch {
     return [];
   }

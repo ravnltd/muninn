@@ -3,7 +3,7 @@
  * Import graph building, dependency analysis
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
 import { logError, safeJsonParse } from "../utils/errors";
@@ -352,20 +352,16 @@ export function buildDependencyGraph(projectPath: string, maxFiles: number = 500
 // Dependency Commands
 // ============================================================================
 
-export function showDependencies(db: Database, projectId: number, projectPath: string, filePath: string): void {
+export async function showDependencies(db: DatabaseAdapter, projectId: number, projectPath: string, filePath: string): Promise<void> {
   // First check if we have cached dependencies in DB
-  const fileRecord = db
-    .query<
-      {
-        dependencies: string | null;
-        dependents: string | null;
-      },
-      [number, string]
-    >(`
-    SELECT dependencies, dependents FROM files
-    WHERE project_id = ? AND path = ?
-  `)
-    .get(projectId, filePath);
+  const fileRecord = await db.get<{
+    dependencies: string | null;
+    dependents: string | null;
+  }>(
+    `SELECT dependencies, dependents FROM files
+    WHERE project_id = ? AND path = ?`,
+    [projectId, filePath]
+  );
 
   let imports: string[] = [];
   let dependents: string[] = [];
@@ -484,12 +480,12 @@ function computeFragilityFromGraph(dependentCount: number, _importCount: number)
 // Refresh Dependencies
 // ============================================================================
 
-export function refreshDependencies(
-  db: Database,
+export async function refreshDependencies(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   maxFiles: number = 2000
-): { processed: number; updated: number; errors: number } {
+): Promise<{ processed: number; updated: number; errors: number }> {
   console.error("🔄 Refreshing dependency graph...\n");
 
   const graph = buildDependencyGraph(projectPath, maxFiles);
@@ -500,17 +496,15 @@ export function refreshDependencies(
       const fileType = inferFileType(filePath);
       const fragility = computeFragilityFromGraph(info.dependents.length, info.imports.length);
 
-      db.run(
-        `
-        INSERT INTO files (project_id, path, type, fragility, dependencies, dependents, updated_at)
+      await db.run(
+        `INSERT INTO files (project_id, path, type, fragility, dependencies, dependents, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(project_id, path) DO UPDATE SET
           type = COALESCE(files.type, excluded.type),
           fragility = MAX(COALESCE(files.fragility, 0), excluded.fragility),
           dependencies = excluded.dependencies,
           dependents = excluded.dependents,
-          updated_at = CURRENT_TIMESTAMP
-      `,
+          updated_at = CURRENT_TIMESTAMP`,
         [projectId, filePath, fileType, fragility, JSON.stringify(info.imports), JSON.stringify(info.dependents)]
       );
       updated++;
@@ -543,12 +537,12 @@ export function refreshDependencies(
 // Generate Dependency Graph (Mermaid)
 // ============================================================================
 
-export function generateDependencyGraph(
-  db: Database,
+export async function generateDependencyGraph(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   focusFile?: string
-): string {
+): Promise<string> {
   const graph = buildDependencyGraph(projectPath, 100);
 
   let mermaid = "```mermaid\nflowchart LR\n";
@@ -583,11 +577,10 @@ export function generateDependencyGraph(
     const id = nodeId(path);
 
     // Get fragility from DB for styling
-    const fileRecord = db
-      .query<{ fragility: number }, [number, string]>(`
-      SELECT fragility FROM files WHERE project_id = ? AND path = ?
-    `)
-      .get(projectId, path);
+    const fileRecord = await db.get<{ fragility: number }>(
+      `SELECT fragility FROM files WHERE project_id = ? AND path = ?`,
+      [projectId, path]
+    );
 
     const fragility = fileRecord?.fragility || 0;
 

@@ -18,7 +18,7 @@ describe("Server Operations", () => {
   });
 
   test("creates server", () => {
-    const result = testDb.db.run(
+    const result = testDb.rawDb.run(
       `INSERT INTO servers (name, hostname, role, status) VALUES (?, ?, ?, ?)`,
       ["prod-1", "server1.example.com", "production", "online"]
     );
@@ -26,7 +26,7 @@ describe("Server Operations", () => {
   });
 
   test("gets server by name", () => {
-    const server = testDb.db
+    const server = testDb.rawDb
       .query<{ id: number; name: string; role: string }, [string]>(
         `SELECT id, name, role FROM servers WHERE name = ?`
       )
@@ -39,10 +39,10 @@ describe("Server Operations", () => {
 
   test("lists all servers", () => {
     // Add more servers
-    testDb.db.run(`INSERT INTO servers (name, role, status) VALUES (?, ?, ?)`, ["staging-1", "staging", "online"]);
-    testDb.db.run(`INSERT INTO servers (name, role, status) VALUES (?, ?, ?)`, ["dev-1", "development", "offline"]);
+    testDb.rawDb.run(`INSERT INTO servers (name, role, status) VALUES (?, ?, ?)`, ["staging-1", "staging", "online"]);
+    testDb.rawDb.run(`INSERT INTO servers (name, role, status) VALUES (?, ?, ?)`, ["dev-1", "development", "offline"]);
 
-    const servers = testDb.db
+    const servers = testDb.rawDb
       .query<{ name: string; status: string }, []>(`SELECT name, status FROM servers ORDER BY name`)
       .all();
 
@@ -50,9 +50,9 @@ describe("Server Operations", () => {
   });
 
   test("updates server status", () => {
-    testDb.db.run(`UPDATE servers SET status = ? WHERE name = ?`, ["degraded", "prod-1"]);
+    testDb.rawDb.run(`UPDATE servers SET status = ? WHERE name = ?`, ["degraded", "prod-1"]);
 
-    const server = testDb.db
+    const server = testDb.rawDb
       .query<{ status: string }, [string]>(`SELECT status FROM servers WHERE name = ?`)
       .get("prod-1");
 
@@ -60,10 +60,10 @@ describe("Server Operations", () => {
   });
 
   test("deletes server", () => {
-    testDb.db.run(`INSERT INTO servers (name) VALUES (?)`, ["to-delete"]);
-    testDb.db.run(`DELETE FROM servers WHERE name = ?`, ["to-delete"]);
+    testDb.rawDb.run(`INSERT INTO servers (name) VALUES (?)`, ["to-delete"]);
+    testDb.rawDb.run(`DELETE FROM servers WHERE name = ?`, ["to-delete"]);
 
-    const server = testDb.db
+    const server = testDb.rawDb
       .query<{ id: number }, [string]>(`SELECT id FROM servers WHERE name = ?`)
       .get("to-delete");
 
@@ -77,7 +77,7 @@ describe("Service Operations", () => {
 
   beforeAll(() => {
     testDb = createTestDb();
-    serverIds = seedTestServers(testDb.db, [
+    serverIds = seedTestServers(testDb.rawDb, [
       { name: "web-server", role: "production", status: "online" },
       { name: "db-server", role: "production", status: "online" },
     ]);
@@ -88,7 +88,7 @@ describe("Service Operations", () => {
   });
 
   test("creates service on server", () => {
-    const result = testDb.db.run(
+    const result = testDb.rawDb.run(
       `INSERT INTO services (name, server_id, port, health_status) VALUES (?, ?, ?, ?)`,
       ["api", serverIds[0], 3000, "healthy"]
     );
@@ -96,12 +96,12 @@ describe("Service Operations", () => {
   });
 
   test("creates multiple services", () => {
-    seedTestServices(testDb.db, [
+    seedTestServices(testDb.rawDb, [
       { name: "web", serverId: serverIds[0], port: 80, healthStatus: "healthy" },
       { name: "postgres", serverId: serverIds[1], port: 5432, healthStatus: "healthy" },
     ]);
 
-    const services = testDb.db
+    const services = testDb.rawDb
       .query<{ name: string; port: number }, []>(`SELECT name, port FROM services`)
       .all();
 
@@ -109,7 +109,7 @@ describe("Service Operations", () => {
   });
 
   test("gets services for server", () => {
-    const services = testDb.db
+    const services = testDb.rawDb
       .query<{ name: string; port: number }, [number]>(`SELECT name, port FROM services WHERE server_id = ?`)
       .all(serverIds[0]);
 
@@ -118,9 +118,9 @@ describe("Service Operations", () => {
   });
 
   test("updates service health status", () => {
-    testDb.db.run(`UPDATE services SET health_status = ? WHERE name = ?`, ["unhealthy", "api"]);
+    testDb.rawDb.run(`UPDATE services SET health_status = ? WHERE name = ?`, ["unhealthy", "api"]);
 
-    const service = testDb.db
+    const service = testDb.rawDb
       .query<{ health_status: string }, [string]>(`SELECT health_status FROM services WHERE name = ?`)
       .get("api");
 
@@ -129,20 +129,20 @@ describe("Service Operations", () => {
 
   test("cascades delete on server deletion", () => {
     // Create a new server with services
-    const result = testDb.db.run(`INSERT INTO servers (name) VALUES (?)`, ["cascade-test"]);
+    const result = testDb.rawDb.run(`INSERT INTO servers (name) VALUES (?)`, ["cascade-test"]);
     const serverId = Number(result.lastInsertRowid);
 
-    testDb.db.run(`INSERT INTO services (name, server_id, port) VALUES (?, ?, ?)`, ["cascade-svc", serverId, 8080]);
+    testDb.rawDb.run(`INSERT INTO services (name, server_id, port) VALUES (?, ?, ?)`, ["cascade-svc", serverId, 8080]);
 
     // Verify service exists
-    let service = testDb.db.query<{ id: number }, [number]>(`SELECT id FROM services WHERE server_id = ?`).get(serverId);
+    let service = testDb.rawDb.query<{ id: number }, [number]>(`SELECT id FROM services WHERE server_id = ?`).get(serverId);
     expect(service).toBeDefined();
 
     // Delete server
-    testDb.db.run(`DELETE FROM servers WHERE id = ?`, [serverId]);
+    testDb.rawDb.run(`DELETE FROM servers WHERE id = ?`, [serverId]);
 
     // Service should be deleted
-    service = testDb.db.query<{ id: number }, [number]>(`SELECT id FROM services WHERE server_id = ?`).get(serverId);
+    service = testDb.rawDb.query<{ id: number }, [number]>(`SELECT id FROM services WHERE server_id = ?`).get(serverId);
     expect(service).toBeNull();
   });
 });
@@ -155,10 +155,10 @@ describe("Route Operations", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    const serverResult = testDb.db.run(`INSERT INTO servers (name, status) VALUES (?, ?)`, ["route-server", "online"]);
+    const serverResult = testDb.rawDb.run(`INSERT INTO servers (name, status) VALUES (?, ?)`, ["route-server", "online"]);
     serverId = Number(serverResult.lastInsertRowid);
 
-    const serviceResult = testDb.db.run(
+    const serviceResult = testDb.rawDb.run(
       `INSERT INTO services (name, server_id, port) VALUES (?, ?, ?)`,
       ["route-api", serverId, 3000]
     );
@@ -170,7 +170,7 @@ describe("Route Operations", () => {
   });
 
   test("creates route", () => {
-    const result = testDb.db.run(
+    const result = testDb.rawDb.run(
       `INSERT INTO routes (domain, path, service_id, ssl_type) VALUES (?, ?, ?, ?)`,
       ["api.example.com", "/v1", serviceId, "letsencrypt"]
     );
@@ -178,13 +178,13 @@ describe("Route Operations", () => {
   });
 
   test("gets routes for service", () => {
-    testDb.db.run(`INSERT INTO routes (domain, path, service_id) VALUES (?, ?, ?)`, [
+    testDb.rawDb.run(`INSERT INTO routes (domain, path, service_id) VALUES (?, ?, ?)`, [
       "api.example.com",
       "/v2",
       serviceId,
     ]);
 
-    const routes = testDb.db
+    const routes = testDb.rawDb
       .query<{ domain: string; path: string }, [number]>(`SELECT domain, path FROM routes WHERE service_id = ?`)
       .all(serviceId);
 
@@ -193,13 +193,13 @@ describe("Route Operations", () => {
 
   test("enforces unique constraint on domain/path/method", () => {
     try {
-      testDb.db.run(`INSERT INTO routes (domain, path, method, service_id) VALUES (?, ?, ?, ?)`, [
+      testDb.rawDb.run(`INSERT INTO routes (domain, path, method, service_id) VALUES (?, ?, ?, ?)`, [
         "unique.example.com",
         "/",
         "*",
         serviceId,
       ]);
-      testDb.db.run(`INSERT INTO routes (domain, path, method, service_id) VALUES (?, ?, ?, ?)`, [
+      testDb.rawDb.run(`INSERT INTO routes (domain, path, method, service_id) VALUES (?, ?, ?, ?)`, [
         "unique.example.com",
         "/",
         "*",
@@ -221,13 +221,13 @@ describe("Service Dependencies", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    const serverResult = testDb.db.run(`INSERT INTO servers (name, status) VALUES (?, ?)`, ["dep-server", "online"]);
+    const serverResult = testDb.rawDb.run(`INSERT INTO servers (name, status) VALUES (?, ?)`, ["dep-server", "online"]);
     serverId = Number(serverResult.lastInsertRowid);
 
-    const apiResult = testDb.db.run(`INSERT INTO services (name, server_id) VALUES (?, ?)`, ["api-svc", serverId]);
+    const apiResult = testDb.rawDb.run(`INSERT INTO services (name, server_id) VALUES (?, ?)`, ["api-svc", serverId]);
     apiServiceId = Number(apiResult.lastInsertRowid);
 
-    const dbResult = testDb.db.run(`INSERT INTO services (name, server_id) VALUES (?, ?)`, ["db-svc", serverId]);
+    const dbResult = testDb.rawDb.run(`INSERT INTO services (name, server_id) VALUES (?, ?)`, ["db-svc", serverId]);
     dbServiceId = Number(dbResult.lastInsertRowid);
   });
 
@@ -236,7 +236,7 @@ describe("Service Dependencies", () => {
   });
 
   test("creates internal service dependency", () => {
-    const result = testDb.db.run(
+    const result = testDb.rawDb.run(
       `INSERT INTO service_deps (service_id, depends_on_service_id, dependency_type, required) VALUES (?, ?, ?, ?)`,
       [apiServiceId, dbServiceId, "database", 1]
     );
@@ -244,7 +244,7 @@ describe("Service Dependencies", () => {
   });
 
   test("creates external dependency", () => {
-    const result = testDb.db.run(
+    const result = testDb.rawDb.run(
       `INSERT INTO service_deps (service_id, depends_on_external, dependency_type) VALUES (?, ?, ?)`,
       [apiServiceId, "https://api.stripe.com", "api"]
     );
@@ -252,7 +252,7 @@ describe("Service Dependencies", () => {
   });
 
   test("gets dependencies for service", () => {
-    const deps = testDb.db
+    const deps = testDb.rawDb
       .query<{ depends_on_service_id: number | null; depends_on_external: string | null; dependency_type: string }, [number]>(
         `SELECT depends_on_service_id, depends_on_external, dependency_type FROM service_deps WHERE service_id = ?`
       )
@@ -271,13 +271,13 @@ describe("Infrastructure Health Aggregation", () => {
     testDb = createTestDb();
 
     // Set up infrastructure with mixed health states
-    const serverIds = seedTestServers(testDb.db, [
+    const serverIds = seedTestServers(testDb.rawDb, [
       { name: "healthy-server", status: "online" },
       { name: "degraded-server", status: "degraded" },
       { name: "offline-server", status: "offline" },
     ]);
 
-    seedTestServices(testDb.db, [
+    seedTestServices(testDb.rawDb, [
       { name: "healthy-svc-1", serverId: serverIds[0], healthStatus: "healthy" },
       { name: "healthy-svc-2", serverId: serverIds[0], healthStatus: "healthy" },
       { name: "degraded-svc", serverId: serverIds[1], healthStatus: "degraded" },
@@ -290,7 +290,7 @@ describe("Infrastructure Health Aggregation", () => {
   });
 
   test("counts servers by status", () => {
-    const stats = testDb.db
+    const stats = testDb.rawDb
       .query<{ status: string; count: number }, []>(`SELECT status, COUNT(*) as count FROM servers GROUP BY status`)
       .all();
 
@@ -304,7 +304,7 @@ describe("Infrastructure Health Aggregation", () => {
   });
 
   test("counts services by health status", () => {
-    const stats = testDb.db
+    const stats = testDb.rawDb
       .query<{ health_status: string; count: number }, []>(
         `SELECT health_status, COUNT(*) as count FROM services GROUP BY health_status`
       )
@@ -315,7 +315,7 @@ describe("Infrastructure Health Aggregation", () => {
   });
 
   test("gets services with server info", () => {
-    const services = testDb.db
+    const services = testDb.rawDb
       .query<{ service_name: string; server_name: string; server_status: string }, []>(`
         SELECT s.name as service_name, srv.name as server_name, srv.status as server_status
         FROM services s

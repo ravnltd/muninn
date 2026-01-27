@@ -3,7 +3,7 @@
  * File, decision, issue, learning, pattern management
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { closeGlobalDb, getGlobalDb } from "../database/connection";
@@ -42,7 +42,7 @@ import { trackDecisionMade } from "./session";
 // File Commands
 // ============================================================================
 
-export async function fileAdd(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function fileAdd(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const { values } = parseFileArgs(args);
 
   if (!values.path) {
@@ -63,7 +63,7 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
     }
   }
 
-  db.run(
+  await db.run(
     `
     INSERT INTO files (project_id, path, type, purpose, fragility, fragility_reason, status, content_hash, fs_modified_at, last_analyzed)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -98,11 +98,12 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
       const embedding = await generateEmbedding(text);
       if (embedding) {
         // Get the ID (either new insert or existing record)
-        const file = db
-          .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
-          .get(projectId, values.path);
+        const file = await db.get<{ id: number }>(
+          "SELECT id FROM files WHERE project_id = ? AND path = ?",
+          [projectId, values.path]
+        );
         if (file) {
-          db.run("UPDATE files SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), file.id]);
+          await db.run("UPDATE files SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), file.id]);
         }
       }
     } catch (error) {
@@ -114,32 +115,30 @@ export async function fileAdd(db: Database, projectId: number, args: string[]): 
   outputSuccess({ path: values.path });
 }
 
-export function fileGet(db: Database, projectId: number, path: string): void {
+export async function fileGet(db: DatabaseAdapter, projectId: number, path: string): Promise<void> {
   if (!path) {
     exitWithUsage("Usage: muninn file get <path>");
   }
 
-  const file = db
-    .query<Record<string, unknown>, [number, string]>(`
-    SELECT * FROM files WHERE project_id = ? AND path = ?
-  `)
-    .get(projectId, path);
+  const file = await db.get<Record<string, unknown>>(
+    `SELECT * FROM files WHERE project_id = ? AND path = ?`,
+    [projectId, path]
+  );
 
   if (!file) {
     outputJson({ found: false });
     return;
   }
 
-  const symbols = db
-    .query<Record<string, unknown>, [number]>(`
-    SELECT id, name, type, purpose, signature FROM symbols WHERE file_id = ?
-  `)
-    .all(file.id as number);
+  const symbols = await db.all<Record<string, unknown>>(
+    `SELECT id, name, type, purpose, signature FROM symbols WHERE file_id = ?`,
+    [file.id as number]
+  );
 
   outputJson({ found: true, ...file, symbols });
 }
 
-export function fileList(db: Database, projectId: number, filter?: string): void {
+export async function fileList(db: DatabaseAdapter, projectId: number, filter?: string): Promise<void> {
   let query = "SELECT path, type, purpose, fragility, status FROM files WHERE project_id = ?";
   const params: (number | string)[] = [projectId];
 
@@ -148,7 +147,7 @@ export function fileList(db: Database, projectId: number, filter?: string): void
     params.push(filter, filter);
   }
 
-  const files = db.query<Record<string, unknown>, (number | string)[]>(query).all(...params);
+  const files = await db.all<Record<string, unknown>>(query, params);
   outputJson(files);
 }
 
@@ -156,7 +155,7 @@ export function fileList(db: Database, projectId: number, filter?: string): void
 // Decision Commands
 // ============================================================================
 
-export async function decisionAdd(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function decisionAdd(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const { values } = parseDecisionArgs(args);
 
   if (!values.title || !values.decision) {
@@ -165,7 +164,7 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
     );
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO decisions (project_id, title, decision, reasoning, affects)
     VALUES (?, ?, ?, ?, ?)
@@ -176,7 +175,7 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
   const insertedId = Number(result.lastInsertRowid);
 
   // Track decision in current session (for session → decision relationship)
-  trackDecisionMade(db, projectId, insertedId);
+  await trackDecisionMade(db, projectId, insertedId);
 
   // Generate embedding if Voyage API is available
   if (isEmbeddingAvailable()) {
@@ -184,7 +183,7 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
       const text = decisionToText(values.title, values.decision, values.reasoning || null);
       const embedding = await generateEmbedding(text);
       if (embedding) {
-        db.run("UPDATE decisions SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
+        await db.run("UPDATE decisions SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
       }
     } catch (error) {
       logError("decisionAdd:embedding", error);
@@ -198,15 +197,14 @@ export async function decisionAdd(db: Database, projectId: number, args: string[
   });
 }
 
-export function decisionList(db: Database, projectId: number): void {
-  const decisions = db
-    .query<Record<string, unknown>, [number]>(`
-    SELECT id, title, decision, reasoning, affects, status, decided_at
+export async function decisionList(db: DatabaseAdapter, projectId: number): Promise<void> {
+  const decisions = await db.all<Record<string, unknown>>(
+    `SELECT id, title, decision, reasoning, affects, status, decided_at
     FROM decisions
     WHERE project_id = ? AND status = 'active'
-    ORDER BY decided_at DESC
-  `)
-    .all(projectId);
+    ORDER BY decided_at DESC`,
+    [projectId]
+  );
 
   if (decisions.length === 0) {
     console.error("No active decisions recorded.");
@@ -226,14 +224,14 @@ export function decisionList(db: Database, projectId: number): void {
 // Issue Commands
 // ============================================================================
 
-export async function issueAdd(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function issueAdd(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const { values } = parseIssueArgs(args);
 
   if (!values.title) {
     exitWithUsage("Usage: muninn issue add --title <title> [--severity 1-10] [--type bug|tech-debt] [--files <files>]");
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO issues (project_id, title, description, type, severity, affected_files, workaround)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -257,7 +255,7 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
       const text = issueToText(values.title, values.description || null, values.workaround || null);
       const embedding = await generateEmbedding(text);
       if (embedding) {
-        db.run("UPDATE issues SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
+        await db.run("UPDATE issues SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
       }
     } catch (error) {
       logError("issueAdd:embedding", error);
@@ -268,7 +266,7 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
   if (values.files) {
     const fileList = safeJsonParse<string[]>(values.files, []);
     if (fileList.length > 0) {
-      autoRelateIssueFiles(db, projectId, insertedId, fileList);
+      await autoRelateIssueFiles(db, projectId, insertedId, fileList);
     }
   }
 
@@ -279,12 +277,12 @@ export async function issueAdd(db: Database, projectId: number, args: string[]):
   });
 }
 
-export function issueResolve(db: Database, issueId: number, resolution: string): void {
+export async function issueResolve(db: DatabaseAdapter, issueId: number, resolution: string): Promise<void> {
   if (!issueId || !resolution) {
     exitWithUsage("Usage: muninn issue resolve <id> <resolution>");
   }
 
-  db.run(
+  await db.run(
     `
     UPDATE issues
     SET status = 'resolved', resolution = ?, resolved_at = CURRENT_TIMESTAMP
@@ -297,13 +295,13 @@ export function issueResolve(db: Database, issueId: number, resolution: string):
   outputSuccess({ id: issueId });
 }
 
-export function issueList(db: Database, projectId: number, status?: string): void {
+export async function issueList(db: DatabaseAdapter, projectId: number, status?: string): Promise<void> {
   const query = status
     ? "SELECT * FROM issues WHERE project_id = ? AND status = ? ORDER BY severity DESC"
     : "SELECT * FROM issues WHERE project_id = ? AND status != 'resolved' ORDER BY severity DESC";
 
   const params = status ? [projectId, status] : [projectId];
-  const issues = db.query<Record<string, unknown>, (number | string)[]>(query).all(...params);
+  const issues = await db.all<Record<string, unknown>>(query, params);
 
   if (issues.length === 0) {
     console.error("No open issues.");
@@ -323,7 +321,7 @@ export function issueList(db: Database, projectId: number, status?: string): voi
 // Learning Commands
 // ============================================================================
 
-export async function learnAdd(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function learnAdd(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const { values } = parseLearnArgs(args);
 
   if (!values.title || !values.content) {
@@ -333,8 +331,8 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
   }
 
   if (values.global) {
-    const globalDb = getGlobalDb();
-    const id = addGlobalLearning(
+    const globalDb = await getGlobalDb();
+    const id = await addGlobalLearning(
       globalDb,
       values.category || "pattern",
       values.title,
@@ -355,7 +353,7 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
     const isFoundational = values.foundational ? 1 : 0;
     const reviewAfterSessions = values.foundational ? (values.reviewAfter || 30) : null;
 
-    const result = db.run(
+    const result = await db.run(
       `
       INSERT INTO learnings (project_id, category, title, content, context, foundational, review_after_sessions, review_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -380,7 +378,7 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
         const text = learningToText(values.title, values.content, values.context || null);
         const embedding = await generateEmbedding(text);
         if (embedding) {
-          db.run("UPDATE learnings SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
+          await db.run("UPDATE learnings SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), insertedId]);
         }
       } catch (error) {
         logError("learnAdd:embedding", error);
@@ -391,7 +389,7 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
     if (values.files) {
       const fileList = safeJsonParse<string[]>(values.files, []);
       if (fileList.length > 0) {
-        autoRelateLearningFiles(db, projectId, insertedId, fileList);
+        await autoRelateLearningFiles(db, projectId, insertedId, fileList);
       }
     }
 
@@ -407,24 +405,21 @@ export async function learnAdd(db: Database, projectId: number, args: string[]):
   }
 }
 
-export function learnList(db: Database, projectId: number): void {
-  const learnings = db
-    .query<Record<string, unknown>, [number]>(`
-    SELECT * FROM learnings
+export async function learnList(db: DatabaseAdapter, projectId: number): Promise<void> {
+  const learnings = await db.all<Record<string, unknown>>(
+    `SELECT * FROM learnings
     WHERE project_id = ? OR project_id IS NULL
-    ORDER BY times_applied DESC, confidence DESC
-  `)
-    .all(projectId);
+    ORDER BY times_applied DESC, confidence DESC`,
+    [projectId]
+  );
 
   // Also get global learnings
-  const globalDb = getGlobalDb();
-  const globalLearnings = globalDb
-    .query<Record<string, unknown>, []>(`
-    SELECT *, 'global' as scope FROM global_learnings
+  const globalDb = await getGlobalDb();
+  const globalLearnings = await globalDb.all<Record<string, unknown>>(
+    `SELECT *, 'global' as scope FROM global_learnings
     ORDER BY times_applied DESC
-    LIMIT 20
-  `)
-    .all();
+    LIMIT 20`
+  );
   closeGlobalDb();
 
   console.error("\n💡 Learnings:\n");
@@ -445,7 +440,7 @@ export function learnList(db: Database, projectId: number): void {
 // Pattern Commands
 // ============================================================================
 
-export function patternAdd(_db: Database, args: string[]): void {
+export async function patternAdd(_db: DatabaseAdapter, args: string[]): Promise<void> {
   const { values } = parsePatternArgs(args);
 
   if (!values.name || !values.description) {
@@ -454,21 +449,21 @@ export function patternAdd(_db: Database, args: string[]): void {
     );
   }
 
-  const globalDb = getGlobalDb();
-  addPattern(globalDb, values.name, values.description, values.example, values.anti, values.applies);
+  const globalDb = await getGlobalDb();
+  await addPattern(globalDb, values.name, values.description, values.example, values.anti, values.applies);
   closeGlobalDb();
 
   console.error(`✅ Pattern '${values.name}' added`);
   outputSuccess({ name: values.name });
 }
 
-export function patternSearch(_db: Database, query: string): void {
+export async function patternSearch(_db: DatabaseAdapter, query: string): Promise<void> {
   if (!query) {
     exitWithUsage("Usage: muninn pattern search <query>");
   }
 
-  const globalDb = getGlobalDb();
-  const patterns = searchPatterns(globalDb, query);
+  const globalDb = await getGlobalDb();
+  const patterns = await searchPatterns(globalDb, query);
   closeGlobalDb();
 
   if (patterns.length === 0) {
@@ -484,9 +479,9 @@ export function patternSearch(_db: Database, query: string): void {
   outputJson(patterns);
 }
 
-export function patternList(): void {
-  const globalDb = getGlobalDb();
-  const patterns = getAllPatterns(globalDb);
+export async function patternList(): Promise<void> {
+  const globalDb = await getGlobalDb();
+  const patterns = await getAllPatterns(globalDb);
   closeGlobalDb();
 
   if (patterns.length === 0) {
@@ -506,7 +501,7 @@ export function patternList(): void {
 // Tech Debt Commands
 // ============================================================================
 
-export function debtAdd(args: string[]): void {
+export async function debtAdd(args: string[]): Promise<void> {
   const { values } = parseDebtArgs(args);
 
   if (!values.title) {
@@ -515,8 +510,8 @@ export function debtAdd(args: string[]): void {
     );
   }
 
-  const globalDb = getGlobalDb();
-  const id = addTechDebt(
+  const globalDb = await getGlobalDb();
+  const id = await addTechDebt(
     globalDb,
     process.cwd(),
     values.title,
@@ -531,9 +526,9 @@ export function debtAdd(args: string[]): void {
   outputSuccess({ id, title: values.title });
 }
 
-export function debtList(projectOnly: boolean): void {
-  const globalDb = getGlobalDb();
-  const debt = listTechDebt(globalDb, projectOnly ? process.cwd() : undefined);
+export async function debtList(projectOnly: boolean): Promise<void> {
+  const globalDb = await getGlobalDb();
+  const debt = await listTechDebt(globalDb, projectOnly ? process.cwd() : undefined);
   closeGlobalDb();
 
   if (debt.length === 0) {
@@ -550,13 +545,13 @@ export function debtList(projectOnly: boolean): void {
   outputJson(debt);
 }
 
-export function debtResolve(id: number): void {
+export async function debtResolve(id: number): Promise<void> {
   if (!id) {
     exitWithUsage("Usage: muninn debt resolve <id>");
   }
 
-  const globalDb = getGlobalDb();
-  resolveTechDebt(globalDb, id);
+  const globalDb = await getGlobalDb();
+  await resolveTechDebt(globalDb, id);
   closeGlobalDb();
 
   console.error(`✅ Tech debt #${id} resolved`);

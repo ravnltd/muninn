@@ -3,7 +3,7 @@
  * Semantic search across project knowledge
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { closeGlobalDb, getGlobalDb } from "../database/connection";
 import { searchGlobalLearnings, semanticQuery } from "../database/queries/search";
 import type { QueryResult } from "../types";
@@ -15,7 +15,7 @@ import { outputJson } from "../utils/format";
 // Semantic Query with Global Learning Integration
 // ============================================================================
 
-export async function handleQueryCommand(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function handleQueryCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const useSmartQuery = args.includes("--smart");
   const useVectorOnly = args.includes("--vector");
   const useFtsOnly = args.includes("--fts");
@@ -68,7 +68,7 @@ export async function handleQueryCommand(db: Database, projectId: number, args: 
 // ============================================================================
 
 async function performSemanticQuery(
-  db: Database,
+  db: DatabaseAdapter,
   query: string,
   projectId: number,
   mode: "auto" | "fts" | "vector" | "hybrid" = "auto"
@@ -78,8 +78,8 @@ async function performSemanticQuery(
   // Also search global learnings (only for fts/auto modes)
   if (mode !== "vector") {
     try {
-      const globalDb = getGlobalDb();
-      const globalLearnings = searchGlobalLearnings(globalDb, query);
+      const globalDb = await getGlobalDb();
+      const globalLearnings = await searchGlobalLearnings(globalDb, query);
       results.push(
         ...globalLearnings.map((l) => ({
           id: l.id,
@@ -187,7 +187,7 @@ function getTypeIcon(type: string): string {
 // Smart Query with LLM Re-ranking
 // ============================================================================
 
-async function semanticQueryWithReranking(db: Database, query: string, projectId: number): Promise<QueryResult[]> {
+async function semanticQueryWithReranking(db: DatabaseAdapter, query: string, projectId: number): Promise<QueryResult[]> {
   // Stage 1: Get candidates using FTS5
   const candidates = await performSemanticQuery(db, query, projectId, "fts");
 

@@ -4,7 +4,7 @@
  * Supports both declared (explicit) and inferred (from data) preferences.
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import type { DeveloperProfileEntry, ProfileCategory, ProfileSource } from "../types";
 import { outputJson, outputSuccess } from "../utils/format";
 
@@ -12,23 +12,21 @@ import { outputJson, outputSuccess } from "../utils/format";
 // Profile Show
 // ============================================================================
 
-export function profileShow(
-  db: Database,
+export async function profileShow(
+  db: DatabaseAdapter,
   projectId: number,
   options?: { category?: ProfileCategory }
-): DeveloperProfileEntry[] {
+): Promise<DeveloperProfileEntry[]> {
   const categoryFilter = options?.category ? "AND category = ?" : "";
 
   const params: (number | string)[] = [projectId];
   if (options?.category) params.push(options.category);
 
-  const entries = db
-    .query<DeveloperProfileEntry, (number | string)[]>(`
+  const entries = await db.all<DeveloperProfileEntry>(`
     SELECT * FROM developer_profile
     WHERE project_id = ? ${categoryFilter}
     ORDER BY confidence DESC, times_confirmed DESC
-  `)
-    .all(...params);
+  `, params);
 
   return entries;
 }
@@ -37,16 +35,16 @@ export function profileShow(
 // Profile Add (Declare)
 // ============================================================================
 
-export function profileAdd(
-  db: Database,
+export async function profileAdd(
+  db: DatabaseAdapter,
   projectId: number,
   key: string,
   value: string,
   category: ProfileCategory,
   isGlobal: boolean = false
-): void {
+): Promise<void> {
   if (isGlobal) {
-    db.run(
+    await db.run(
       `
       INSERT INTO global_developer_profile (key, value, category, source, confidence)
       VALUES (?, ?, ?, 'declared', 0.9)
@@ -61,7 +59,7 @@ export function profileAdd(
       [key, value, category]
     );
   } else {
-    db.run(
+    await db.run(
       `
       INSERT INTO developer_profile (project_id, key, value, category, source, confidence)
       VALUES (?, ?, ?, ?, 'declared', 0.9)
@@ -82,24 +80,24 @@ export function profileAdd(
 // Profile Infer
 // ============================================================================
 
-export function profileInfer(db: Database, projectId: number): DeveloperProfileEntry[] {
+export async function profileInfer(db: DatabaseAdapter, projectId: number): Promise<DeveloperProfileEntry[]> {
   const inferred: DeveloperProfileEntry[] = [];
 
   // Infer from observations (high-frequency patterns)
-  inferFromObservations(db, projectId, inferred);
+  await inferFromObservations(db, projectId, inferred);
 
   // Infer from decisions (consistent choices)
-  inferFromDecisions(db, projectId, inferred);
+  await inferFromDecisions(db, projectId, inferred);
 
   // Infer from learnings (established preferences)
-  inferFromLearnings(db, projectId, inferred);
+  await inferFromLearnings(db, projectId, inferred);
 
   // Infer from workflow patterns
-  inferFromWorkflows(db, projectId, inferred);
+  await inferFromWorkflows(db, projectId, inferred);
 
   // Persist inferred entries
   for (const entry of inferred) {
-    db.run(
+    await db.run(
       `
       INSERT INTO developer_profile (project_id, key, value, evidence, confidence, category, source)
       VALUES (?, ?, ?, ?, ?, ?, 'inferred')
@@ -118,18 +116,16 @@ export function profileInfer(db: Database, projectId: number): DeveloperProfileE
   return inferred;
 }
 
-function inferFromObservations(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
+async function inferFromObservations(db: DatabaseAdapter, projectId: number, results: DeveloperProfileEntry[]): Promise<void> {
   try {
-    const patterns = db
-      .query<{ content: string; frequency: number; type: string }, [number]>(`
+    const patterns = await db.all<{ content: string; frequency: number; type: string }>(`
       SELECT content, frequency, type FROM observations
       WHERE (project_id = ? OR project_id IS NULL)
         AND type IN ('preference', 'pattern', 'behavior')
         AND frequency >= 2
       ORDER BY frequency DESC
       LIMIT 10
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const p of patterns) {
       const confidence = Math.min(0.9, 0.4 + p.frequency * 0.1);
@@ -152,18 +148,16 @@ function inferFromObservations(db: Database, projectId: number, results: Develop
   }
 }
 
-function inferFromDecisions(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
+async function inferFromDecisions(db: DatabaseAdapter, projectId: number, results: DeveloperProfileEntry[]): Promise<void> {
   try {
     // Find decisions with successful outcomes
-    const successfulDecisions = db
-      .query<{ title: string; decision: string; reasoning: string | null }, [number]>(`
+    const successfulDecisions = await db.all<{ title: string; decision: string; reasoning: string | null }>(`
       SELECT title, decision, reasoning FROM decisions
       WHERE project_id = ? AND status = 'active'
         AND outcome_status = 'succeeded'
       ORDER BY decided_at DESC
       LIMIT 5
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const d of successfulDecisions) {
       results.push({
@@ -185,18 +179,16 @@ function inferFromDecisions(db: Database, projectId: number, results: DeveloperP
   }
 }
 
-function inferFromLearnings(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
+async function inferFromLearnings(db: DatabaseAdapter, projectId: number, results: DeveloperProfileEntry[]): Promise<void> {
   try {
-    const learnings = db
-      .query<{ title: string; content: string; category: string; times_applied: number }, [number]>(`
+    const learnings = await db.all<{ title: string; content: string; category: string; times_applied: number }>(`
       SELECT title, content, category, times_applied FROM learnings
       WHERE (project_id = ? OR project_id IS NULL)
         AND category IN ('preference', 'convention', 'pattern')
         AND times_applied >= 2
       ORDER BY times_applied DESC
       LIMIT 5
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const l of learnings) {
       const confidence = Math.min(0.9, 0.5 + l.times_applied * 0.05);
@@ -220,17 +212,15 @@ function inferFromLearnings(db: Database, projectId: number, results: DeveloperP
   }
 }
 
-function inferFromWorkflows(db: Database, projectId: number, results: DeveloperProfileEntry[]): void {
+async function inferFromWorkflows(db: DatabaseAdapter, projectId: number, results: DeveloperProfileEntry[]): Promise<void> {
   try {
-    const workflows = db
-      .query<{ task_type: string; approach: string; times_used: number }, [number]>(`
+    const workflows = await db.all<{ task_type: string; approach: string; times_used: number }>(`
       SELECT task_type, approach, times_used FROM workflow_patterns
       WHERE (project_id = ? OR project_id IS NULL)
         AND times_used >= 2
       ORDER BY times_used DESC
       LIMIT 5
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const w of workflows) {
       results.push({
@@ -256,10 +246,10 @@ function inferFromWorkflows(db: Database, projectId: number, results: DeveloperP
 // Profile Evolve (Re-score from evidence)
 // ============================================================================
 
-export function profileEvolve(db: Database, projectId: number): void {
+export async function profileEvolve(db: DatabaseAdapter, projectId: number): Promise<void> {
   try {
     // Decay confidence for entries not recently confirmed
-    db.run(
+    await db.run(
       `
       UPDATE developer_profile
       SET confidence = MAX(0.1, confidence - 0.05)
@@ -271,7 +261,7 @@ export function profileEvolve(db: Database, projectId: number): void {
     );
 
     // Boost confidence for frequently confirmed entries
-    db.run(
+    await db.run(
       `
       UPDATE developer_profile
       SET confidence = MIN(1.0, confidence + 0.05)
@@ -290,47 +280,37 @@ export function profileEvolve(db: Database, projectId: number): void {
 // Profile Helpers
 // ============================================================================
 
-export function getTopProfileEntries(
-  db: Database,
+export async function getTopProfileEntries(
+  db: DatabaseAdapter,
   projectId: number,
   limit: number = 5
-): Array<{ key: string; value: string; confidence: number; category: string }> {
+): Promise<Array<{ key: string; value: string; confidence: number; category: string }>> {
   try {
     // Get project-specific entries
-    const projectEntries = db
-      .query<
-        {
-          key: string;
-          value: string;
-          confidence: number;
-          category: string;
-        },
-        [number, number]
-      >(`
+    const projectEntries = await db.all<{
+      key: string;
+      value: string;
+      confidence: number;
+      category: string;
+    }>(`
       SELECT key, value, confidence, category FROM developer_profile
       WHERE project_id = ?
       ORDER BY confidence DESC, times_confirmed DESC
       LIMIT ?
-    `)
-      .all(projectId, limit);
+    `, [projectId, limit]);
 
     // If not enough, supplement with global entries
     if (projectEntries.length < limit) {
-      const globalEntries = db
-        .query<
-          {
-            key: string;
-            value: string;
-            confidence: number;
-            category: string;
-          },
-          [number]
-        >(`
+      const globalEntries = await db.all<{
+        key: string;
+        value: string;
+        confidence: number;
+        category: string;
+      }>(`
         SELECT key, value, confidence, category FROM global_developer_profile
         ORDER BY confidence DESC, times_confirmed DESC
         LIMIT ?
-      `)
-        .all(limit - projectEntries.length);
+      `, [limit - projectEntries.length]);
 
       return [...projectEntries, ...globalEntries];
     }
@@ -345,7 +325,7 @@ export function getTopProfileEntries(
 // CLI Handler
 // ============================================================================
 
-export function handleProfileCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleProfileCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -355,7 +335,7 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
       const category = args.find((a) =>
         ["coding_style", "architecture", "tooling", "workflow", "communication"].includes(a)
       ) as ProfileCategory | undefined;
-      const entries = profileShow(db, projectId, { category });
+      const entries = await profileShow(db, projectId, { category });
 
       if (entries.length === 0) {
         console.error("No profile entries yet. Run `muninn profile infer` or add with `muninn profile add`.");
@@ -388,7 +368,7 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
         return;
       }
 
-      profileAdd(db, projectId, key, value, category, isGlobal);
+      await profileAdd(db, projectId, key, value, category, isGlobal);
       console.error(`✅ Profile entry added: ${key} = ${value}`);
       outputSuccess({ key, value, category, global: isGlobal });
       break;
@@ -396,7 +376,7 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
 
     case "infer": {
       console.error("🔍 Inferring profile from project data...\n");
-      const inferred = profileInfer(db, projectId);
+      const inferred = await profileInfer(db, projectId);
 
       if (inferred.length === 0) {
         console.error("No patterns detected yet. Use the system more to build a profile.");
@@ -413,7 +393,7 @@ export function handleProfileCommand(db: Database, projectId: number, args: stri
     }
 
     case "evolve": {
-      profileEvolve(db, projectId);
+      await profileEvolve(db, projectId);
       console.error("✅ Profile confidence scores evolved.");
       outputSuccess({ evolved: true });
       break;

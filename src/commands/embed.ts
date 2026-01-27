@@ -3,7 +3,7 @@
  * Manage vector embeddings for semantic search
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { backfillAll, backfillTable, getEmbeddingStats } from "../database/queries/vector";
 import { generateEmbedding, getDimensions, getProvider, isEmbeddingAvailable } from "../embeddings";
 import { outputJson, outputSuccess } from "../utils/format";
@@ -12,13 +12,13 @@ import { outputJson, outputSuccess } from "../utils/format";
 // Main Command Handler
 // ============================================================================
 
-export async function handleEmbedCommand(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function handleEmbedCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCommand = args[0];
   const subArgs = args.slice(1);
 
   switch (subCommand) {
     case "status":
-      showEmbedStatus(db, projectId);
+      await showEmbedStatus(db, projectId);
       break;
 
     case "backfill":
@@ -44,11 +44,11 @@ Commands:
 // Status Command
 // ============================================================================
 
-function showEmbedStatus(db: Database, projectId: number): void {
+async function showEmbedStatus(db: DatabaseAdapter, projectId: number): Promise<void> {
   const provider = getProvider();
   const available = isEmbeddingAvailable();
   const dimensions = getDimensions();
-  const stats = getEmbeddingStats(db, projectId);
+  const stats = await getEmbeddingStats(db, projectId);
 
   console.error("\n📊 Embedding Status\n");
   console.error(`Provider: ${provider} (${dimensions}-dim)`);
@@ -112,7 +112,7 @@ function createProgressBar(percent: number, width: number): string {
 // Backfill Command
 // ============================================================================
 
-async function runBackfill(db: Database, projectId: number, args: string[]): Promise<void> {
+async function runBackfill(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   if (!isEmbeddingAvailable()) {
     console.error("❌ No embedding provider available.");
     process.exit(1);

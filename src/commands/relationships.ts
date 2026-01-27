@@ -3,7 +3,7 @@
  * Create and query typed semantic links between entities
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { outputJson, outputSuccess } from "../utils/format";
 
 // ============================================================================
@@ -68,26 +68,26 @@ function parseEntityRef(ref: string): { type: EntityType; id: number } | null {
 /**
  * Get entity title for display
  */
-function getEntityTitle(db: Database, type: EntityType, id: number): string {
+async function getEntityTitle(db: DatabaseAdapter, type: EntityType, id: number): Promise<string> {
   switch (type) {
     case "file": {
-      const row = db.query<{ path: string }, [number]>("SELECT path FROM files WHERE id = ?").get(id);
+      const row = await db.get<{ path: string }>("SELECT path FROM files WHERE id = ?", [id]);
       return row?.path ?? `file:${id}`;
     }
     case "decision": {
-      const row = db.query<{ title: string }, [number]>("SELECT title FROM decisions WHERE id = ?").get(id);
+      const row = await db.get<{ title: string }>("SELECT title FROM decisions WHERE id = ?", [id]);
       return row?.title ?? `decision:${id}`;
     }
     case "issue": {
-      const row = db.query<{ title: string }, [number]>("SELECT title FROM issues WHERE id = ?").get(id);
+      const row = await db.get<{ title: string }>("SELECT title FROM issues WHERE id = ?", [id]);
       return row?.title ?? `issue:${id}`;
     }
     case "learning": {
-      const row = db.query<{ title: string }, [number]>("SELECT title FROM learnings WHERE id = ?").get(id);
+      const row = await db.get<{ title: string }>("SELECT title FROM learnings WHERE id = ?", [id]);
       return row?.title ?? `learning:${id}`;
     }
     case "session": {
-      const row = db.query<{ goal: string | null }, [number]>("SELECT goal FROM sessions WHERE id = ?").get(id);
+      const row = await db.get<{ goal: string | null }>("SELECT goal FROM sessions WHERE id = ?", [id]);
       return row?.goal ?? `session:${id}`;
     }
   }
@@ -100,13 +100,13 @@ function getEntityTitle(db: Database, type: EntityType, id: number): string {
 /**
  * Create a relationship between two entities
  */
-export function createRelationship(
-  db: Database,
+export async function createRelationship(
+  db: DatabaseAdapter,
   sourceRef: string,
   relationship: string,
   targetRef: string,
   options: { strength?: number; notes?: string } = {}
-): void {
+): Promise<void> {
   const source = parseEntityRef(sourceRef);
   if (!source) {
     console.error(`Invalid source entity: ${sourceRef}`);
@@ -132,14 +132,14 @@ export function createRelationship(
   const notes = options.notes ?? null;
 
   try {
-    db.run(
+    await db.run(
       `INSERT OR REPLACE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [source.type, source.id, target.type, target.id, relationship, strength, notes]
     );
 
-    const sourceTitle = getEntityTitle(db, source.type, source.id);
-    const targetTitle = getEntityTitle(db, target.type, target.id);
+    const sourceTitle = await getEntityTitle(db, source.type, source.id);
+    const targetTitle = await getEntityTitle(db, target.type, target.id);
 
     console.error(`\n✅ Relationship created:`);
     console.error(`   ${source.type}:${source.id} (${sourceTitle})`);
@@ -165,7 +165,7 @@ export function createRelationship(
 /**
  * Query relationships for an entity
  */
-export function queryRelationships(db: Database, entityRef: string | undefined, options: { type?: string } = {}): void {
+export async function queryRelationships(db: DatabaseAdapter, entityRef: string | undefined, options: { type?: string } = {}): Promise<void> {
   let rows: RelationshipRow[];
 
   if (entityRef) {
@@ -176,30 +176,24 @@ export function queryRelationships(db: Database, entityRef: string | undefined, 
       process.exit(1);
     }
 
-    rows = db
-      .query<RelationshipRow, [string, number, string, number]>(`
+    rows = await db.all<RelationshipRow>(`
       SELECT * FROM relationships
       WHERE (source_type = ? AND source_id = ?)
          OR (target_type = ? AND target_id = ?)
       ORDER BY strength DESC, created_at DESC
-    `)
-      .all(entity.type, entity.id, entity.type, entity.id);
+    `, [entity.type, entity.id, entity.type, entity.id]);
   } else if (options.type) {
-    rows = db
-      .query<RelationshipRow, [string]>(`
+    rows = await db.all<RelationshipRow>(`
       SELECT * FROM relationships
       WHERE relationship = ?
       ORDER BY strength DESC, created_at DESC
-    `)
-      .all(options.type);
+    `, [options.type]);
   } else {
-    rows = db
-      .query<RelationshipRow, []>(`
+    rows = await db.all<RelationshipRow>(`
       SELECT * FROM relationships
       ORDER BY strength DESC, created_at DESC
       LIMIT 50
-    `)
-      .all();
+    `, []);
   }
 
   if (rows.length === 0) {
@@ -211,8 +205,8 @@ export function queryRelationships(db: Database, entityRef: string | undefined, 
   console.error(`\n📊 Relationships (${rows.length})\n`);
 
   for (const row of rows) {
-    const sourceTitle = getEntityTitle(db, row.source_type as EntityType, row.source_id);
-    const targetTitle = getEntityTitle(db, row.target_type as EntityType, row.target_id);
+    const sourceTitle = await getEntityTitle(db, row.source_type as EntityType, row.source_id);
+    const targetTitle = await getEntityTitle(db, row.target_type as EntityType, row.target_id);
     const strengthBar = "█".repeat(Math.round(row.strength / 2)) + "░".repeat(5 - Math.round(row.strength / 2));
 
     console.error(
@@ -241,15 +235,15 @@ export function queryRelationships(db: Database, entityRef: string | undefined, 
 /**
  * Remove a relationship by ID
  */
-export function removeRelationship(db: Database, id: number): void {
-  const existing = db.query<RelationshipRow, [number]>("SELECT * FROM relationships WHERE id = ?").get(id);
+export async function removeRelationship(db: DatabaseAdapter, id: number): Promise<void> {
+  const existing = await db.get<RelationshipRow>("SELECT * FROM relationships WHERE id = ?", [id]);
 
   if (!existing) {
     console.error(`Relationship ${id} not found.`);
     process.exit(1);
   }
 
-  db.run("DELETE FROM relationships WHERE id = ?", [id]);
+  await db.run("DELETE FROM relationships WHERE id = ?", [id]);
 
   console.error(`\n✅ Removed relationship ${id}:`);
   console.error(
@@ -263,11 +257,9 @@ export function removeRelationship(db: Database, id: number): void {
 /**
  * Get or create a file record by path, returning its ID
  */
-export function getOrCreateFileId(db: Database, projectId: number, filePath: string): number | null {
+export async function getOrCreateFileId(db: DatabaseAdapter, projectId: number, filePath: string): Promise<number | null> {
   // Try to find existing file
-  const existing = db
-    .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
-    .get(projectId, filePath);
+  const existing = await db.get<{ id: number }>("SELECT id FROM files WHERE project_id = ? AND path = ?", [projectId, filePath]);
 
   if (existing) {
     return existing.id;
@@ -275,7 +267,7 @@ export function getOrCreateFileId(db: Database, projectId: number, filePath: str
 
   // Create minimal file record
   try {
-    const result = db.run(
+    const result = await db.run(
       `INSERT OR IGNORE INTO files (project_id, path, purpose, fragility)
        VALUES (?, ?, 'Auto-created from entity relationship', 1)`,
       [projectId, filePath]
@@ -284,9 +276,7 @@ export function getOrCreateFileId(db: Database, projectId: number, filePath: str
       return Number(result.lastInsertRowid);
     }
     // If insert was ignored (race condition), fetch existing
-    const created = db
-      .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
-      .get(projectId, filePath);
+    const created = await db.get<{ id: number }>("SELECT id FROM files WHERE project_id = ? AND path = ?", [projectId, filePath]);
     return created?.id || null;
   } catch {
     return null;
@@ -296,12 +286,12 @@ export function getOrCreateFileId(db: Database, projectId: number, filePath: str
 /**
  * Auto-create relationships between an issue and its affected files
  */
-export function autoRelateIssueFiles(db: Database, projectId: number, issueId: number, files: string[]): void {
+export async function autoRelateIssueFiles(db: DatabaseAdapter, projectId: number, issueId: number, files: string[]): Promise<void> {
   for (const filePath of files) {
-    const fileId = getOrCreateFileId(db, projectId, filePath);
+    const fileId = await getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
       try {
-        db.run(
+        await db.run(
           `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
            VALUES ('issue', ?, 'file', ?, 'related', 7, 'Auto-created: issue affects this file')`,
           [issueId, fileId]
@@ -316,12 +306,12 @@ export function autoRelateIssueFiles(db: Database, projectId: number, issueId: n
 /**
  * Auto-create relationships between a learning and related files
  */
-export function autoRelateLearningFiles(db: Database, projectId: number, learningId: number, files: string[]): void {
+export async function autoRelateLearningFiles(db: DatabaseAdapter, projectId: number, learningId: number, files: string[]): Promise<void> {
   for (const filePath of files) {
-    const fileId = getOrCreateFileId(db, projectId, filePath);
+    const fileId = await getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
       try {
-        db.run(
+        await db.run(
           `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
            VALUES ('learning', ?, 'file', ?, 'related', 6, 'Auto-created: learning applies to this file')`,
           [learningId, fileId]
@@ -336,12 +326,12 @@ export function autoRelateLearningFiles(db: Database, projectId: number, learnin
 /**
  * Auto-create relationships between a session and files it touched
  */
-export function autoRelateSessionFiles(db: Database, projectId: number, sessionId: number, files: string[]): void {
+export async function autoRelateSessionFiles(db: DatabaseAdapter, projectId: number, sessionId: number, files: string[]): Promise<void> {
   for (const filePath of files) {
-    const fileId = getOrCreateFileId(db, projectId, filePath);
+    const fileId = await getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
       try {
-        db.run(
+        await db.run(
           `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
            VALUES ('session', ?, 'file', ?, 'related', 5, 'Auto-created: file touched during session')`,
           [sessionId, fileId]
@@ -357,14 +347,14 @@ export function autoRelateSessionFiles(db: Database, projectId: number, sessionI
  * Auto-create a "fixes" relationship when an issue is resolved
  * Called from issue resolve path
  */
-export function autoRelateIssueFix(
-  db: Database,
+export async function autoRelateIssueFix(
+  db: DatabaseAdapter,
   issueId: number,
   resolutionContext?: { decisionId?: number; sessionId?: number }
-): void {
+): Promise<void> {
   if (resolutionContext?.decisionId) {
     try {
-      db.run(
+      await db.run(
         `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
          VALUES ('decision', ?, 'issue', ?, 'fixes', 8, 'Auto-detected from issue resolution')`,
         [resolutionContext.decisionId, issueId]
@@ -376,7 +366,7 @@ export function autoRelateIssueFix(
 
   if (resolutionContext?.sessionId) {
     try {
-      db.run(
+      await db.run(
         `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
          VALUES ('session', ?, 'issue', ?, 'fixes', 6, 'Auto-detected: issue resolved in session')`,
         [resolutionContext.sessionId, issueId]
@@ -395,10 +385,10 @@ export function autoRelateIssueFix(
  * Auto-create "made" relationships between a session and decisions made during it
  * Strength: 7 (session made this decision)
  */
-export function autoRelateSessionDecisions(db: Database, sessionId: number, decisionIds: number[]): void {
+export async function autoRelateSessionDecisions(db: DatabaseAdapter, sessionId: number, decisionIds: number[]): Promise<void> {
   for (const decisionId of decisionIds) {
     try {
-      db.run(
+      await db.run(
         `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
          VALUES ('session', ?, 'decision', ?, 'made', 7, 'Auto-created: decision made during session')`,
         [sessionId, decisionId]
@@ -413,12 +403,12 @@ export function autoRelateSessionDecisions(db: Database, sessionId: number, deci
  * Auto-create "found" or "resolved" relationships between a session and issues
  * Strength: 8 for resolved, 6 for found
  */
-export function autoRelateSessionIssues(
-  db: Database,
+export async function autoRelateSessionIssues(
+  db: DatabaseAdapter,
   sessionId: number,
   issueIds: number[],
   relation: "found" | "resolved"
-): void {
+): Promise<void> {
   const strength = relation === "resolved" ? 8 : 6;
   const note =
     relation === "resolved"
@@ -427,7 +417,7 @@ export function autoRelateSessionIssues(
 
   for (const issueId of issueIds) {
     try {
-      db.run(
+      await db.run(
         `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
          VALUES ('session', ?, 'issue', ?, ?, ?, ?)`,
         [sessionId, issueId, relation, strength, note]
@@ -443,18 +433,16 @@ export function autoRelateSessionIssues(
  * Queries session_learnings table to find learnings linked to this session
  * Strength: 7
  */
-export function autoRelateSessionLearnings(db: Database, sessionId: number): void {
+export async function autoRelateSessionLearnings(db: DatabaseAdapter, sessionId: number): Promise<void> {
   try {
-    const learnings = db
-      .query<{ learning_id: number }, [number]>(`
+    const learnings = await db.all<{ learning_id: number }>(`
       SELECT learning_id FROM session_learnings
       WHERE session_id = ? AND learning_id IS NOT NULL
-    `)
-      .all(sessionId);
+    `, [sessionId]);
 
     for (const { learning_id } of learnings) {
       try {
-        db.run(
+        await db.run(
           `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
            VALUES ('session', ?, 'learning', ?, 'learned', 7, 'Auto-created: learning extracted from session')`,
           [sessionId, learning_id]
@@ -476,31 +464,26 @@ export function autoRelateSessionLearnings(db: Database, sessionId: number): voi
  * Auto-create "often_changes_with" relationships based on file correlations
  * Strength: min(10, cochange_count) - more co-changes = stronger relationship
  */
-export function autoRelateFileCorrelations(db: Database, projectId: number, minCount: number = 3): number {
+export async function autoRelateFileCorrelations(db: DatabaseAdapter, projectId: number, minCount: number = 3): Promise<number> {
   let count = 0;
   try {
-    const correlations = db
-      .query<
-        {
-          file_a: string;
-          file_b: string;
-          cochange_count: number;
-        },
-        [number, number]
-      >(`
+    const correlations = await db.all<{
+      file_a: string;
+      file_b: string;
+      cochange_count: number;
+    }>(`
       SELECT file_a, file_b, cochange_count FROM file_correlations
       WHERE project_id = ? AND cochange_count >= ?
-    `)
-      .all(projectId, minCount);
+    `, [projectId, minCount]);
 
     for (const { file_a, file_b, cochange_count } of correlations) {
-      const fileAId = getOrCreateFileId(db, projectId, file_a);
-      const fileBId = getOrCreateFileId(db, projectId, file_b);
+      const fileAId = await getOrCreateFileId(db, projectId, file_a);
+      const fileBId = await getOrCreateFileId(db, projectId, file_b);
 
       if (fileAId && fileBId) {
         const strength = Math.min(10, cochange_count);
         try {
-          db.run(
+          await db.run(
             `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
              VALUES ('file', ?, 'file', ?, 'often_changes_with', ?, ?)`,
             [fileAId, fileBId, strength, `Co-changed ${cochange_count} times`]
@@ -522,30 +505,26 @@ export function autoRelateFileCorrelations(db: Database, projectId: number, minC
  * Detects patterns: *.test.ts, *.spec.ts, __tests__/*.ts
  * Strength: 9 (strong relationship)
  */
-export function autoRelateTestFiles(db: Database, projectId: number): number {
+export async function autoRelateTestFiles(db: DatabaseAdapter, projectId: number): Promise<number> {
   let count = 0;
   try {
     // Get all test files
-    const testFiles = db
-      .query<{ id: number; path: string }, [number]>(`
+    const testFiles = await db.all<{ id: number; path: string }>(`
       SELECT id, path FROM files
       WHERE project_id = ?
       AND (path LIKE '%.test.%' OR path LIKE '%.spec.%' OR path LIKE '%__tests__%')
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const testFile of testFiles) {
       const sourcePath = inferSourceFromTestPath(testFile.path);
       if (!sourcePath) continue;
 
       // Find the source file
-      const sourceFile = db
-        .query<{ id: number }, [number, string]>("SELECT id FROM files WHERE project_id = ? AND path = ?")
-        .get(projectId, sourcePath);
+      const sourceFile = await db.get<{ id: number }>("SELECT id FROM files WHERE project_id = ? AND path = ?", [projectId, sourcePath]);
 
       if (sourceFile) {
         try {
-          db.run(
+          await db.run(
             `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
              VALUES ('file', ?, 'file', ?, 'tests', 9, 'Auto-detected: test file for source')`,
             [testFile.id, sourceFile.id]
@@ -605,12 +584,12 @@ interface DecisionRow {
 /**
  * Auto-create relationships between a decision and its affected files
  */
-export function autoRelateDecisionFiles(db: Database, projectId: number, decisionId: number, files: string[]): void {
+export async function autoRelateDecisionFiles(db: DatabaseAdapter, projectId: number, decisionId: number, files: string[]): Promise<void> {
   for (const filePath of files) {
-    const fileId = getOrCreateFileId(db, projectId, filePath);
+    const fileId = await getOrCreateFileId(db, projectId, filePath);
     if (fileId) {
       try {
-        db.run(
+        await db.run(
           `INSERT OR IGNORE INTO relationships (source_type, source_id, target_type, target_id, relationship, strength, notes)
            VALUES ('decision', ?, 'file', ?, 'related', 8, 'Auto-created: decision affects this file')`,
           [decisionId, fileId]
@@ -631,10 +610,10 @@ interface ExtendedSessionRow extends SessionRow {
 /**
  * Backfill relationships for existing issues, sessions, and decisions
  */
-export function backfillEntityRelationships(
-  db: Database,
+export async function backfillEntityRelationships(
+  db: DatabaseAdapter,
   projectId: number
-): {
+): Promise<{
   decisions: number;
   issues: number;
   sessions: number;
@@ -643,7 +622,7 @@ export function backfillEntityRelationships(
   sessionLearnings: number;
   fileCorrelations: number;
   testFiles: number;
-} {
+}> {
   let decisionCount = 0;
   let issueCount = 0;
   let sessionCount = 0;
@@ -652,19 +631,17 @@ export function backfillEntityRelationships(
   let sessionLearningCount = 0;
 
   // Backfill decisions with affects
-  const decisions = db
-    .query<DecisionRow, [number]>(`
+  const decisions = await db.all<DecisionRow>(`
     SELECT id, affects FROM decisions
     WHERE project_id = ? AND affects IS NOT NULL
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   for (const decision of decisions) {
     if (!decision.affects) continue;
     try {
       const files = JSON.parse(decision.affects) as string[];
       if (Array.isArray(files) && files.length > 0) {
-        autoRelateDecisionFiles(db, projectId, decision.id, files);
+        await autoRelateDecisionFiles(db, projectId, decision.id, files);
         decisionCount++;
       }
     } catch {
@@ -673,19 +650,17 @@ export function backfillEntityRelationships(
   }
 
   // Backfill issues with affected_files
-  const issues = db
-    .query<IssueRow, [number]>(`
+  const issues = await db.all<IssueRow>(`
     SELECT id, affected_files FROM issues
     WHERE project_id = ? AND affected_files IS NOT NULL
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   for (const issue of issues) {
     if (!issue.affected_files) continue;
     try {
       const files = JSON.parse(issue.affected_files) as string[];
       if (Array.isArray(files) && files.length > 0) {
-        autoRelateIssueFiles(db, projectId, issue.id, files);
+        await autoRelateIssueFiles(db, projectId, issue.id, files);
         issueCount++;
       }
     } catch {
@@ -694,12 +669,10 @@ export function backfillEntityRelationships(
   }
 
   // Backfill sessions with files_touched AND new relationship types
-  const sessions = db
-    .query<ExtendedSessionRow, [number]>(`
+  const sessions = await db.all<ExtendedSessionRow>(`
     SELECT id, files_touched, decisions_made, issues_found, issues_resolved FROM sessions
     WHERE project_id = ?
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   for (const session of sessions) {
     // Files touched (existing)
@@ -707,7 +680,7 @@ export function backfillEntityRelationships(
       try {
         const files = JSON.parse(session.files_touched) as string[];
         if (Array.isArray(files) && files.length > 0) {
-          autoRelateSessionFiles(db, projectId, session.id, files);
+          await autoRelateSessionFiles(db, projectId, session.id, files);
           sessionCount++;
         }
       } catch {
@@ -720,7 +693,7 @@ export function backfillEntityRelationships(
       try {
         const decisionIds = JSON.parse(session.decisions_made) as number[];
         if (Array.isArray(decisionIds) && decisionIds.length > 0) {
-          autoRelateSessionDecisions(db, session.id, decisionIds);
+          await autoRelateSessionDecisions(db, session.id, decisionIds);
           sessionDecisionCount += decisionIds.length;
         }
       } catch {
@@ -733,7 +706,7 @@ export function backfillEntityRelationships(
       try {
         const issueIds = JSON.parse(session.issues_found) as number[];
         if (Array.isArray(issueIds) && issueIds.length > 0) {
-          autoRelateSessionIssues(db, session.id, issueIds, "found");
+          await autoRelateSessionIssues(db, session.id, issueIds, "found");
           sessionIssueCount += issueIds.length;
         }
       } catch {
@@ -746,7 +719,7 @@ export function backfillEntityRelationships(
       try {
         const issueIds = JSON.parse(session.issues_resolved) as number[];
         if (Array.isArray(issueIds) && issueIds.length > 0) {
-          autoRelateSessionIssues(db, session.id, issueIds, "resolved");
+          await autoRelateSessionIssues(db, session.id, issueIds, "resolved");
           sessionIssueCount += issueIds.length;
         }
       } catch {
@@ -755,29 +728,27 @@ export function backfillEntityRelationships(
     }
 
     // Learnings (new) - via session_learnings table
-    autoRelateSessionLearnings(db, session.id);
+    await autoRelateSessionLearnings(db, session.id);
     // Count is hard to track here, we'll estimate
   }
 
   // Count session learnings separately
   try {
-    const learningCount = db
-      .query<{ count: number }, [number]>(`
+    const learningCount = await db.get<{ count: number }>(`
       SELECT COUNT(*) as count FROM session_learnings sl
       JOIN sessions s ON sl.session_id = s.id
       WHERE s.project_id = ? AND sl.learning_id IS NOT NULL
-    `)
-      .get(projectId);
+    `, [projectId]);
     sessionLearningCount = learningCount?.count || 0;
   } catch {
     // Table might not exist
   }
 
   // File correlations (new)
-  const fileCorrelationCount = autoRelateFileCorrelations(db, projectId, 3);
+  const fileCorrelationCount = await autoRelateFileCorrelations(db, projectId, 3);
 
   // Test file relationships (new)
-  const testFileCount = autoRelateTestFiles(db, projectId);
+  const testFileCount = await autoRelateTestFiles(db, projectId);
 
   console.error(`\n✅ Backfilled relationships:`);
   console.error(`   Decisions → Files: ${decisionCount} (${decisions.length} checked)`);
@@ -807,7 +778,7 @@ export function backfillEntityRelationships(
 // CLI Router
 // ============================================================================
 
-export function handleRelationshipCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleRelationshipCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -829,7 +800,7 @@ export function handleRelationshipCommand(db: Database, projectId: number, args:
       const notesIdx = args.indexOf("--notes");
       const notes = notesIdx !== -1 ? args.slice(notesIdx + 1).join(" ") : undefined;
 
-      createRelationship(db, source, relationship, target, { strength, notes });
+      await createRelationship(db, source, relationship, target, { strength, notes });
       break;
     }
 
@@ -837,14 +808,14 @@ export function handleRelationshipCommand(db: Database, projectId: number, args:
     case "query": {
       // Check for backfill subcommand first
       if (args[1] === "backfill") {
-        backfillEntityRelationships(db, projectId);
+        await backfillEntityRelationships(db, projectId);
         break;
       }
       // muninn relations [entity] [--type <type>]
       const entity = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
       const typeIdx = args.indexOf("--type");
       const type = typeIdx !== -1 ? args[typeIdx + 1] : undefined;
-      queryRelationships(db, entity, { type });
+      await queryRelationships(db, entity, { type });
       break;
     }
 
@@ -855,12 +826,12 @@ export function handleRelationshipCommand(db: Database, projectId: number, args:
         console.error("Usage: muninn unrelate <id>");
         process.exit(1);
       }
-      removeRelationship(db, id);
+      await removeRelationship(db, id);
       break;
     }
 
     case "backfill": {
-      backfillEntityRelationships(db, projectId);
+      await backfillEntityRelationships(db, projectId);
       break;
     }
 

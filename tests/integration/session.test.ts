@@ -33,15 +33,15 @@ describe("Session Start", () => {
     console.log = () => {};
     console.error = () => {};
 
-    const sessionId = sessionStart(testDb.db, testDb.projectId, "Test goal");
+    const sessionId = await sessionStart(testDb.db, testDb.projectId, "Test goal");
 
     console.log = originalLog;
     console.error = originalError;
 
     expect(sessionId).toBeGreaterThan(0);
 
-    // Verify in database
-    const session = testDb.db
+    // Verify in database (use rawDb for direct SQL)
+    const session = testDb.rawDb
       .query<{ id: number; goal: string }, [number]>(`SELECT id, goal FROM sessions WHERE id = ?`)
       .get(sessionId);
 
@@ -58,12 +58,12 @@ describe("Session Start", () => {
     console.log = () => {};
     console.error = () => {};
 
-    const sessionId = sessionStart(testDb.db, testDb.projectId, "Another goal");
+    const sessionId = await sessionStart(testDb.db, testDb.projectId, "Another goal");
 
     console.log = originalLog;
     console.error = originalError;
 
-    const session = testDb.db
+    const session = testDb.rawDb
       .query<{ started_at: string }, [number]>(`SELECT started_at FROM sessions WHERE id = ?`)
       .get(sessionId);
 
@@ -86,7 +86,7 @@ describe("Session End", () => {
     console.log = () => {};
     console.error = () => {};
 
-    sessionId = sessionStart(testDb.db, testDb.projectId, "Session to end");
+    sessionId = await sessionStart(testDb.db, testDb.projectId, "Session to end");
 
     console.log = originalLog;
     console.error = originalError;
@@ -105,12 +105,12 @@ describe("Session End", () => {
     console.log = () => {};
     console.error = () => {};
 
-    sessionEnd(testDb.db, sessionId, ["--outcome", "Task completed successfully"]);
+    await sessionEnd(testDb.db, sessionId, ["--outcome", "Task completed successfully"]);
 
     console.log = originalLog;
     console.error = originalError;
 
-    const session = testDb.db
+    const session = testDb.rawDb
       .query<{ outcome: string; ended_at: string }, [number]>(
         `SELECT outcome, ended_at FROM sessions WHERE id = ?`
       )
@@ -121,8 +121,8 @@ describe("Session End", () => {
   });
 
   test("sets success level", async () => {
-    // Create new session
-    const result = testDb.db.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [
+    // Create new session (use rawDb for direct SQL)
+    const result = testDb.rawDb.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [
       testDb.projectId,
       "Success test",
     ]);
@@ -136,18 +136,18 @@ describe("Session End", () => {
     console.log = () => {};
     console.error = () => {};
 
-    sessionEnd(testDb.db, newSessionId, ["--success", "2"]);
+    await sessionEnd(testDb.db, newSessionId, ["--success", "2"]);
 
     console.log = originalLog;
     console.error = originalError;
 
-    const session = testDb.db.query<{ success: number }, [number]>(`SELECT success FROM sessions WHERE id = ?`).get(newSessionId);
+    const session = testDb.rawDb.query<{ success: number }, [number]>(`SELECT success FROM sessions WHERE id = ?`).get(newSessionId);
 
     expect(session?.success).toBe(2);
   });
 
   test("sets next steps", async () => {
-    const result = testDb.db.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [
+    const result = testDb.rawDb.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [
       testDb.projectId,
       "Next steps test",
     ]);
@@ -161,12 +161,12 @@ describe("Session End", () => {
     console.log = () => {};
     console.error = () => {};
 
-    sessionEnd(testDb.db, newSessionId, ["--next", "Continue with feature X"]);
+    await sessionEnd(testDb.db, newSessionId, ["--next", "Continue with feature X"]);
 
     console.log = originalLog;
     console.error = originalError;
 
-    const session = testDb.db
+    const session = testDb.rawDb
       .query<{ next_steps: string }, [number]>(`SELECT next_steps FROM sessions WHERE id = ?`)
       .get(newSessionId);
 
@@ -180,16 +180,16 @@ describe("Session List", () => {
   beforeAll(async () => {
     testDb = createTestDb();
 
-    // Create multiple sessions with explicit timestamps for ordering
-    testDb.db.run(
+    // Create multiple sessions with explicit timestamps for ordering (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO sessions (project_id, goal, outcome, success, started_at) VALUES (?, ?, ?, ?, datetime('now', '-2 hours'))`,
       [testDb.projectId, "Session 1", "Outcome 1", 2]
     );
-    testDb.db.run(
+    testDb.rawDb.run(
       `INSERT INTO sessions (project_id, goal, outcome, success, started_at) VALUES (?, ?, ?, ?, datetime('now', '-1 hour'))`,
       [testDb.projectId, "Session 2", "Outcome 2", 1]
     );
-    testDb.db.run(`INSERT INTO sessions (project_id, goal, started_at) VALUES (?, ?, datetime('now'))`, [
+    testDb.rawDb.run(`INSERT INTO sessions (project_id, goal, started_at) VALUES (?, ?, datetime('now'))`, [
       testDb.projectId,
       "Session 3",
     ]);
@@ -208,7 +208,7 @@ describe("Session List", () => {
       output = msg;
     };
 
-    sessionList(testDb.db, testDb.projectId);
+    await sessionList(testDb.db, testDb.projectId);
 
     console.log = originalLog;
 
@@ -228,7 +228,7 @@ describe("Session List", () => {
     };
     console.error = () => {};
 
-    sessionLast(testDb.db, testDb.projectId);
+    await sessionLast(testDb.db, testDb.projectId);
 
     console.log = originalLog;
     console.error = originalError;
@@ -244,9 +244,9 @@ describe("Session Count", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Create some sessions
-    testDb.db.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [testDb.projectId, "Session 1"]);
-    testDb.db.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [testDb.projectId, "Session 2"]);
+    // Create some sessions (use rawDb for direct SQL)
+    testDb.rawDb.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [testDb.projectId, "Session 1"]);
+    testDb.rawDb.run(`INSERT INTO sessions (project_id, goal) VALUES (?, ?)`, [testDb.projectId, "Session 2"]);
   });
 
   afterAll(() => {
@@ -256,18 +256,18 @@ describe("Session Count", () => {
   test("returns correct session count", async () => {
     const { sessionCount } = await import("../../src/commands/session");
 
-    const count = sessionCount(testDb.db, testDb.projectId);
+    const count = await sessionCount(testDb.db, testDb.projectId);
     expect(count).toBe(2);
   });
 
   test("returns zero for project with no sessions", async () => {
     const { sessionCount } = await import("../../src/commands/session");
 
-    // Create a new project with no sessions
-    const result = testDb.db.run(`INSERT INTO projects (path, name) VALUES (?, ?)`, ["/tmp/empty", "Empty"]);
+    // Create a new project with no sessions (use rawDb for direct SQL)
+    const result = testDb.rawDb.run(`INSERT INTO projects (path, name) VALUES (?, ?)`, ["/tmp/empty", "Empty"]);
     const emptyProjectId = Number(result.lastInsertRowid);
 
-    const count = sessionCount(testDb.db, emptyProjectId);
+    const count = await sessionCount(testDb.db, emptyProjectId);
     expect(count).toBe(0);
   });
 });
@@ -278,8 +278,8 @@ describe("Generate Resume", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Create a session with full data
-    testDb.db.run(
+    // Create a session with full data (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO sessions (project_id, goal, outcome, next_steps, ended_at) VALUES (?, ?, ?, ?, datetime('now'))`,
       [testDb.projectId, "Test goal", "Test outcome", "Next steps here"]
     );
@@ -292,7 +292,7 @@ describe("Generate Resume", () => {
   test("generates resume text", async () => {
     const { generateResume } = await import("../../src/commands/session");
 
-    const resume = generateResume(testDb.db, testDb.projectId);
+    const resume = await generateResume(testDb.db, testDb.projectId);
 
     expect(typeof resume).toBe("string");
     expect(resume.length).toBeGreaterThan(0);

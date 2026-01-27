@@ -4,7 +4,7 @@
  * Complements `predict` which uses FTS (keyword matching).
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { type VectorSearchResult, vectorSearch } from "../database/queries/vector";
 import { outputJson } from "../utils/format";
 
@@ -47,7 +47,7 @@ export interface SuggestOptions {
  * Unlike predict (FTS), this finds conceptually related files
  */
 export async function suggestFilesForTask(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   task: string,
   options: SuggestOptions = {}
@@ -90,7 +90,7 @@ export async function suggestFilesForTask(
   // 5. Get blast radius dependents for top 3 files
   if (result.files.length > 0) {
     const topFiles = result.files.slice(0, 3).map((f) => f.path);
-    result.relatedByDeps = getBlastDependents(db, projectId, topFiles);
+    result.relatedByDeps = await getBlastDependents(db, projectId, topFiles);
   }
 
   return result;
@@ -115,18 +115,17 @@ function generateReason(similarity: number, purpose: string | null): string {
 /**
  * Get file paths for symbol results
  */
-async function getSymbolFiles(db: Database, symbols: VectorSearchResult[]): Promise<SuggestResult["symbols"]> {
+async function getSymbolFiles(db: DatabaseAdapter, symbols: VectorSearchResult[]): Promise<SuggestResult["symbols"]> {
   const results: SuggestResult["symbols"] = [];
 
   for (const symbol of symbols) {
     try {
-      const fileInfo = db
-        .query<{ path: string }, [number]>(
-          `SELECT f.path FROM symbols s
-           JOIN files f ON s.file_id = f.id
-           WHERE s.id = ?`
-        )
-        .get(symbol.id);
+      const fileInfo = await db.get<{ path: string }>(
+        `SELECT f.path FROM symbols s
+         JOIN files f ON s.file_id = f.id
+         WHERE s.id = ?`,
+        [symbol.id]
+      );
 
       if (fileInfo) {
         results.push({
@@ -147,20 +146,19 @@ async function getSymbolFiles(db: Database, symbols: VectorSearchResult[]): Prom
 /**
  * Get blast radius dependents for files
  */
-function getBlastDependents(db: Database, projectId: number, files: string[]): SuggestResult["relatedByDeps"] {
+async function getBlastDependents(db: DatabaseAdapter, projectId: number, files: string[]): Promise<SuggestResult["relatedByDeps"]> {
   const results: SuggestResult["relatedByDeps"] = [];
   const seen = new Set(files);
 
   for (const file of files) {
     try {
-      const dependents = db
-        .query<{ affected_file: string; distance: number }, [number, string]>(
-          `SELECT affected_file, distance FROM blast_radius
-           WHERE project_id = ? AND source_file = ?
-           ORDER BY distance ASC
-           LIMIT 3`
-        )
-        .all(projectId, file);
+      const dependents = await db.all<{ affected_file: string; distance: number }>(
+        `SELECT affected_file, distance FROM blast_radius
+         WHERE project_id = ? AND source_file = ?
+         ORDER BY distance ASC
+         LIMIT 3`,
+        [projectId, file]
+      );
 
       for (const d of dependents) {
         if (!seen.has(d.affected_file)) {
@@ -184,7 +182,7 @@ function getBlastDependents(db: Database, projectId: number, files: string[]): S
 // CLI Handler
 // ============================================================================
 
-export async function handleSuggestCommand(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function handleSuggestCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   // Parse arguments
   const includeSymbols = args.includes("--symbols");
   const limitIdx = args.indexOf("--limit");

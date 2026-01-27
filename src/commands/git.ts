@@ -3,7 +3,7 @@
  * Drift detection, conflict checking, git status integration
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -84,7 +84,7 @@ function getRecentCommits(path: string, count: number = 5): Array<{ hash: string
 // Drift Detection Command
 // ============================================================================
 
-export function detectDrift(db: Database, projectId: number, projectPath: string): DriftResult {
+export async function detectDrift(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<DriftResult> {
   const staleFiles: StaleFile[] = [];
   const gitChanges: string[] = [];
   const untrackedFiles: string[] = [];
@@ -103,22 +103,18 @@ export function detectDrift(db: Database, projectId: number, projectPath: string
   }
 
   // Get tracked files from database
-  const trackedFiles = db
-    .query<
-      {
-        path: string;
-        content_hash: string | null;
-        last_analyzed: string | null;
-        fs_modified_at: string | null;
-        fragility: number;
-      },
-      [number]
-    >(`
-    SELECT path, content_hash, last_analyzed, fs_modified_at, fragility
+  const trackedFiles = await db.all<{
+    path: string;
+    content_hash: string | null;
+    last_analyzed: string | null;
+    fs_modified_at: string | null;
+    fragility: number;
+  }>(
+    `SELECT path, content_hash, last_analyzed, fs_modified_at, fragility
     FROM files
-    WHERE project_id = ? AND status = 'active'
-  `)
-    .all(projectId);
+    WHERE project_id = ? AND status = 'active'`,
+    [projectId]
+  );
 
   // Check each tracked file for staleness
   for (const file of trackedFiles) {
@@ -323,15 +319,14 @@ export function getGitInfo(projectPath: string): {
 // Update Last Queried At
 // ============================================================================
 
-export function updateLastQueried(db: Database, projectId: number, paths: string[]): void {
-  const stmt = db.prepare(`
-    UPDATE files
-    SET last_queried_at = CURRENT_TIMESTAMP
-    WHERE project_id = ? AND path = ?
-  `);
-
+export async function updateLastQueried(db: DatabaseAdapter, projectId: number, paths: string[]): Promise<void> {
   for (const path of paths) {
-    stmt.run(projectId, path);
+    await db.run(
+      `UPDATE files
+      SET last_queried_at = CURRENT_TIMESTAMP
+      WHERE project_id = ? AND path = ?`,
+      [projectId, path]
+    );
   }
 }
 
@@ -339,19 +334,18 @@ export function updateLastQueried(db: Database, projectId: number, paths: string
 // Sync File Hashes
 // ============================================================================
 
-export function syncFileHashes(
-  db: Database,
+export async function syncFileHashes(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string
-): { updated: number; missing: number } {
+): Promise<{ updated: number; missing: number }> {
   let updated = 0;
   let missing = 0;
 
-  const files = db
-    .query<{ id: number; path: string }, [number]>(`
-    SELECT id, path FROM files WHERE project_id = ? AND status = 'active'
-  `)
-    .all(projectId);
+  const files = await db.all<{ id: number; path: string }>(
+    `SELECT id, path FROM files WHERE project_id = ? AND status = 'active'`,
+    [projectId]
+  );
 
   for (const file of files) {
     const fullPath = join(projectPath, file.path);
@@ -366,12 +360,10 @@ export function syncFileHashes(
       const hash = computeContentHash(content);
       const stat = statSync(fullPath);
 
-      db.run(
-        `
-        UPDATE files
+      await db.run(
+        `UPDATE files
         SET content_hash = ?, fs_modified_at = ?
-        WHERE id = ?
-      `,
+        WHERE id = ?`,
         [hash, stat.mtime.toISOString(), file.id]
       );
 

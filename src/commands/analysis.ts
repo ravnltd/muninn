@@ -3,10 +3,10 @@
  * Project analysis, code review, status display
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { closeGlobalDb, getGlobalDb } from "../database/connection";
+import { closeGlobalDb, getConfig, getGlobalDb } from "../database/connection";
 import type { AnalysisResult, DiscoveredFile } from "../types";
 import { ELITE_STACK } from "../types";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
@@ -154,7 +154,7 @@ function chunkFileContent(content: string, filePath: string): string[] {
   return chunks;
 }
 
-export async function runAnalysis(db: Database, projectId: number, projectPath: string): Promise<AnalysisResult> {
+export async function runAnalysis(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<AnalysisResult> {
   console.error("🔍 Analyzing project...\n");
 
   const { files, skippedLargeFiles } = discoverFiles(projectPath, 100);
@@ -197,7 +197,7 @@ export async function runAnalysis(db: Database, projectId: number, projectPath: 
   const analysis = await analyzeWithLLM(projectInfo, fileContents);
 
   // Store analysis results
-  storeAnalysisResults(db, projectId, projectPath, analysis, files);
+  await storeAnalysisResults(db, projectId, projectPath, analysis, files);
 
   console.error("✅ Analysis complete\n");
 
@@ -373,15 +373,15 @@ Focus on:
   }
 }
 
-function storeAnalysisResults(
-  db: Database,
+async function storeAnalysisResults(
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   analysis: AnalysisResult,
   _discoveredFiles: DiscoveredFile[]
-): void {
+): Promise<void> {
   // Update project info
-  db.run(
+  await db.run(
     `
     UPDATE projects SET
       type = ?,
@@ -408,7 +408,7 @@ function storeAnalysisResults(
       }
     }
 
-    db.run(
+    await db.run(
       `
       INSERT INTO files (project_id, path, type, purpose, fragility, fragility_reason, exports, content_hash, fs_modified_at, last_analyzed)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -439,7 +439,7 @@ function storeAnalysisResults(
 
   // Store decisions
   for (const decision of analysis.decisions) {
-    db.run(
+    await db.run(
       `
       INSERT INTO decisions (project_id, title, decision, reasoning, affects)
       VALUES (?, ?, ?, ?, ?)
@@ -450,7 +450,7 @@ function storeAnalysisResults(
 
   // Store issues
   for (const issue of analysis.potential_issues) {
-    db.run(
+    await db.run(
       `
       INSERT INTO issues (project_id, title, description, type, severity, affected_files)
       VALUES (?, ?, ?, 'potential', ?, ?)
@@ -461,9 +461,9 @@ function storeAnalysisResults(
 
   // Store tech debt in global DB
   if (analysis.tech_debt && analysis.tech_debt.length > 0) {
-    const globalDb = getGlobalDb();
+    const globalDb = await getGlobalDb();
     for (const debt of analysis.tech_debt) {
-      globalDb.run(
+      await globalDb.run(
         `
         INSERT INTO tech_debt (project_path, title, description, severity, effort, affected_files)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -479,39 +479,43 @@ function storeAnalysisResults(
 // Status Commands
 // ============================================================================
 
-export function showStatus(db: Database, projectId: number): void {
-  const project = db
-    .query<Record<string, unknown>, [number]>(`
+export async function showStatus(db: DatabaseAdapter, projectId: number): Promise<void> {
+  const project = await db.get<Record<string, unknown>>(
+    `
     SELECT * FROM v_project_state WHERE id = ?
-  `)
-    .get(projectId);
+  `,
+    [projectId]
+  );
 
-  const fragileFiles = db
-    .query<Record<string, unknown>, [number]>(`
+  const fragileFiles = await db.all<Record<string, unknown>>(
+    `
     SELECT path, fragility, fragility_reason FROM files
     WHERE project_id = ? AND fragility >= 5
     ORDER BY fragility DESC
     LIMIT 5
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
-  const openIssues = db
-    .query<Record<string, unknown>, [number]>(`
+  const openIssues = await db.all<Record<string, unknown>>(
+    `
     SELECT id, title, severity, type FROM issues
     WHERE project_id = ? AND status = 'open'
     ORDER BY severity DESC
     LIMIT 5
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
-  const recentDecisions = db
-    .query<Record<string, unknown>, [number]>(`
+  const recentDecisions = await db.all<Record<string, unknown>>(
+    `
     SELECT id, title, decided_at FROM decisions
     WHERE project_id = ? AND status = 'active'
     ORDER BY decided_at DESC
     LIMIT 3
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
   // Display status
   if (project) {
@@ -521,6 +525,30 @@ export function showStatus(db: Database, projectId: number): void {
     console.error(`  Files: ${project.file_count || 0}`);
     console.error(`  Open Issues: ${project.open_issues || 0}`);
     console.error(`  Active Decisions: ${project.active_decisions || 0}`);
+  }
+
+  // Display network status if in network mode
+  const config = getConfig();
+  let networkHealth = null;
+  if (config.mode === "network") {
+    // Get health from adapter if available
+    if (db.getHealth) {
+      networkHealth = db.getHealth();
+      console.error("\n🌐 Network:");
+      console.error(`  Mode: Network (libSQL)`);
+      console.error(`  Primary: ${networkHealth.primaryUrl || "not set"}`);
+      console.error(`  Connected: ${networkHealth.connected ? "Yes" : "No"}`);
+      if (networkHealth.lastSyncAt) {
+        const ago = formatTimeAgo(networkHealth.lastSyncAt);
+        console.error(`  Last Sync: ${ago}`);
+      }
+      if (networkHealth.lastSyncError) {
+        console.error(`  ⚠️  Last Error: ${networkHealth.lastSyncError}`);
+      }
+    } else {
+      console.error("\n🌐 Network:");
+      console.error(`  Mode: Network (configured but adapter not ready)`);
+    }
   }
 
   if (fragileFiles.length > 0) {
@@ -544,18 +572,49 @@ export function showStatus(db: Database, projectId: number): void {
     fragileFiles,
     openIssues,
     recentDecisions,
+    network: networkHealth ? {
+      mode: networkHealth.mode,
+      connected: networkHealth.connected,
+      lastSyncAt: networkHealth.lastSyncAt?.toISOString() || null,
+      lastSyncError: networkHealth.lastSyncError,
+      primaryUrl: networkHealth.primaryUrl,
+    } : null,
   });
 }
 
-export function showFragile(db: Database, projectId: number): void {
-  const files = db
-    .query<Record<string, unknown>, [number]>(`
+/**
+ * Format a date as relative time (e.g., "2 minutes ago")
+ */
+function formatTimeAgo(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 60) {
+    return diffSecs === 1 ? "1 second ago" : `${diffSecs} seconds ago`;
+  }
+  if (diffMins < 60) {
+    return diffMins === 1 ? "1 minute ago" : `${diffMins} minutes ago`;
+  }
+  if (diffHours < 24) {
+    return diffHours === 1 ? "1 hour ago" : `${diffHours} hours ago`;
+  }
+  return diffDays === 1 ? "1 day ago" : `${diffDays} days ago`;
+}
+
+export async function showFragile(db: DatabaseAdapter, projectId: number): Promise<void> {
+  const files = await db.all<Record<string, unknown>>(
+    `
     SELECT path, type, fragility, fragility_reason, status
     FROM files
     WHERE project_id = ? AND (fragility >= 5 OR status = 'do-not-touch')
     ORDER BY fragility DESC
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
   if (files.length === 0) {
     console.error("No fragile files detected.");
@@ -578,59 +637,62 @@ export function showFragile(db: Database, projectId: number): void {
 // Brief & Resume
 // ============================================================================
 
-export function generateBrief(db: Database, projectId: number, projectPath: string): string {
-  const project = db
-    .query<{ name: string; type: string | null; stack: string | null }, [number]>(`
+export async function generateBrief(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<string> {
+  const project = await db.get<{ name: string; type: string | null; stack: string | null }>(
+    `
     SELECT name, type, stack FROM projects WHERE id = ?
-  `)
-    .get(projectId);
+  `,
+    [projectId]
+  );
 
-  const lastSession = db
-    .query<Record<string, unknown>, [number]>(`
+  const lastSession = await db.get<Record<string, unknown>>(
+    `
     SELECT goal, outcome, next_steps, ended_at, started_at
     FROM sessions
     WHERE project_id = ? AND ended_at IS NOT NULL
     ORDER BY ended_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `,
+    [projectId]
+  );
 
-  const fragileFiles = db
-    .query<{ path: string; fragility: number; fragility_reason: string | null }, [number]>(`
+  const fragileFiles = await db.all<{ path: string; fragility: number; fragility_reason: string | null }>(
+    `
     SELECT path, fragility, fragility_reason
     FROM files
     WHERE project_id = ? AND fragility >= 5
     ORDER BY fragility DESC
     LIMIT 5
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
-  const openIssues = db
-    .query<{ id: number; title: string; severity: number }, [number]>(`
+  const openIssues = await db.all<{ id: number; title: string; severity: number }>(
+    `
     SELECT id, title, severity
     FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 5
     ORDER BY severity DESC
     LIMIT 5
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
-  const activeDecisions = db
-    .query<{ id: number; title: string; decision: string }, [number]>(`
+  const activeDecisions = await db.all<{ id: number; title: string; decision: string }>(
+    `
     SELECT id, title, decision
     FROM decisions
     WHERE project_id = ? AND status = 'active'
     ORDER BY decided_at DESC
     LIMIT 5
-  `)
-    .all(projectId);
+  `,
+    [projectId]
+  );
 
-  const globalDb = getGlobalDb();
-  const patterns = globalDb
-    .query<{ name: string; description: string }, []>(`
+  const globalDb = await getGlobalDb();
+  const patterns = await globalDb.all<{ name: string; description: string }>(`
     SELECT name, description FROM patterns LIMIT 5
-  `)
-    .all();
+  `);
   closeGlobalDb();
 
   return formatBrief({

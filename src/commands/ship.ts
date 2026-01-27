@@ -3,7 +3,7 @@
  * Pre-deployment quality checks
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { closeGlobalDb, getGlobalDb } from "../database/connection";
@@ -15,7 +15,11 @@ import { formatShipCheck, outputJson } from "../utils/format";
 // Ship Checklist
 // ============================================================================
 
-export async function runShipChecklist(db: Database, projectId: number, projectPath: string): Promise<ShipCheck[]> {
+export async function runShipChecklist(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string
+): Promise<ShipCheck[]> {
   const checks: ShipCheck[] = [];
 
   // Check 1: TypeScript compilation
@@ -28,10 +32,10 @@ export async function runShipChecklist(db: Database, projectId: number, projectP
   checks.push(await checkLint(projectPath));
 
   // Check 4: No critical issues
-  checks.push(checkCriticalIssues(db, projectId));
+  checks.push(await checkCriticalIssues(db, projectId));
 
   // Check 5: No high-fragility files modified
-  checks.push(checkFragileFiles(db, projectId, projectPath));
+  checks.push(await checkFragileFiles(db, projectId, projectPath));
 
   // Check 6: Build succeeds
   checks.push(await checkBuild(projectPath));
@@ -150,14 +154,15 @@ async function checkLint(projectPath: string): Promise<ShipCheck> {
   }
 }
 
-function checkCriticalIssues(db: Database, projectId: number): ShipCheck {
-  const criticalCount =
-    db
-      .query<{ count: number }, [number]>(`
+async function checkCriticalIssues(db: DatabaseAdapter, projectId: number): Promise<ShipCheck> {
+  const criticalResult = await db.get<{ count: number }>(
+    `
     SELECT COUNT(*) as count FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 8
-  `)
-      .get(projectId)?.count || 0;
+  `,
+    [projectId]
+  );
+  const criticalCount = criticalResult?.count || 0;
 
   if (criticalCount > 0) {
     return {
@@ -167,13 +172,14 @@ function checkCriticalIssues(db: Database, projectId: number): ShipCheck {
     };
   }
 
-  const highCount =
-    db
-      .query<{ count: number }, [number]>(`
+  const highResult = await db.get<{ count: number }>(
+    `
     SELECT COUNT(*) as count FROM issues
     WHERE project_id = ? AND status = 'open' AND severity >= 6
-  `)
-      .get(projectId)?.count || 0;
+  `,
+    [projectId]
+  );
+  const highCount = highResult?.count || 0;
 
   if (highCount > 0) {
     return {
@@ -186,7 +192,7 @@ function checkCriticalIssues(db: Database, projectId: number): ShipCheck {
   return { name: "Critical Issues", status: "pass" };
 }
 
-function checkFragileFiles(db: Database, projectId: number, projectPath: string): ShipCheck {
+async function checkFragileFiles(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<ShipCheck> {
   // Get git status for modified files
   const gitResult = Bun.spawnSync(["git", "status", "--porcelain"], { cwd: projectPath });
 
@@ -206,12 +212,13 @@ function checkFragileFiles(db: Database, projectId: number, projectPath: string)
 
   // Check if any modified files are fragile
   const placeholders = modifiedFiles.map(() => "?").join(",");
-  const fragileModified = db
-    .query<{ path: string; fragility: number }, (number | string)[]>(`
+  const fragileModified = await db.all<{ path: string; fragility: number }>(
+    `
     SELECT path, fragility FROM files
     WHERE project_id = ? AND fragility >= 7 AND path IN (${placeholders})
-  `)
-    .all(projectId, ...modifiedFiles);
+  `,
+    [projectId, ...modifiedFiles]
+  );
 
   if (fragileModified.length > 0) {
     return {
@@ -318,7 +325,7 @@ async function checkSecurityBasic(projectPath: string): Promise<ShipCheck> {
 // Ship Command Handler
 // ============================================================================
 
-export async function handleShipCommand(db: Database, projectId: number, projectPath: string): Promise<void> {
+export async function handleShipCommand(db: DatabaseAdapter, projectId: number, projectPath: string): Promise<void> {
   console.error("🚀 Running ship checklist...\n");
 
   const checks = await runShipChecklist(db, projectId, projectPath);
@@ -342,8 +349,8 @@ export async function handleShipCommand(db: Database, projectId: number, project
   }
 
   // Log to global DB
-  const globalDb = getGlobalDb();
-  globalDb.run(
+  const globalDb = await getGlobalDb();
+  await globalDb.run(
     `
     INSERT INTO ship_history (project_path, checks_passed, checks_failed, notes)
     VALUES (?, ?, ?, ?)

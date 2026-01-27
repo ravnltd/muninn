@@ -4,7 +4,7 @@
  * Allows the AI to "set aside" context and recall it later
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { parseArgs } from "node:util";
 import { outputJson, outputSuccess } from "../utils/format";
 
@@ -39,7 +39,7 @@ interface BookmarkAddOptions {
 // Add Bookmark
 // ============================================================================
 
-export function bookmarkAdd(db: Database, projectId: number, options: BookmarkAddOptions): void {
+export async function bookmarkAdd(db: DatabaseAdapter, projectId: number, options: BookmarkAddOptions): Promise<void> {
   const { label, content, source, contentType, priority, tags } = options;
 
   if (!label || !content) {
@@ -52,7 +52,7 @@ export function bookmarkAdd(db: Database, projectId: number, options: BookmarkAd
     process.exit(1);
   }
 
-  db.run(
+  await db.run(
     `
     INSERT INTO bookmarks (project_id, label, content, source, content_type, priority, tags)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -83,18 +83,16 @@ export function bookmarkAdd(db: Database, projectId: number, options: BookmarkAd
 // Get Bookmark
 // ============================================================================
 
-export function bookmarkGet(db: Database, projectId: number, label: string): Bookmark | null {
+export async function bookmarkGet(db: DatabaseAdapter, projectId: number, label: string): Promise<Bookmark | null> {
   if (!label) {
     console.error("Usage: muninn bookmark get <label>");
     process.exit(1);
   }
 
-  const bookmark = db
-    .query<Bookmark, [number, string]>(`
+  const bookmark = await db.get<Bookmark>(`
     SELECT * FROM bookmarks
     WHERE project_id = ? AND label = ?
-  `)
-    .get(projectId, label);
+  `, [projectId, label]);
 
   if (!bookmark) {
     console.error(`❌ Bookmark '${label}' not found`);
@@ -119,14 +117,12 @@ export function bookmarkGet(db: Database, projectId: number, label: string): Boo
 // List Bookmarks
 // ============================================================================
 
-export function bookmarkList(db: Database, projectId: number): Bookmark[] {
-  const bookmarks = db
-    .query<Bookmark, [number]>(`
+export async function bookmarkList(db: DatabaseAdapter, projectId: number): Promise<Bookmark[]> {
+  const bookmarks = await db.all<Bookmark>(`
     SELECT * FROM bookmarks
     WHERE project_id = ?
     ORDER BY priority ASC, created_at DESC
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   if (bookmarks.length === 0) {
     console.error("📌 No bookmarks found");
@@ -152,13 +148,13 @@ export function bookmarkList(db: Database, projectId: number): Bookmark[] {
 // Delete Bookmark
 // ============================================================================
 
-export function bookmarkDelete(db: Database, projectId: number, label: string): boolean {
+export async function bookmarkDelete(db: DatabaseAdapter, projectId: number, label: string): Promise<boolean> {
   if (!label) {
     console.error("Usage: muninn bookmark delete <label>");
     process.exit(1);
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     DELETE FROM bookmarks
     WHERE project_id = ? AND label = ?
@@ -181,24 +177,25 @@ export function bookmarkDelete(db: Database, projectId: number, label: string): 
 // Clear All Bookmarks
 // ============================================================================
 
-export function bookmarkClear(db: Database, projectId: number): number {
-  const result = db.run(
+export async function bookmarkClear(db: DatabaseAdapter, projectId: number): Promise<number> {
+  const result = await db.run(
     `
     DELETE FROM bookmarks WHERE project_id = ?
   `,
     [projectId]
   );
 
-  console.error(`🗑️  Cleared ${result.changes} bookmark(s)`);
-  outputSuccess({ cleared: result.changes });
-  return result.changes;
+  const changes = Number(result.changes);
+  console.error(`🗑️  Cleared ${changes} bookmark(s)`);
+  outputSuccess({ cleared: changes });
+  return changes;
 }
 
 // ============================================================================
 // CLI Handler
 // ============================================================================
 
-export function handleBookmarkCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleBookmarkCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
   const subArgs = args.slice(1);
 
@@ -217,7 +214,7 @@ export function handleBookmarkCommand(db: Database, projectId: number, args: str
         allowPositionals: true,
       });
 
-      bookmarkAdd(db, projectId, {
+      await bookmarkAdd(db, projectId, {
         label: values.label || "",
         content: values.content || "",
         source: values.source,
@@ -230,23 +227,23 @@ export function handleBookmarkCommand(db: Database, projectId: number, args: str
 
     case "get": {
       const label = subArgs[0];
-      bookmarkGet(db, projectId, label);
+      await bookmarkGet(db, projectId, label);
       break;
     }
 
     case "list":
-      bookmarkList(db, projectId);
+      await bookmarkList(db, projectId);
       break;
 
     case "delete":
     case "remove": {
       const label = subArgs[0];
-      bookmarkDelete(db, projectId, label);
+      await bookmarkDelete(db, projectId, label);
       break;
     }
 
     case "clear":
-      bookmarkClear(db, projectId);
+      await bookmarkClear(db, projectId);
       break;
 
     default:

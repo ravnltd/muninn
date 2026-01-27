@@ -34,7 +34,7 @@ describe("File Commands", () => {
       output = msg;
     };
 
-    fileGet(testDb.db, testDb.projectId, "nonexistent.ts");
+    await fileGet(testDb.db, testDb.projectId, "nonexistent.ts");
 
     console.log = originalLog;
 
@@ -51,7 +51,7 @@ describe("File Commands", () => {
       output = msg;
     };
 
-    fileList(testDb.db, testDb.projectId);
+    await fileList(testDb.db, testDb.projectId);
 
     console.log = originalLog;
 
@@ -61,8 +61,8 @@ describe("File Commands", () => {
   });
 
   test("can add and retrieve file", async () => {
-    // Insert file directly
-    testDb.db.run(
+    // Insert file directly (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO files (project_id, path, purpose, fragility) VALUES (?, ?, ?, ?)`,
       [testDb.projectId, "src/test.ts", "Test file", 5]
     );
@@ -76,7 +76,7 @@ describe("File Commands", () => {
       output = msg;
     };
 
-    fileGet(testDb.db, testDb.projectId, "src/test.ts");
+    await fileGet(testDb.db, testDb.projectId, "src/test.ts");
 
     console.log = originalLog;
 
@@ -88,12 +88,12 @@ describe("File Commands", () => {
   });
 
   test("fileList filters by type", async () => {
-    // Insert files with different types
-    testDb.db.run(
+    // Insert files with different types (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO files (project_id, path, type) VALUES (?, ?, ?)`,
       [testDb.projectId, "src/component.tsx", "component"]
     );
-    testDb.db.run(
+    testDb.rawDb.run(
       `INSERT INTO files (project_id, path, type) VALUES (?, ?, ?)`,
       [testDb.projectId, "src/util.ts", "util"]
     );
@@ -106,7 +106,7 @@ describe("File Commands", () => {
       output = msg;
     };
 
-    fileList(testDb.db, testDb.projectId, "component");
+    await fileList(testDb.db, testDb.projectId, "component");
 
     console.log = originalLog;
 
@@ -133,8 +133,8 @@ describe("Decision Commands", () => {
   });
 
   test("decisionList returns decisions", async () => {
-    // Insert decision directly
-    testDb.db.run(
+    // Insert decision directly (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO decisions (project_id, title, decision, reasoning) VALUES (?, ?, ?, ?)`,
       [testDb.projectId, "Use TypeScript", "For type safety", "Catches bugs early"]
     );
@@ -147,7 +147,7 @@ describe("Decision Commands", () => {
       output = msg;
     };
 
-    decisionList(testDb.db, testDb.projectId);
+    await decisionList(testDb.db, testDb.projectId);
 
     console.log = originalLog;
 
@@ -176,12 +176,12 @@ describe("Issue Commands", () => {
   });
 
   test("issueList filters by status", async () => {
-    // Insert open and resolved issues
-    testDb.db.run(
+    // Insert open and resolved issues (use rawDb for direct SQL)
+    testDb.rawDb.run(
       `INSERT INTO issues (project_id, title, status) VALUES (?, ?, ?)`,
       [testDb.projectId, "Open issue", "open"]
     );
-    testDb.db.run(
+    testDb.rawDb.run(
       `INSERT INTO issues (project_id, title, status) VALUES (?, ?, ?)`,
       [testDb.projectId, "Resolved issue", "resolved"]
     );
@@ -194,7 +194,7 @@ describe("Issue Commands", () => {
       output = msg;
     };
 
-    issueList(testDb.db, testDb.projectId, "open");
+    await issueList(testDb.db, testDb.projectId, "open");
 
     console.log = originalLog;
 
@@ -203,7 +203,7 @@ describe("Issue Commands", () => {
   });
 
   test("issueResolve updates status", async () => {
-    const result = testDb.db.run(
+    const result = testDb.rawDb.run(
       `INSERT INTO issues (project_id, title, status) VALUES (?, ?, ?)`,
       [testDb.projectId, "To resolve", "open"]
     );
@@ -217,12 +217,12 @@ describe("Issue Commands", () => {
     console.log = () => {};
     console.error = () => {};
 
-    issueResolve(testDb.db, issueId, "Fixed the bug");
+    await issueResolve(testDb.db, issueId, "Fixed the bug");
 
     console.log = originalLog;
     console.error = originalError;
 
-    const issue = testDb.db
+    const issue = testDb.rawDb
       .query<{ status: string; resolution: string }, [number]>(
         `SELECT status, resolution FROM issues WHERE id = ?`
       )
@@ -251,13 +251,14 @@ describe("Learning Commands", () => {
   });
 
   test("learnings can be inserted and queried", () => {
-    testDb.db.run(
+    // Use rawDb for direct SQL
+    testDb.rawDb.run(
       `INSERT INTO learnings (project_id, category, title, content, context) VALUES (?, ?, ?, ?, ?)`,
       [testDb.projectId, "pattern", "Error handling", "Use Result types", "TypeScript"]
     );
 
     // Query directly instead of using learnList (which accesses global DB)
-    const learnings = testDb.db
+    const learnings = testDb.rawDb
       .query<{ title: string; category: string }, [number]>(
         `SELECT title, category FROM learnings WHERE project_id = ?`
       )

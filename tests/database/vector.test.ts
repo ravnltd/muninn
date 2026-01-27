@@ -12,18 +12,18 @@ describe("Vector Query Functions", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Seed files with embeddings
-    const fileIds = seedTestFiles(testDb.db, testDb.projectId, [
+    // Seed files with embeddings (use rawDb for sync operations)
+    const fileIds = seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/index.ts", purpose: "Entry point" },
       { path: "src/utils.ts", purpose: "Utilities" },
     ]);
 
     // Add fake embeddings to some files
     const embedding = Buffer.from(new Float32Array(384).fill(0.1).buffer);
-    testDb.db.run(`UPDATE files SET embedding = ? WHERE id = ?`, [embedding, fileIds[0]]);
+    testDb.rawDb.run(`UPDATE files SET embedding = ? WHERE id = ?`, [embedding, fileIds[0]]);
 
     // Seed decisions
-    seedTestDecisions(testDb.db, testDb.projectId, [
+    seedTestDecisions(testDb.rawDb, testDb.projectId, [
       { title: "Test decision", decision: "For testing", reasoning: "Needed for tests" },
     ]);
   });
@@ -41,26 +41,26 @@ describe("Vector Query Functions", () => {
 
   test("checks if project has embeddings", async () => {
     const { hasEmbeddings } = await import("../../src/database/queries/vector");
-    const result = hasEmbeddings(testDb.db, testDb.projectId);
+    const result = await hasEmbeddings(testDb.db, testDb.projectId);
     expect(typeof result).toBe("boolean");
     expect(result).toBe(true); // We added one embedding
   });
 
   test("returns false for project without embeddings", async () => {
-    // Create new project without embeddings
-    const result = testDb.db.run(
+    // Create new project without embeddings (use rawDb for direct SQL)
+    const result = testDb.rawDb.run(
       `INSERT INTO projects (path, name) VALUES (?, ?)`,
       ["/tmp/no-embeddings", "No Embeddings"]
     );
     const newProjectId = Number(result.lastInsertRowid);
 
     const { hasEmbeddings } = await import("../../src/database/queries/vector");
-    expect(hasEmbeddings(testDb.db, newProjectId)).toBe(false);
+    expect(await hasEmbeddings(testDb.db, newProjectId)).toBe(false);
   });
 
   test("gets embedding stats as array", async () => {
     const { getEmbeddingStats } = await import("../../src/database/queries/vector");
-    const stats = getEmbeddingStats(testDb.db, testDb.projectId);
+    const stats = await getEmbeddingStats(testDb.db, testDb.projectId);
 
     expect(Array.isArray(stats)).toBe(true);
     expect(stats.length).toBeGreaterThan(0);
@@ -75,7 +75,7 @@ describe("Vector Query Functions", () => {
 
   test("calculates coverage percentage for files", async () => {
     const { getEmbeddingStats } = await import("../../src/database/queries/vector");
-    const stats = getEmbeddingStats(testDb.db, testDb.projectId);
+    const stats = await getEmbeddingStats(testDb.db, testDb.projectId);
 
     const fileStats = stats.find(s => s.table === "files");
     // We have 2 files, 1 with embedding = 50%
@@ -91,8 +91,8 @@ describe("Hybrid Search", () => {
   beforeAll(() => {
     testDb = createTestDb();
 
-    // Seed with embeddings
-    const fileIds = seedTestFiles(testDb.db, testDb.projectId, [
+    // Seed with embeddings (use rawDb for sync operations)
+    const fileIds = seedTestFiles(testDb.rawDb, testDb.projectId, [
       { path: "src/auth/login.ts", purpose: "Authentication login" },
       { path: "src/auth/session.ts", purpose: "Session management" },
     ]);
@@ -100,7 +100,7 @@ describe("Hybrid Search", () => {
     // Add embeddings
     const embedding = Buffer.from(new Float32Array(384).fill(0.1).buffer);
     for (const id of fileIds) {
-      testDb.db.run(`UPDATE files SET embedding = ? WHERE id = ?`, [embedding, id]);
+      testDb.rawDb.run(`UPDATE files SET embedding = ? WHERE id = ?`, [embedding, id]);
     }
   });
 

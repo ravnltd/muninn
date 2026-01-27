@@ -3,7 +3,7 @@
  * Lightweight notes-to-self with auto-dedup
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { generateEmbedding, observationToText, serializeEmbedding } from "../embeddings";
 import { logError } from "../utils/errors";
 import { outputSuccess } from "../utils/format";
@@ -28,7 +28,7 @@ const VALID_TYPES: ObservationType[] = [
 // ============================================================================
 
 export async function observeAdd(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number | null,
   content: string,
   type: ObservationType = "insight",
@@ -50,11 +50,11 @@ export async function observeAdd(
   }
 
   // Check for dedup: similar observation already exists?
-  const existing = findSimilarObservation(db, projectId, content);
+  const existing = await findSimilarObservation(db, projectId, content);
 
   if (existing) {
     // Increment frequency and update last_seen
-    db.run(
+    await db.run(
       `
       UPDATE observations
       SET frequency = frequency + 1, last_seen_at = CURRENT_TIMESTAMP
@@ -71,7 +71,7 @@ export async function observeAdd(
   }
 
   // Insert new observation
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO observations (project_id, type, content, session_id)
     VALUES (?, ?, ?, ?)
@@ -82,7 +82,7 @@ export async function observeAdd(
   const id = Number(result.lastInsertRowid);
 
   // Update FTS
-  db.run(
+  await db.run(
     `
     INSERT INTO fts_observations(rowid, content, type)
     VALUES (?, ?, ?)
@@ -94,7 +94,7 @@ export async function observeAdd(
   try {
     const embedding = await generateEmbedding(observationToText(content, type));
     if (embedding) {
-      db.run("UPDATE observations SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), id]);
+      await db.run("UPDATE observations SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), id]);
     }
   } catch (error) {
     logError("observe:embedding", error);
@@ -112,17 +112,15 @@ export async function observeAdd(
 // Global Observations
 // ============================================================================
 
-function observeAddGlobal(db: Database, content: string, type: ObservationType): number {
+async function observeAddGlobal(db: DatabaseAdapter, content: string, type: ObservationType): Promise<number> {
   // Check for dedup in global
-  const existing = db
-    .query<{ id: number; frequency: number }, [string]>(`
+  const existing = await db.get<{ id: number; frequency: number }>(`
     SELECT id, frequency FROM global_observations
     WHERE content = ?
-  `)
-    .get(content);
+  `, [content]);
 
   if (existing) {
-    db.run(
+    await db.run(
       `
       UPDATE global_observations
       SET frequency = frequency + 1, last_seen_at = CURRENT_TIMESTAMP
@@ -136,7 +134,7 @@ function observeAddGlobal(db: Database, content: string, type: ObservationType):
     return existing.id;
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO global_observations (type, content)
     VALUES (?, ?)
@@ -154,31 +152,26 @@ function observeAddGlobal(db: Database, content: string, type: ObservationType):
 // List Observations
 // ============================================================================
 
-export function observeList(
-  db: Database,
+export async function observeList(
+  db: DatabaseAdapter,
   projectId: number | null,
   options: { type?: string; limit?: number; global?: boolean } = {}
-): void {
+): Promise<void> {
   const limit = options.limit ?? 20;
 
   if (options.global) {
-    const results = db
-      .query<
-        {
-          id: number;
-          type: string;
-          content: string;
-          frequency: number;
-          last_seen_at: string;
-          created_at: string;
-        },
-        [number]
-      >(`
+    const results = await db.all<{
+      id: number;
+      type: string;
+      content: string;
+      frequency: number;
+      last_seen_at: string;
+      created_at: string;
+    }>(`
       SELECT * FROM global_observations
       ORDER BY frequency DESC, last_seen_at DESC
       LIMIT ?
-    `)
-      .all(limit);
+    `, [limit]);
 
     console.error(`\n📝 Global Observations (${results.length})\n`);
     for (const obs of results) {
@@ -189,25 +182,20 @@ export function observeList(
   }
 
   const typeFilter = options.type ? `AND type = '${options.type}'` : "";
-  const results = db
-    .query<
-      {
-        id: number;
-        type: string;
-        content: string;
-        frequency: number;
-        last_seen_at: string;
-        created_at: string;
-      },
-      [number | null, number]
-    >(`
+  const results = await db.all<{
+    id: number;
+    type: string;
+    content: string;
+    frequency: number;
+    last_seen_at: string;
+    created_at: string;
+  }>(`
     SELECT * FROM observations
     WHERE (project_id = ?1 OR project_id IS NULL)
     ${typeFilter}
     ORDER BY frequency DESC, last_seen_at DESC
     LIMIT ?2
-  `)
-    .all(projectId, limit);
+  `, [projectId, limit]);
 
   console.error(`\n📝 Observations (${results.length})\n`);
   for (const obs of results) {
@@ -222,39 +210,33 @@ export function observeList(
 // Dedup Helper
 // ============================================================================
 
-function findSimilarObservation(
-  db: Database,
+async function findSimilarObservation(
+  db: DatabaseAdapter,
   projectId: number | null,
   content: string
-): { id: number; frequency: number } | null {
+): Promise<{ id: number; frequency: number } | null> {
   // Exact match first
-  const exact = db
-    .query<{ id: number; frequency: number }, [number | null, string]>(`
+  const exact = await db.get<{ id: number; frequency: number }>(`
     SELECT id, frequency FROM observations
     WHERE (project_id = ? OR project_id IS NULL) AND content = ?
-  `)
-    .get(projectId, content);
+  `, [projectId, content]);
 
   if (exact) return exact;
 
   // FTS match for similar content
   try {
-    const ftsMatch = db
-      .query<{ id: number; frequency: number }, [string, number | null]>(`
+    const ftsMatch = await db.get<{ id: number; frequency: number }>(`
       SELECT o.id, o.frequency FROM fts_observations
       JOIN observations o ON fts_observations.rowid = o.id
       WHERE fts_observations MATCH ?1
       AND (o.project_id = ?2 OR o.project_id IS NULL)
       ORDER BY bm25(fts_observations)
       LIMIT 1
-    `)
-      .get(content.split(" ").slice(0, 5).join(" "), projectId);
+    `, [content.split(" ").slice(0, 5).join(" "), projectId]);
 
     // Only dedup if the FTS match is very close (check manually)
     if (ftsMatch) {
-      const existing = db
-        .query<{ content: string }, [number]>("SELECT content FROM observations WHERE id = ?")
-        .get(ftsMatch.id);
+      const existing = await db.get<{ content: string }>("SELECT content FROM observations WHERE id = ?", [ftsMatch.id]);
 
       if (existing && isSimilarEnough(content, existing.content)) {
         return ftsMatch;
@@ -287,14 +269,14 @@ function isSimilarEnough(a: string, b: string): boolean {
 // CLI Handler
 // ============================================================================
 
-export async function handleObserveCommand(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function handleObserveCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   if (subCmd === "list") {
     const typeIdx = args.indexOf("--type");
     const type = typeIdx !== -1 ? args[typeIdx + 1] : undefined;
     const isGlobal = args.includes("--global");
-    observeList(db, projectId, { type, global: isGlobal });
+    await observeList(db, projectId, { type, global: isGlobal });
     return;
   }
 

@@ -3,7 +3,7 @@
  * Add, list, remove, status for services
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../../database/adapter";
 import {
   getAllServicesWithServerName,
   getServerByName,
@@ -20,7 +20,7 @@ import { parseServiceArgs, ServiceAddInput } from "../../utils/validation";
 // Service Add
 // ============================================================================
 
-export function serviceAdd(db: Database, args: string[]): void {
+export async function serviceAdd(db: DatabaseAdapter, args: string[]): Promise<void> {
   const { values } = parseServiceArgs(args);
 
   if (!values.name || !values.server) {
@@ -38,20 +38,20 @@ export function serviceAdd(db: Database, args: string[]): void {
   const input = parsed.data;
 
   // Verify server exists
-  const server = getServerByName(db, input.server);
+  const server = await getServerByName(db, input.server);
   if (!server) {
     console.error(`❌ Server '${input.server}' not found. Add it first with: context infra server add`);
     process.exit(1);
   }
 
   // Check if service already exists on this server
-  const existing = getServiceByNameAndServer(db, input.name, server.id);
+  const existing = await getServiceByNameAndServer(db, input.name, server.id);
   if (existing) {
     console.error(`❌ Service '${input.name}' already exists on server '${input.server}'`);
     process.exit(1);
   }
 
-  db.run(
+  await db.run(
     `
     INSERT INTO services (
       name, server_id, type, runtime, port, health_endpoint,
@@ -78,7 +78,7 @@ export function serviceAdd(db: Database, args: string[]): void {
     ]
   );
 
-  logInfraEvent(db, {
+  await logInfraEvent(db, {
     serverId: server.id,
     eventType: "service_added",
     severity: "info",
@@ -94,8 +94,8 @@ export function serviceAdd(db: Database, args: string[]): void {
 // Service List
 // ============================================================================
 
-export function serviceList(db: Database, serverFilter?: string): void {
-  const services = getAllServicesWithServerName(db, serverFilter);
+export async function serviceList(db: DatabaseAdapter, serverFilter?: string): Promise<void> {
+  const services = await getAllServicesWithServerName(db, serverFilter);
 
   if (services.length === 0) {
     console.error(
@@ -135,7 +135,7 @@ export function serviceList(db: Database, serverFilter?: string): void {
 // Service Remove
 // ============================================================================
 
-export function serviceRemove(db: Database, name: string | undefined, serverFilter?: string): void {
+export async function serviceRemove(db: DatabaseAdapter, name: string | undefined, serverFilter?: string): Promise<void> {
   if (!name) {
     exitWithUsage("Usage: context infra service remove <name> [--server <server>]");
   }
@@ -144,19 +144,17 @@ export function serviceRemove(db: Database, name: string | undefined, serverFilt
   let serverName = serverFilter;
 
   if (serverFilter) {
-    const server = getServerByName(db, serverFilter);
+    const server = await getServerByName(db, serverFilter);
     if (!server) {
       console.error(`❌ Server '${serverFilter}' not found`);
       process.exit(1);
     }
-    service = getServiceByNameAndServer(db, name, server.id);
+    service = await getServiceByNameAndServer(db, name, server.id);
   } else {
-    service = getServiceByName(db, name);
+    service = await getServiceByName(db, name);
     if (service) {
       // Get server name for logging
-      const server = db
-        .query<{ name: string }, [number]>("SELECT name FROM servers WHERE id = ?")
-        .get(service.server_id);
+      const server = await db.get<{ name: string }>("SELECT name FROM servers WHERE id = ?", [service.server_id]);
       serverName = server?.name;
     }
   }
@@ -167,13 +165,12 @@ export function serviceRemove(db: Database, name: string | undefined, serverFilt
   }
 
   // Get route count for logging
-  const routeCount =
-    db.query<{ count: number }, [number]>("SELECT COUNT(*) as count FROM routes WHERE service_id = ?").get(service.id)
-      ?.count || 0;
+  const routeCountResult = await db.get<{ count: number }>("SELECT COUNT(*) as count FROM routes WHERE service_id = ?", [service.id]);
+  const routeCount = routeCountResult?.count || 0;
 
-  db.run("DELETE FROM services WHERE id = ?", [service.id]);
+  await db.run("DELETE FROM services WHERE id = ?", [service.id]);
 
-  logInfraEvent(db, {
+  await logInfraEvent(db, {
     eventType: "service_removed",
     severity: "warning",
     title: `Service ${name} removed from ${serverName || "unknown"}`,
@@ -188,26 +185,21 @@ export function serviceRemove(db: Database, name: string | undefined, serverFilt
 // Service Status (via SSH)
 // ============================================================================
 
-export async function serviceStatus(db: Database, serviceName: string): Promise<void> {
-  const service = getServiceByName(db, serviceName);
+export async function serviceStatus(db: DatabaseAdapter, serviceName: string): Promise<void> {
+  const service = await getServiceByName(db, serviceName);
   if (!service) {
     console.error(`❌ Service '${serviceName}' not found`);
     process.exit(1);
   }
 
-  const server = db
-    .query<
-      {
-        name: string;
-        ssh_user: string;
-        ssh_port: number;
-        ssh_key_path: string | null;
-        ip_addresses: string | null;
-        hostname: string | null;
-      },
-      [number]
-    >("SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?")
-    .get(service.server_id);
+  const server = await db.get<{
+    name: string;
+    ssh_user: string;
+    ssh_port: number;
+    ssh_key_path: string | null;
+    ip_addresses: string | null;
+    hostname: string | null;
+  }>("SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?", [service.server_id]);
 
   if (!server) {
     console.error(`❌ Server not found for service '${serviceName}'`);
@@ -265,7 +257,7 @@ export async function serviceStatus(db: Database, serviceName: string): Promise<
       console.error(`  ${healthy ? "🟢" : "🔴"} ${healthUrl} - HTTP ${httpCode}`);
 
       // Update health status
-      db.run(
+      await db.run(
         `
         UPDATE services SET health_status = ?, last_health_check = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -274,7 +266,7 @@ export async function serviceStatus(db: Database, serviceName: string): Promise<
       );
     } else {
       console.error(`  🔴 ${healthUrl} - unreachable`);
-      db.run(
+      await db.run(
         `
         UPDATE services SET health_status = 'unhealthy', last_health_check = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -292,26 +284,21 @@ export async function serviceStatus(db: Database, serviceName: string): Promise<
 // Service Logs (via SSH)
 // ============================================================================
 
-export async function serviceLogs(db: Database, serviceName: string, lines: number = 50): Promise<void> {
-  const service = getServiceByName(db, serviceName);
+export async function serviceLogs(db: DatabaseAdapter, serviceName: string, lines: number = 50): Promise<void> {
+  const service = await getServiceByName(db, serviceName);
   if (!service) {
     console.error(`❌ Service '${serviceName}' not found`);
     process.exit(1);
   }
 
-  const server = db
-    .query<
-      {
-        name: string;
-        ssh_user: string;
-        ssh_port: number;
-        ssh_key_path: string | null;
-        ip_addresses: string | null;
-        hostname: string | null;
-      },
-      [number]
-    >("SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?")
-    .get(service.server_id);
+  const server = await db.get<{
+    name: string;
+    ssh_user: string;
+    ssh_port: number;
+    ssh_key_path: string | null;
+    ip_addresses: string | null;
+    hostname: string | null;
+  }>("SELECT name, ssh_user, ssh_port, ssh_key_path, ip_addresses, hostname FROM servers WHERE id = ?", [service.server_id]);
 
   if (!server) {
     console.error(`❌ Server not found for service '${serviceName}'`);

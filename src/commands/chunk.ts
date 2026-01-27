@@ -5,7 +5,7 @@
  * Enables fine-grained search at function/class level.
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { type CodeChunk, chunkToSearchText, parseFile } from "../analysis/chunker";
@@ -90,16 +90,17 @@ function findCodeFiles(dir: string, maxFiles: number = 500): string[] {
 /**
  * Get or create file record
  */
-function getFileId(db: Database, projectId: number, filePath: string): number | null {
-  const existing = db
-    .query<{ id: number }, [number, string]>(`SELECT id FROM files WHERE project_id = ? AND path = ?`)
-    .get(projectId, filePath);
+async function getFileId(db: DatabaseAdapter, projectId: number, filePath: string): Promise<number | null> {
+  const existing = await db.get<{ id: number }>(
+    `SELECT id FROM files WHERE project_id = ? AND path = ?`,
+    [projectId, filePath]
+  );
 
   if (existing) return existing.id;
 
   // Create minimal file record
   try {
-    const result = db.run(`INSERT INTO files (project_id, path, type, status) VALUES (?, ?, 'source', 'active')`, [
+    const result = await db.run(`INSERT INTO files (project_id, path, type, status) VALUES (?, ?, 'source', 'active')`, [
       projectId,
       filePath,
     ]);
@@ -112,21 +113,21 @@ function getFileId(db: Database, projectId: number, filePath: string): number | 
 /**
  * Clear existing symbols for a file
  */
-function clearFileSymbols(db: Database, fileId: number): void {
+async function clearFileSymbols(db: DatabaseAdapter, fileId: number): Promise<void> {
   // Delete from FTS first (must happen before symbols are deleted)
-  db.run(`DELETE FROM fts_symbols WHERE rowid IN (SELECT id FROM symbols WHERE file_id = ?)`, [fileId]);
+  await db.run(`DELETE FROM fts_symbols WHERE rowid IN (SELECT id FROM symbols WHERE file_id = ?)`, [fileId]);
   // Then delete from symbols
-  db.run(`DELETE FROM symbols WHERE file_id = ?`, [fileId]);
+  await db.run(`DELETE FROM symbols WHERE file_id = ?`, [fileId]);
 }
 
 /**
  * Store a code chunk as a symbol
  */
-function storeChunk(db: Database, fileId: number, chunk: CodeChunk, embedding: number[] | null): number | null {
+async function storeChunk(db: DatabaseAdapter, fileId: number, chunk: CodeChunk, embedding: number[] | null): Promise<number | null> {
   try {
     const embeddingBlob = embedding ? Buffer.from(new Float32Array(embedding).buffer) : null;
 
-    const result = db.run(
+    const result = await db.run(
       `INSERT INTO symbols (
         file_id, name, type, signature, purpose, parameters, returns,
         complexity, embedding, created_at, updated_at
@@ -161,7 +162,7 @@ function storeChunk(db: Database, fileId: number, chunk: CodeChunk, embedding: n
  * Chunk a single file and store symbols
  */
 async function chunkFile(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   filePath: string,
@@ -179,13 +180,13 @@ async function chunkFile(
   }
 
   // Get file ID
-  const fileId = getFileId(db, projectId, relativePath);
+  const fileId = await getFileId(db, projectId, relativePath);
   if (!fileId) {
     return { chunks: 0, errors: [`Failed to get file ID for ${relativePath}`] };
   }
 
   // Clear existing symbols
-  clearFileSymbols(db, fileId);
+  await clearFileSymbols(db, fileId);
 
   // Generate embeddings in batch if available
   let embeddings: (number[] | null)[] = [];
@@ -209,7 +210,7 @@ async function chunkFile(
     const chunk = result.chunks[i];
     const embedding = embeddings[i] || null;
 
-    if (storeChunk(db, fileId, chunk, embedding)) {
+    if (await storeChunk(db, fileId, chunk, embedding)) {
       stored++;
     }
   }
@@ -221,7 +222,7 @@ async function chunkFile(
  * Chunk all files in a project
  */
 export async function chunkProject(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   options: {
@@ -280,52 +281,48 @@ export async function chunkProject(
 /**
  * Get symbol statistics for a project
  */
-export function getSymbolStats(
-  db: Database,
+export async function getSymbolStats(
+  db: DatabaseAdapter,
   projectId: number
-): {
+): Promise<{
   totalSymbols: number;
   byType: Record<string, number>;
   withEmbeddings: number;
   topFiles: Array<{ path: string; count: number }>;
-} {
-  const total =
-    db
-      .query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM symbols s
+}> {
+  const totalRow = await db.get<{ count: number }>(
+    `SELECT COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
-     WHERE f.project_id = ?`
-      )
-      .get(projectId)?.count || 0;
+     WHERE f.project_id = ?`,
+    [projectId]
+  );
+  const total = totalRow?.count || 0;
 
-  const byType = db
-    .query<{ type: string; count: number }, [number]>(
-      `SELECT s.type, COUNT(*) as count FROM symbols s
+  const byType = await db.all<{ type: string; count: number }>(
+    `SELECT s.type, COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ?
-     GROUP BY s.type`
-    )
-    .all(projectId);
+     GROUP BY s.type`,
+    [projectId]
+  );
 
-  const withEmbeddings =
-    db
-      .query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM symbols s
+  const withEmbeddingsRow = await db.get<{ count: number }>(
+    `SELECT COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
-     WHERE f.project_id = ? AND s.embedding IS NOT NULL`
-      )
-      .get(projectId)?.count || 0;
+     WHERE f.project_id = ? AND s.embedding IS NOT NULL`,
+    [projectId]
+  );
+  const withEmbeddings = withEmbeddingsRow?.count || 0;
 
-  const topFiles = db
-    .query<{ path: string; count: number }, [number]>(
-      `SELECT f.path, COUNT(*) as count FROM symbols s
+  const topFiles = await db.all<{ path: string; count: number }>(
+    `SELECT f.path, COUNT(*) as count FROM symbols s
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ?
      GROUP BY f.id
      ORDER BY count DESC
-     LIMIT 10`
-    )
-    .all(projectId);
+     LIMIT 10`,
+    [projectId]
+  );
 
   return {
     totalSymbols: total,
@@ -338,41 +335,37 @@ export function getSymbolStats(
 /**
  * Search symbols by name or purpose
  */
-export function searchSymbols(
-  db: Database,
+export async function searchSymbols(
+  db: DatabaseAdapter,
   projectId: number,
   query: string,
   limit: number = 20
-): Array<{
+): Promise<Array<{
   id: number;
   name: string;
   type: string;
   signature: string;
   purpose: string | null;
   file: string;
-}> {
+}>> {
   // Use FTS for search
-  return db
-    .query<
-      {
-        id: number;
-        name: string;
-        type: string;
-        signature: string;
-        purpose: string | null;
-        file: string;
-      },
-      [number, string, number]
-    >(
-      `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file
+  return await db.all<{
+    id: number;
+    name: string;
+    type: string;
+    signature: string;
+    purpose: string | null;
+    file: string;
+  }>(
+    `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file
      FROM fts_symbols fts
      JOIN symbols s ON fts.rowid = s.id
      JOIN files f ON s.file_id = f.id
      WHERE f.project_id = ? AND fts_symbols MATCH ?
      ORDER BY rank
-     LIMIT ?`
-    )
-    .all(projectId, query, limit);
+     LIMIT ?`,
+    [projectId, query, limit]
+  );
 }
 
 // ============================================================================
@@ -380,7 +373,7 @@ export function searchSymbols(
 // ============================================================================
 
 export async function handleChunkCommand(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number,
   projectPath: string,
   args: string[]
@@ -426,7 +419,7 @@ export async function handleChunkCommand(
 
     case "status":
     case "stats": {
-      const stats = getSymbolStats(db, projectId);
+      const stats = await getSymbolStats(db, projectId);
 
       console.error("\n📊 Symbol Statistics:\n");
       console.error(`   Total symbols: ${stats.totalSymbols}`);
@@ -458,7 +451,7 @@ export async function handleChunkCommand(
         process.exit(1);
       }
 
-      const results = searchSymbols(db, projectId, query);
+      const results = await searchSymbols(db, projectId, query);
 
       if (results.length === 0) {
         console.error(`No symbols found matching "${query}"`);

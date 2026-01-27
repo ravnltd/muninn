@@ -3,7 +3,7 @@
  * Handles: db check, version, migrate, errors, optimize
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { checkIntegrity, getLatestVersion, getProjectDbPath, getSchemaVersion } from "../database/connection";
 import { getPendingMigrations, getRecentErrors, optimizeDatabase, runMigrations } from "../database/migrations";
 import { outputSuccess } from "../utils/format";
@@ -11,12 +11,13 @@ import { outputSuccess } from "../utils/format";
 /**
  * Handle all database subcommands
  */
-export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
+export function handleDatabaseCommand(db: DatabaseAdapter, subArgs: string[]): void {
   const dbCmd = subArgs[0];
+  const rawDb = db.raw(); // Get raw bun:sqlite Database for migration operations
 
   switch (dbCmd) {
     case "check": {
-      const integrity = checkIntegrity(db);
+      const integrity = checkIntegrity(rawDb);
       console.error(`\n🔍 Database Integrity Check\n`);
       console.error(`Version: ${integrity.version}/${getLatestVersion()}`);
       console.error(`Status: ${integrity.valid ? "✅ Valid" : "❌ Issues Found"}\n`);
@@ -44,9 +45,9 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
     }
 
     case "version": {
-      const current = getSchemaVersion(db);
+      const current = getSchemaVersion(rawDb);
       const latest = getLatestVersion();
-      const pending = getPendingMigrations(db);
+      const pending = getPendingMigrations(rawDb);
       console.error(`Schema version: ${current}/${latest}`);
       if (pending.length > 0) {
         console.error(`Pending migrations: ${pending.length}`);
@@ -60,7 +61,7 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
 
     case "migrate": {
       console.error("Running migrations...");
-      const result = runMigrations(db, getProjectDbPath());
+      const result = runMigrations(rawDb, getProjectDbPath());
       if (result.ok) {
         if (result.value.applied.length === 0) {
           console.error("✅ Already up to date");
@@ -80,7 +81,7 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
 
     case "errors": {
       const limit = parseInt(subArgs[1], 10) || 20;
-      const errors = getRecentErrors(db, limit);
+      const errors = getRecentErrors(rawDb, limit);
       if (errors.length === 0) {
         console.error("No recent errors");
       } else {
@@ -95,7 +96,7 @@ export function handleDatabaseCommand(db: Database, subArgs: string[]): void {
 
     case "optimize": {
       console.error("Optimizing database...");
-      optimizeDatabase(db);
+      optimizeDatabase(rawDb);
       console.error("✅ Database optimized");
       outputSuccess({ optimized: true });
       break;

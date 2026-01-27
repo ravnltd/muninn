@@ -3,7 +3,7 @@
  * Deferred question parking lot for revisiting later
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { generateEmbedding, questionToText, serializeEmbedding } from "../embeddings";
 import { logError } from "../utils/errors";
 import { outputSuccess } from "../utils/format";
@@ -13,7 +13,7 @@ import { outputSuccess } from "../utils/format";
 // ============================================================================
 
 export async function questionAdd(
-  db: Database,
+  db: DatabaseAdapter,
   projectId: number | null,
   question: string,
   options: { context?: string; priority?: number; sessionId?: number; global?: boolean } = {}
@@ -29,7 +29,7 @@ export async function questionAdd(
     return questionAddGlobal(db, question, options.context, priority);
   }
 
-  const result = db.run(
+  const result = await db.run(
     `
     INSERT INTO open_questions (project_id, question, context, priority, session_id)
     VALUES (?, ?, ?, ?, ?)
@@ -40,7 +40,7 @@ export async function questionAdd(
   const id = Number(result.lastInsertRowid);
 
   // Update FTS
-  db.run(
+  await db.run(
     `
     INSERT INTO fts_questions(rowid, question, context)
     VALUES (?, ?, ?)
@@ -52,7 +52,7 @@ export async function questionAdd(
   try {
     const embedding = await generateEmbedding(questionToText(question, options.context ?? null));
     if (embedding) {
-      db.run("UPDATE open_questions SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), id]);
+      await db.run("UPDATE open_questions SET embedding = ? WHERE id = ?", [serializeEmbedding(embedding), id]);
     }
   } catch (error) {
     logError("questions:embedding", error);
@@ -66,8 +66,8 @@ export async function questionAdd(
   return id;
 }
 
-function questionAddGlobal(db: Database, question: string, context: string | undefined, priority: number): number {
-  const result = db.run(
+async function questionAddGlobal(db: DatabaseAdapter, question: string, context: string | undefined, priority: number): Promise<number> {
+  const result = await db.run(
     `
     INSERT INTO global_open_questions (question, context, priority)
     VALUES (?, ?, ?)
@@ -85,32 +85,27 @@ function questionAddGlobal(db: Database, question: string, context: string | und
 // List Questions
 // ============================================================================
 
-export function questionList(
-  db: Database,
+export async function questionList(
+  db: DatabaseAdapter,
   projectId: number | null,
   options: { status?: string; global?: boolean } = {}
-): void {
+): Promise<void> {
   const status = options.status ?? "open";
 
   if (options.global) {
-    const results = db
-      .query<
-        {
-          id: number;
-          question: string;
-          context: string | null;
-          priority: number;
-          status: string;
-          resolution: string | null;
-          created_at: string;
-        },
-        [string]
-      >(`
+    const results = await db.all<{
+      id: number;
+      question: string;
+      context: string | null;
+      priority: number;
+      status: string;
+      resolution: string | null;
+      created_at: string;
+    }>(`
       SELECT * FROM global_open_questions
       WHERE status = ?
       ORDER BY priority ASC, created_at DESC
-    `)
-      .all(status);
+    `, [status]);
 
     console.error(`\n❓ Global Open Questions (${results.length})\n`);
     for (const q of results) {
@@ -122,25 +117,20 @@ export function questionList(
     return;
   }
 
-  const results = db
-    .query<
-      {
-        id: number;
-        question: string;
-        context: string | null;
-        priority: number;
-        status: string;
-        resolution: string | null;
-        session_id: number | null;
-        created_at: string;
-      },
-      [number | null, string]
-    >(`
+  const results = await db.all<{
+    id: number;
+    question: string;
+    context: string | null;
+    priority: number;
+    status: string;
+    resolution: string | null;
+    session_id: number | null;
+    created_at: string;
+  }>(`
     SELECT * FROM open_questions
     WHERE (project_id = ?1 OR project_id IS NULL) AND status = ?2
     ORDER BY priority ASC, created_at DESC
-  `)
-    .all(projectId, status);
+  `, [projectId, status]);
 
   console.error(`\n❓ Open Questions (${results.length})\n`);
   for (const q of results) {
@@ -156,27 +146,25 @@ export function questionList(
 // Resolve Question
 // ============================================================================
 
-export function questionResolve(
-  db: Database,
+export async function questionResolve(
+  db: DatabaseAdapter,
   id: number,
   resolution: string,
   status: "resolved" | "dropped" = "resolved"
-): void {
+): Promise<void> {
   if (!id || !resolution) {
     console.error("Usage: muninn questions resolve <id> <resolution>");
     process.exit(1);
   }
 
-  const question = db
-    .query<{ id: number; question: string }, [number]>("SELECT id, question FROM open_questions WHERE id = ?")
-    .get(id);
+  const question = await db.get<{ id: number; question: string }>("SELECT id, question FROM open_questions WHERE id = ?", [id]);
 
   if (!question) {
     console.error(`❌ Question #${id} not found`);
     process.exit(1);
   }
 
-  db.run(
+  await db.run(
     `
     UPDATE open_questions
     SET status = ?, resolution = ?, resolved_at = CURRENT_TIMESTAMP
@@ -197,19 +185,17 @@ export function questionResolve(
 // Get Open Questions for Resume
 // ============================================================================
 
-export function getOpenQuestionsForResume(
-  db: Database,
+export async function getOpenQuestionsForResume(
+  db: DatabaseAdapter,
   projectId: number
-): Array<{ id: number; question: string; priority: number }> {
+): Promise<Array<{ id: number; question: string; priority: number }>> {
   try {
-    return db
-      .query<{ id: number; question: string; priority: number }, [number]>(`
+    return await db.all<{ id: number; question: string; priority: number }>(`
       SELECT id, question, priority FROM open_questions
       WHERE (project_id = ? OR project_id IS NULL) AND status = 'open'
       ORDER BY priority ASC
       LIMIT 5
-    `)
-      .all(projectId);
+    `, [projectId]);
   } catch {
     return [];
   }
@@ -219,7 +205,7 @@ export function getOpenQuestionsForResume(
 // CLI Handler
 // ============================================================================
 
-export async function handleQuestionsCommand(db: Database, projectId: number, args: string[]): Promise<void> {
+export async function handleQuestionsCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
@@ -251,7 +237,7 @@ export async function handleQuestionsCommand(db: Database, projectId: number, ar
       const statusIdx = args.indexOf("--status");
       const status = statusIdx !== -1 ? args[statusIdx + 1] : undefined;
       const isGlobal = args.includes("--global");
-      questionList(db, projectId, { status, global: isGlobal });
+      await questionList(db, projectId, { status, global: isGlobal });
       break;
     }
 
@@ -261,7 +247,7 @@ export async function handleQuestionsCommand(db: Database, projectId: number, ar
         .slice(2)
         .filter((a) => !a.startsWith("--"))
         .join(" ");
-      questionResolve(db, id, resolution);
+      await questionResolve(db, id, resolution);
       break;
     }
 
@@ -272,7 +258,7 @@ export async function handleQuestionsCommand(db: Database, projectId: number, ar
           .slice(2)
           .filter((a) => !a.startsWith("--"))
           .join(" ") || "Dropped";
-      questionResolve(db, id, reason, "dropped");
+      await questionResolve(db, id, reason, "dropped");
       break;
     }
 

@@ -4,7 +4,7 @@
  * Fixes SQL injection by using parameterized queries
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../adapter";
 import { isEmbeddingAvailable } from "../../embeddings";
 import type { GlobalLearning, Pattern, QueryResult } from "../../types";
 import { logError } from "../../utils/errors";
@@ -23,22 +23,18 @@ interface FocusContext {
 /**
  * Get active focus for a project (if any)
  */
-function getActiveFocus(db: Database, projectId: number): FocusContext | null {
+async function getActiveFocus(db: DatabaseAdapter, projectId: number): Promise<FocusContext | null> {
   try {
-    const focus = db
-      .query<
-        {
-          area: string;
-          files: string | null;
-          keywords: string | null;
-        },
-        [number]
-      >(`
-      SELECT area, files, keywords FROM focus
+    const focus = await db.get<{
+      area: string;
+      files: string | null;
+      keywords: string | null;
+    }>(
+      `SELECT area, files, keywords FROM focus
       WHERE project_id = ? AND cleared_at IS NULL
-      ORDER BY created_at DESC LIMIT 1
-    `)
-      .get(projectId);
+      ORDER BY created_at DESC LIMIT 1`,
+      [projectId]
+    );
 
     if (!focus) return null;
 
@@ -89,7 +85,7 @@ function applyFocusBoost(results: QueryResult[], focus: FocusContext): QueryResu
 /**
  * Heat entities that appear in query results
  */
-function heatQueryResults(db: Database, results: QueryResult[]): void {
+async function heatQueryResults(db: DatabaseAdapter, results: QueryResult[]): Promise<void> {
   const tableMap: Record<string, string> = {
     file: "files",
     decision: "decisions",
@@ -102,12 +98,10 @@ function heatQueryResults(db: Database, results: QueryResult[]): void {
     const table = tableMap[result.type];
     if (table) {
       try {
-        db.run(
-          `
-          UPDATE ${table}
+        await db.run(
+          `UPDATE ${table}
           SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `,
+          WHERE id = ?`,
           [result.id]
         );
       } catch {
@@ -155,7 +149,7 @@ interface LearningSearchResult {
  * Supports hybrid search (FTS + vector) when embeddings are available
  */
 export async function semanticQuery(
-  db: Database,
+  db: DatabaseAdapter,
   query: string,
   projectId?: number,
   options?: { mode?: "auto" | "fts" | "vector" | "hybrid" }
@@ -163,10 +157,11 @@ export async function semanticQuery(
   const mode = options?.mode ?? "auto";
 
   // Determine if we should use hybrid/vector search
+  const hasProjectEmbeddings = projectId ? await hasEmbeddings(db, projectId) : false;
   const useVectorSearch =
     mode === "vector" ||
     mode === "hybrid" ||
-    (mode === "auto" && isEmbeddingAvailable() && projectId && hasEmbeddings(db, projectId));
+    (mode === "auto" && isEmbeddingAvailable() && projectId && hasProjectEmbeddings);
 
   // If vector mode or hybrid mode with embeddings available, try vector search first
   if (useVectorSearch && projectId) {
@@ -175,7 +170,7 @@ export async function semanticQuery(
       if (vectorResults.length > 0) {
         // Merge with FTS results for hybrid mode
         if (mode === "hybrid" || mode === "auto") {
-          const ftsResults = ftsOnlyQuery(db, query, projectId);
+          const ftsResults = await ftsOnlyQuery(db, query, projectId);
           return mergeResults(vectorResults, ftsResults);
         }
         return vectorResults;
@@ -187,17 +182,17 @@ export async function semanticQuery(
   }
 
   // Fall back to FTS-only
-  let results = ftsOnlyQuery(db, query, projectId);
+  let results = await ftsOnlyQuery(db, query, projectId);
 
   // Apply focus boost if project context exists
   if (projectId) {
-    const focus = getActiveFocus(db, projectId);
+    const focus = await getActiveFocus(db, projectId);
     if (focus) {
       results = applyFocusBoost(results, focus);
     }
 
     // Heat top results
-    heatQueryResults(db, results);
+    await heatQueryResults(db, results);
   }
 
   return results;
@@ -206,34 +201,32 @@ export async function semanticQuery(
 /**
  * FTS-only query (original semanticQuery implementation)
  */
-function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryResult[] {
+async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: number): Promise<QueryResult[]> {
   const results: QueryResult[] = [];
 
   // Search files
   try {
-    const fileQuery = projectId
-      ? db.query<FileSearchResult, [string, number]>(`
-          SELECT f.id, f.path as title, f.purpose as content,
+    const files = projectId
+      ? await db.all<FileSearchResult>(
+          `SELECT f.id, f.path as title, f.purpose as content,
                  bm25(fts_files) as relevance
           FROM fts_files
           JOIN files f ON fts_files.rowid = f.id
           WHERE fts_files MATCH ?1 AND f.project_id = ?2 AND f.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `)
-      : db.query<FileSearchResult, [string]>(`
-          SELECT f.id, f.path as title, f.purpose as content,
+          LIMIT 5`,
+          [query, projectId]
+        )
+      : await db.all<FileSearchResult>(
+          `SELECT f.id, f.path as title, f.purpose as content,
                  bm25(fts_files) as relevance
           FROM fts_files
           JOIN files f ON fts_files.rowid = f.id
           WHERE fts_files MATCH ?1 AND f.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `);
-
-    const files = projectId
-      ? fileQuery.all(query, projectId)
-      : (fileQuery as ReturnType<typeof db.query<FileSearchResult, [string]>>).all(query);
+          LIMIT 5`,
+          [query]
+        );
 
     results.push(
       ...files.map((f) => ({
@@ -250,29 +243,27 @@ function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryRes
 
   // Search decisions
   try {
-    const decisionQuery = projectId
-      ? db.query<DecisionSearchResult, [string, number]>(`
-          SELECT d.id, d.title, d.decision as content,
+    const decisions = projectId
+      ? await db.all<DecisionSearchResult>(
+          `SELECT d.id, d.title, d.decision as content,
                  bm25(fts_decisions) as relevance
           FROM fts_decisions
           JOIN decisions d ON fts_decisions.rowid = d.id
           WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `)
-      : db.query<DecisionSearchResult, [string]>(`
-          SELECT d.id, d.title, d.decision as content,
+          LIMIT 5`,
+          [query, projectId]
+        )
+      : await db.all<DecisionSearchResult>(
+          `SELECT d.id, d.title, d.decision as content,
                  bm25(fts_decisions) as relevance
           FROM fts_decisions
           JOIN decisions d ON fts_decisions.rowid = d.id
           WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `);
-
-    const decisions = projectId
-      ? decisionQuery.all(query, projectId)
-      : (decisionQuery as ReturnType<typeof db.query<DecisionSearchResult, [string]>>).all(query);
+          LIMIT 5`,
+          [query]
+        );
 
     results.push(
       ...decisions.map((d) => ({
@@ -289,29 +280,27 @@ function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryRes
 
   // Search issues
   try {
-    const issueQuery = projectId
-      ? db.query<IssueSearchResult, [string, number]>(`
-          SELECT i.id, i.title, i.description as content,
+    const issues = projectId
+      ? await db.all<IssueSearchResult>(
+          `SELECT i.id, i.title, i.description as content,
                  bm25(fts_issues) as relevance
           FROM fts_issues
           JOIN issues i ON fts_issues.rowid = i.id
           WHERE fts_issues MATCH ?1 AND i.project_id = ?2 AND i.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `)
-      : db.query<IssueSearchResult, [string]>(`
-          SELECT i.id, i.title, i.description as content,
+          LIMIT 5`,
+          [query, projectId]
+        )
+      : await db.all<IssueSearchResult>(
+          `SELECT i.id, i.title, i.description as content,
                  bm25(fts_issues) as relevance
           FROM fts_issues
           JOIN issues i ON fts_issues.rowid = i.id
           WHERE fts_issues MATCH ?1 AND i.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `);
-
-    const issues = projectId
-      ? issueQuery.all(query, projectId)
-      : (issueQuery as ReturnType<typeof db.query<IssueSearchResult, [string]>>).all(query);
+          LIMIT 5`,
+          [query]
+        );
 
     results.push(
       ...issues.map((i) => ({
@@ -328,29 +317,27 @@ function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryRes
 
   // Search learnings
   try {
-    const learningQuery = projectId
-      ? db.query<LearningSearchResult, [string, number]>(`
-          SELECT l.id, l.title, l.content,
+    const learnings = projectId
+      ? await db.all<LearningSearchResult>(
+          `SELECT l.id, l.title, l.content,
                  bm25(fts_learnings) as relevance
           FROM fts_learnings
           JOIN learnings l ON fts_learnings.rowid = l.id
           WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `)
-      : db.query<LearningSearchResult, [string]>(`
-          SELECT l.id, l.title, l.content,
+          LIMIT 5`,
+          [query, projectId]
+        )
+      : await db.all<LearningSearchResult>(
+          `SELECT l.id, l.title, l.content,
                  bm25(fts_learnings) as relevance
           FROM fts_learnings
           JOIN learnings l ON fts_learnings.rowid = l.id
           WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
           ORDER BY relevance
-          LIMIT 5
-        `);
-
-    const learnings = projectId
-      ? learningQuery.all(query, projectId)
-      : (learningQuery as ReturnType<typeof db.query<LearningSearchResult, [string]>>).all(query);
+          LIMIT 5`,
+          [query]
+        );
 
     results.push(
       ...learnings.map((l) => ({
@@ -367,68 +354,39 @@ function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryRes
 
   // Search symbols (code chunks)
   try {
-    const symbolQuery = projectId
-      ? db.query<
-          {
-            id: number;
-            name: string;
-            type: string;
-            signature: string;
-            purpose: string | null;
-            file_path: string;
-            relevance: number;
-          },
-          [string, number]
-        >(`
-          SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
+    type SymbolSearchResult = {
+      id: number;
+      name: string;
+      type: string;
+      signature: string;
+      purpose: string | null;
+      file_path: string;
+      relevance: number;
+    };
+
+    const symbols = projectId
+      ? await db.all<SymbolSearchResult>(
+          `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
                  bm25(fts_symbols) as relevance
           FROM fts_symbols
           JOIN symbols s ON fts_symbols.rowid = s.id
           JOIN files f ON s.file_id = f.id
           WHERE fts_symbols MATCH ?1 AND f.project_id = ?2
           ORDER BY relevance
-          LIMIT 10
-        `)
-      : db.query<
-          {
-            id: number;
-            name: string;
-            type: string;
-            signature: string;
-            purpose: string | null;
-            file_path: string;
-            relevance: number;
-          },
-          [string]
-        >(`
-          SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
+          LIMIT 10`,
+          [query, projectId]
+        )
+      : await db.all<SymbolSearchResult>(
+          `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
                  bm25(fts_symbols) as relevance
           FROM fts_symbols
           JOIN symbols s ON fts_symbols.rowid = s.id
           JOIN files f ON s.file_id = f.id
           WHERE fts_symbols MATCH ?1
           ORDER BY relevance
-          LIMIT 10
-        `);
-
-    const symbols = projectId
-      ? symbolQuery.all(query, projectId)
-      : (
-          symbolQuery as ReturnType<
-            typeof db.query<
-              {
-                id: number;
-                name: string;
-                type: string;
-                signature: string;
-                purpose: string | null;
-                file_path: string;
-                relevance: number;
-              },
-              [string]
-            >
-          >
-        ).all(query);
+          LIMIT 10`,
+          [query]
+        );
 
     results.push(
       ...symbols.map((s) => ({
@@ -445,25 +403,21 @@ function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryRes
 
   // Search observations
   try {
-    const obsResults = db
-      .query<
-        {
-          id: number;
-          content: string;
-          type: string;
-          relevance: number;
-        },
-        [string]
-      >(`
-      SELECT o.id, o.content, o.type,
+    const obsResults = await db.all<{
+      id: number;
+      content: string;
+      type: string;
+      relevance: number;
+    }>(
+      `SELECT o.id, o.content, o.type,
              bm25(fts_observations) as relevance
       FROM fts_observations
       JOIN observations o ON fts_observations.rowid = o.id
       WHERE fts_observations MATCH ?1
       ORDER BY relevance
-      LIMIT 3
-    `)
-      .all(query);
+      LIMIT 3`,
+      [query]
+    );
 
     results.push(
       ...obsResults.map((o) => ({
@@ -480,25 +434,21 @@ function ftsOnlyQuery(db: Database, query: string, projectId?: number): QueryRes
 
   // Search open questions
   try {
-    const qResults = db
-      .query<
-        {
-          id: number;
-          question: string;
-          context: string | null;
-          relevance: number;
-        },
-        [string]
-      >(`
-      SELECT q.id, q.question, q.context,
+    const qResults = await db.all<{
+      id: number;
+      question: string;
+      context: string | null;
+      relevance: number;
+    }>(
+      `SELECT q.id, q.question, q.context,
              bm25(fts_questions) as relevance
       FROM fts_questions
       JOIN open_questions q ON fts_questions.rowid = q.id
       WHERE fts_questions MATCH ?1 AND q.status = 'open'
       ORDER BY relevance
-      LIMIT 3
-    `)
-      .all(query);
+      LIMIT 3`,
+      [query]
+    );
 
     results.push(
       ...qResults.map((q) => ({
@@ -550,45 +500,40 @@ function mergeResults(vectorResults: QueryResult[], ftsResults: QueryResult[]): 
 // Global Learning Queries
 // ============================================================================
 
-export function searchGlobalLearnings(db: Database, query: string): GlobalLearning[] {
+export async function searchGlobalLearnings(db: DatabaseAdapter, query: string): Promise<GlobalLearning[]> {
   try {
-    return db
-      .query<GlobalLearning, [string]>(`
-      SELECT g.* FROM fts_global_learnings
+    return await db.all<GlobalLearning>(
+      `SELECT g.* FROM fts_global_learnings
       JOIN global_learnings g ON fts_global_learnings.rowid = g.id
       WHERE fts_global_learnings MATCH ?
       ORDER BY g.times_applied DESC
-      LIMIT 10
-    `)
-      .all(query);
+      LIMIT 10`,
+      [query]
+    );
   } catch (error) {
     logError("searchGlobalLearnings", error);
     return [];
   }
 }
 
-export function addGlobalLearning(
-  db: Database,
+export async function addGlobalLearning(
+  db: DatabaseAdapter,
   category: string,
   title: string,
   content: string,
   context?: string,
   sourceProject?: string
-): number {
-  const result = db.run(
-    `
-    INSERT INTO global_learnings (category, title, content, context, source_project)
-    VALUES (?, ?, ?, ?, ?)
-  `,
+): Promise<number> {
+  const result = await db.run(
+    `INSERT INTO global_learnings (category, title, content, context, source_project)
+    VALUES (?, ?, ?, ?, ?)`,
     [category, title, content, context ?? null, sourceProject ?? null]
   );
 
   // Update FTS
-  db.run(
-    `
-    INSERT INTO fts_global_learnings(rowid, title, content, context)
-    VALUES (?, ?, ?, ?)
-  `,
+  await db.run(
+    `INSERT INTO fts_global_learnings(rowid, title, content, context)
+    VALUES (?, ?, ?, ?)`,
     [result.lastInsertRowid, title, content, context ?? null]
   );
 
@@ -599,57 +544,48 @@ export function addGlobalLearning(
 // Pattern Queries
 // ============================================================================
 
-export function searchPatterns(db: Database, query: string): Pattern[] {
+export async function searchPatterns(db: DatabaseAdapter, query: string): Promise<Pattern[]> {
   try {
-    return db
-      .query<Pattern, [string]>(`
-      SELECT p.* FROM fts_patterns
+    return await db.all<Pattern>(
+      `SELECT p.* FROM fts_patterns
       JOIN patterns p ON fts_patterns.rowid = p.id
       WHERE fts_patterns MATCH ?
-      LIMIT 10
-    `)
-      .all(query);
+      LIMIT 10`,
+      [query]
+    );
   } catch (error) {
     logError("searchPatterns", error);
     return [];
   }
 }
 
-export function getAllPatterns(db: Database): Pattern[] {
-  return db
-    .query<Pattern, []>(`
-    SELECT * FROM patterns ORDER BY name
-  `)
-    .all();
+export async function getAllPatterns(db: DatabaseAdapter): Promise<Pattern[]> {
+  return await db.all<Pattern>(`SELECT * FROM patterns ORDER BY name`);
 }
 
-export function addPattern(
-  db: Database,
+export async function addPattern(
+  db: DatabaseAdapter,
   name: string,
   description: string,
   codeExample?: string,
   antiPattern?: string,
   appliesTo?: string
-): void {
-  db.run(
-    `
-    INSERT INTO patterns (name, description, code_example, anti_pattern, applies_to)
+): Promise<void> {
+  await db.run(
+    `INSERT INTO patterns (name, description, code_example, anti_pattern, applies_to)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       description = excluded.description,
       code_example = excluded.code_example,
       anti_pattern = excluded.anti_pattern,
-      applies_to = excluded.applies_to
-  `,
+      applies_to = excluded.applies_to`,
     [name, description, codeExample ?? null, antiPattern ?? null, appliesTo ?? null]
   );
 
   // Update FTS
-  db.run(
-    `
-    INSERT INTO fts_patterns(rowid, name, description, code_example)
-    SELECT id, name, description, code_example FROM patterns WHERE name = ?
-  `,
+  await db.run(
+    `INSERT INTO fts_patterns(rowid, name, description, code_example)
+    SELECT id, name, description, code_example FROM patterns WHERE name = ?`,
     [name]
   );
 }
@@ -658,83 +594,66 @@ export function addPattern(
 // Tech Debt Queries
 // ============================================================================
 
-export function listTechDebt(
-  db: Database,
+export async function listTechDebt(
+  db: DatabaseAdapter,
   projectPath?: string
-): Array<{
-  id: number;
-  project_path: string;
-  title: string;
-  description: string | null;
-  severity: number;
-  effort: string | null;
-  affected_files: string | null;
-  status: string;
-  created_at: string;
-}> {
+): Promise<
+  Array<{
+    id: number;
+    project_path: string;
+    title: string;
+    description: string | null;
+    severity: number;
+    effort: string | null;
+    affected_files: string | null;
+    status: string;
+    created_at: string;
+  }>
+> {
+  type TechDebtRow = {
+    id: number;
+    project_path: string;
+    title: string;
+    description: string | null;
+    severity: number;
+    effort: string | null;
+    affected_files: string | null;
+    status: string;
+    created_at: string;
+  };
+
   if (projectPath) {
-    return db
-      .query<
-        {
-          id: number;
-          project_path: string;
-          title: string;
-          description: string | null;
-          severity: number;
-          effort: string | null;
-          affected_files: string | null;
-          status: string;
-          created_at: string;
-        },
-        [string]
-      >(`
-      SELECT * FROM tech_debt WHERE project_path = ? AND status = 'open'
-      ORDER BY severity DESC
-    `)
-      .all(projectPath);
+    return await db.all<TechDebtRow>(
+      `SELECT * FROM tech_debt WHERE project_path = ? AND status = 'open'
+      ORDER BY severity DESC`,
+      [projectPath]
+    );
   }
 
-  return db
-    .query<
-      {
-        id: number;
-        project_path: string;
-        title: string;
-        description: string | null;
-        severity: number;
-        effort: string | null;
-        affected_files: string | null;
-        status: string;
-        created_at: string;
-      },
-      []
-    >(`
-    SELECT * FROM tech_debt WHERE status = 'open'
-    ORDER BY severity DESC
-  `)
-    .all();
+  return await db.all<TechDebtRow>(
+    `SELECT * FROM tech_debt WHERE status = 'open'
+    ORDER BY severity DESC`
+  );
 }
 
-export function addTechDebt(
-  db: Database,
+export async function addTechDebt(
+  db: DatabaseAdapter,
   projectPath: string,
   title: string,
   description?: string,
   severity: number = 5,
   effort?: string,
   affectedFiles?: string
-): number {
-  const result = db.run(
-    `
-    INSERT INTO tech_debt (project_path, title, description, severity, effort, affected_files)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `,
+): Promise<number> {
+  const result = await db.run(
+    `INSERT INTO tech_debt (project_path, title, description, severity, effort, affected_files)
+    VALUES (?, ?, ?, ?, ?, ?)`,
     [projectPath, title, description ?? null, severity, effort ?? "medium", affectedFiles ?? null]
   );
 
   return Number(result.lastInsertRowid);
 }
 
-export function resolveTechDebt(db: Database, id: number): void {
-  db.run("UPDATE tech_debt SET status = 'resolved' WHERE id = ?", [id]);
+export async function resolveTechDebt(db: DatabaseAdapter, id: number): Promise<void> {
+  await db.run("UPDATE tech_debt SET status = 'resolved' WHERE id = ?", [id]);
 }

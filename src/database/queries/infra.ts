@@ -6,7 +6,7 @@
  * Includes both raw SQL (legacy) and Drizzle ORM (new) versions
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../adapter";
 import { eq } from "drizzle-orm";
 import type {
   InfraEventWithNames,
@@ -105,118 +105,80 @@ export const drizzleInfra = {
 // Server Queries
 // ============================================================================
 
-export function getAllServers(db: Database): Server[] {
-  return db
-    .query<Server, []>(`
-    SELECT * FROM servers ORDER BY name
-  `)
-    .all();
+export async function getAllServers(db: DatabaseAdapter): Promise<Server[]> {
+  return await db.all<Server>(`SELECT * FROM servers ORDER BY name`);
 }
 
-export function getServerByName(db: Database, name: string): Server | null {
-  return (
-    db
-      .query<Server, [string]>(`
-    SELECT * FROM servers WHERE name = ?
-  `)
-      .get(name) ?? null
-  );
+export async function getServerByName(db: DatabaseAdapter, name: string): Promise<Server | null> {
+  return await db.get<Server>(`SELECT * FROM servers WHERE name = ?`, [name]);
 }
 
-export function getServerById(db: Database, id: number): Server | null {
-  return (
-    db
-      .query<Server, [number]>(`
-    SELECT * FROM servers WHERE id = ?
-  `)
-      .get(id) ?? null
-  );
+export async function getServerById(db: DatabaseAdapter, id: number): Promise<Server | null> {
+  return await db.get<Server>(`SELECT * FROM servers WHERE id = ?`, [id]);
 }
 
 // ============================================================================
 // Service Queries
 // ============================================================================
 
-export function getServicesByServerId(db: Database, serverId: number): ServiceWithDomain[] {
-  return db
-    .query<ServiceWithDomain, [number]>(`
-    SELECT sv.*,
+export async function getServicesByServerId(db: DatabaseAdapter, serverId: number): Promise<ServiceWithDomain[]> {
+  return await db.all<ServiceWithDomain>(
+    `SELECT sv.*,
       (SELECT domain FROM routes WHERE service_id = sv.id LIMIT 1) as primary_domain
     FROM services sv
     WHERE sv.server_id = ?
-    ORDER BY sv.name
-  `)
-    .all(serverId);
-}
-
-export function getServiceByName(db: Database, name: string): Service | null {
-  return (
-    db
-      .query<Service, [string]>(`
-    SELECT * FROM services WHERE name = ?
-  `)
-      .get(name) ?? null
+    ORDER BY sv.name`,
+    [serverId]
   );
 }
 
-export function getServiceByNameAndServer(db: Database, name: string, serverId: number): Service | null {
-  return (
-    db
-      .query<Service, [string, number]>(`
-    SELECT * FROM services WHERE name = ? AND server_id = ?
-  `)
-      .get(name, serverId) ?? null
-  );
+export async function getServiceByName(db: DatabaseAdapter, name: string): Promise<Service | null> {
+  return await db.get<Service>(`SELECT * FROM services WHERE name = ?`, [name]);
 }
 
-export function getAllServicesWithServerName(
-  db: Database,
+export async function getServiceByNameAndServer(db: DatabaseAdapter, name: string, serverId: number): Promise<Service | null> {
+  return await db.get<Service>(`SELECT * FROM services WHERE name = ? AND server_id = ?`, [name, serverId]);
+}
+
+export async function getAllServicesWithServerName(
+  db: DatabaseAdapter,
   serverFilter?: string
-): Array<Service & { server_name: string }> {
+): Promise<Array<Service & { server_name: string }>> {
   if (serverFilter) {
-    return db
-      .query<Service & { server_name: string }, [string]>(`
-      SELECT sv.*, s.name as server_name
+    return await db.all<Service & { server_name: string }>(
+      `SELECT sv.*, s.name as server_name
       FROM services sv
       JOIN servers s ON sv.server_id = s.id
       WHERE s.name = ?
-      ORDER BY sv.name
-    `)
-      .all(serverFilter);
+      ORDER BY sv.name`,
+      [serverFilter]
+    );
   }
 
-  return db
-    .query<Service & { server_name: string }, []>(`
-    SELECT sv.*, s.name as server_name
+  return await db.all<Service & { server_name: string }>(
+    `SELECT sv.*, s.name as server_name
     FROM services sv
     JOIN servers s ON sv.server_id = s.id
-    ORDER BY s.name, sv.name
-  `)
-    .all();
+    ORDER BY s.name, sv.name`
+  );
 }
 
 // ============================================================================
 // Route Queries
 // ============================================================================
 
-export function getAllRoutes(db: Database): RouteWithService[] {
-  return db
-    .query<RouteWithService, []>(`
-    SELECT r.*, sv.name as service_name, s.name as server_name
+export async function getAllRoutes(db: DatabaseAdapter): Promise<RouteWithService[]> {
+  return await db.all<RouteWithService>(
+    `SELECT r.*, sv.name as service_name, s.name as server_name
     FROM routes r
     JOIN services sv ON r.service_id = sv.id
     JOIN servers s ON sv.server_id = s.id
-    ORDER BY r.domain, r.path
-  `)
-    .all();
+    ORDER BY r.domain, r.path`
+  );
 }
 
-export function getRoutesByServiceId(db: Database, serviceId: number): Route[] {
-  return db
-    .query<Route, [number]>(`
-    SELECT * FROM routes WHERE service_id = ?
-  `)
-    .all(serviceId);
+export async function getRoutesByServiceId(db: DatabaseAdapter, serviceId: number): Promise<Route[]> {
+  return await db.all<Route>(`SELECT * FROM routes WHERE service_id = ?`, [serviceId]);
 }
 
 // ============================================================================
@@ -255,10 +217,9 @@ interface InfraStatusRow {
 /**
  * Get full infrastructure status in a single query (fixes N+1)
  */
-export function getInfraStatus(db: Database): InfraStatus {
-  const rows = db
-    .query<InfraStatusRow, []>(`
-    SELECT
+export async function getInfraStatus(db: DatabaseAdapter): Promise<InfraStatus> {
+  const rows = await db.all<InfraStatusRow>(
+    `SELECT
       s.id as server_id,
       s.name as server_name,
       s.hostname as server_hostname,
@@ -287,9 +248,8 @@ export function getInfraStatus(db: Database): InfraStatus {
       (SELECT domain FROM routes WHERE service_id = sv.id LIMIT 1) as primary_domain
     FROM servers s
     LEFT JOIN services sv ON sv.server_id = s.id
-    ORDER BY s.name, sv.name
-  `)
-    .all();
+    ORDER BY s.name, sv.name`
+  );
 
   // Group by server in memory (O(n) instead of N+1 queries)
   const serverMap = new Map<number, ServerWithServices>();
@@ -380,26 +340,24 @@ export function getInfraStatus(db: Database): InfraStatus {
 // Dependency Queries
 // ============================================================================
 
-export function getServiceDependencies(
-  db: Database,
+export async function getServiceDependencies(
+  db: DatabaseAdapter,
   serviceId: number
-): Array<{
-  depends_on: string;
-  location: string;
-  dependency_type: string | null;
-  required: number;
-}> {
-  return db
-    .query<
-      {
-        depends_on: string;
-        location: string;
-        dependency_type: string | null;
-        required: number;
-      },
-      [number]
-    >(`
-    SELECT
+): Promise<
+  Array<{
+    depends_on: string;
+    location: string;
+    dependency_type: string | null;
+    required: number;
+  }>
+> {
+  return await db.all<{
+    depends_on: string;
+    location: string;
+    dependency_type: string | null;
+    required: number;
+  }>(
+    `SELECT
       COALESCE(s2.name, sd.depends_on_external) as depends_on,
       CASE WHEN s2.id IS NOT NULL THEN srv.name ELSE 'external' END as location,
       sd.dependency_type,
@@ -407,56 +365,52 @@ export function getServiceDependencies(
     FROM service_deps sd
     LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
     LEFT JOIN servers srv ON s2.server_id = srv.id
-    WHERE sd.service_id = ?
-  `)
-    .all(serviceId);
+    WHERE sd.service_id = ?`,
+    [serviceId]
+  );
 }
 
-export function getServiceDependents(
-  db: Database,
+export async function getServiceDependents(
+  db: DatabaseAdapter,
   serviceId: number
-): Array<{
-  service_name: string;
-  server_name: string;
-  dependency_type: string | null;
-}> {
-  return db
-    .query<
-      {
-        service_name: string;
-        server_name: string;
-        dependency_type: string | null;
-      },
-      [number]
-    >(`
-    SELECT s1.name as service_name, srv.name as server_name, sd.dependency_type
+): Promise<
+  Array<{
+    service_name: string;
+    server_name: string;
+    dependency_type: string | null;
+  }>
+> {
+  return await db.all<{
+    service_name: string;
+    server_name: string;
+    dependency_type: string | null;
+  }>(
+    `SELECT s1.name as service_name, srv.name as server_name, sd.dependency_type
     FROM service_deps sd
     JOIN services s1 ON sd.service_id = s1.id
     JOIN servers srv ON s1.server_id = srv.id
-    WHERE sd.depends_on_service_id = ?
-  `)
-    .all(serviceId);
+    WHERE sd.depends_on_service_id = ?`,
+    [serviceId]
+  );
 }
 
-export function getAllDependencies(db: Database): Array<{
-  service_name: string;
-  server_name: string;
-  depends_on: string;
-  depends_on_location: string;
-  dependency_type: string | null;
-}> {
-  return db
-    .query<
-      {
-        service_name: string;
-        server_name: string;
-        depends_on: string;
-        depends_on_location: string;
-        dependency_type: string | null;
-      },
-      []
-    >(`
-    SELECT
+export async function getAllDependencies(db: DatabaseAdapter): Promise<
+  Array<{
+    service_name: string;
+    server_name: string;
+    depends_on: string;
+    depends_on_location: string;
+    dependency_type: string | null;
+  }>
+> {
+  return await db.all<{
+    service_name: string;
+    server_name: string;
+    depends_on: string;
+    depends_on_location: string;
+    dependency_type: string | null;
+  }>(
+    `SELECT
       s1.name as service_name,
       srv1.name as server_name,
       COALESCE(s2.name, sd.depends_on_external) as depends_on,
@@ -467,30 +421,28 @@ export function getAllDependencies(db: Database): Array<{
     JOIN servers srv1 ON s1.server_id = srv1.id
     LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
     LEFT JOIN servers srv2 ON s2.server_id = srv2.id
-    ORDER BY s1.name
-  `)
-    .all();
+    ORDER BY s1.name`
+  );
 }
 
 // ============================================================================
 // Event Queries
 // ============================================================================
 
-export function getRecentEvents(db: Database, limit: number = 20): InfraEventWithNames[] {
-  return db
-    .query<InfraEventWithNames, [number]>(`
-    SELECT e.*, s.name as server_name, sv.name as service_name
+export async function getRecentEvents(db: DatabaseAdapter, limit: number = 20): Promise<InfraEventWithNames[]> {
+  return await db.all<InfraEventWithNames>(
+    `SELECT e.*, s.name as server_name, sv.name as service_name
     FROM infra_events e
     LEFT JOIN servers s ON e.server_id = s.id
     LEFT JOIN services sv ON e.service_id = sv.id
     ORDER BY e.created_at DESC
-    LIMIT ?
-  `)
-    .all(limit);
+    LIMIT ?`,
+    [limit]
+  );
 }
 
-export function logInfraEvent(
-  db: Database,
+export async function logInfraEvent(
+  db: DatabaseAdapter,
   params: {
     serverId?: number;
     serviceId?: number;
@@ -500,13 +452,11 @@ export function logInfraEvent(
     description?: string;
     metadata?: Record<string, unknown>;
   }
-): void {
+): Promise<void> {
   try {
-    db.run(
-      `
-      INSERT INTO infra_events (server_id, service_id, event_type, severity, title, description, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
+    await db.run(
+      `INSERT INTO infra_events (server_id, service_id, event_type, severity, title, description, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         params.serverId ?? null,
         params.serviceId ?? null,
@@ -526,42 +476,32 @@ export function logInfraEvent(
 // Map Data for Visualization
 // ============================================================================
 
-export function getMapData(db: Database): {
+export async function getMapData(db: DatabaseAdapter): Promise<{
   servers: ServerWithServices[];
   deps: Array<{ from_svc: string; to_svc: string | null; dependency_type: string | null }>;
   routes: Array<{ domain: string; service_name: string }>;
-} {
-  const status = getInfraStatus(db);
+}> {
+  const status = await getInfraStatus(db);
 
-  const deps = db
-    .query<
-      {
-        from_svc: string;
-        to_svc: string | null;
-        dependency_type: string | null;
-      },
-      []
-    >(`
-    SELECT s1.name as from_svc, s2.name as to_svc, sd.dependency_type
+  const deps = await db.all<{
+    from_svc: string;
+    to_svc: string | null;
+    dependency_type: string | null;
+  }>(
+    `SELECT s1.name as from_svc, s2.name as to_svc, sd.dependency_type
     FROM service_deps sd
     JOIN services s1 ON sd.service_id = s1.id
-    LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id
-  `)
-    .all();
+    LEFT JOIN services s2 ON sd.depends_on_service_id = s2.id`
+  );
 
-  const routes = db
-    .query<
-      {
-        domain: string;
-        service_name: string;
-      },
-      []
-    >(`
-    SELECT r.domain, sv.name as service_name
+  const routes = await db.all<{
+    domain: string;
+    service_name: string;
+  }>(
+    `SELECT r.domain, sv.name as service_name
     FROM routes r
-    JOIN services sv ON r.service_id = sv.id
-  `)
-    .all();
+    JOIN services sv ON r.service_id = sv.id`
+  );
 
   return {
     servers: status.servers,

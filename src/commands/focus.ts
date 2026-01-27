@@ -4,7 +4,7 @@
  * Queries automatically prioritize results from the focus area
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { parseArgs } from "node:util";
 import { outputJson, outputSuccess } from "../utils/format";
 
@@ -35,7 +35,7 @@ interface FocusSetOptions {
 // Set Focus
 // ============================================================================
 
-export function focusSet(db: Database, projectId: number, options: FocusSetOptions): void {
+export async function focusSet(db: DatabaseAdapter, projectId: number, options: FocusSetOptions): Promise<void> {
   const { area, description, files, keywords } = options;
 
   if (!area) {
@@ -48,7 +48,7 @@ export function focusSet(db: Database, projectId: number, options: FocusSetOptio
   }
 
   // Clear any existing focus first
-  db.run(
+  await db.run(
     `
     UPDATE focus SET cleared_at = CURRENT_TIMESTAMP
     WHERE project_id = ? AND cleared_at IS NULL
@@ -57,7 +57,7 @@ export function focusSet(db: Database, projectId: number, options: FocusSetOptio
   );
 
   // Set new focus
-  db.run(
+  await db.run(
     `
     INSERT INTO focus (project_id, area, description, files, keywords)
     VALUES (?, ?, ?, ?, ?)
@@ -89,15 +89,13 @@ export function focusSet(db: Database, projectId: number, options: FocusSetOptio
 // Get Current Focus
 // ============================================================================
 
-export function focusGet(db: Database, projectId: number): Focus | null {
-  const focus = db
-    .query<Focus, [number]>(`
+export async function focusGet(db: DatabaseAdapter, projectId: number): Promise<Focus | null> {
+  const focus = await db.get<Focus>(`
     SELECT * FROM focus
     WHERE project_id = ? AND cleared_at IS NULL
     ORDER BY created_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `, [projectId]);
 
   if (!focus) {
     console.error("🎯 No active focus set");
@@ -127,8 +125,8 @@ export function focusGet(db: Database, projectId: number): Focus | null {
 // Clear Focus
 // ============================================================================
 
-export function focusClear(db: Database, projectId: number): boolean {
-  const result = db.run(
+export async function focusClear(db: DatabaseAdapter, projectId: number): Promise<boolean> {
+  const result = await db.run(
     `
     UPDATE focus SET cleared_at = CURRENT_TIMESTAMP
     WHERE project_id = ? AND cleared_at IS NULL
@@ -151,15 +149,13 @@ export function focusClear(db: Database, projectId: number): boolean {
 // List Focus History
 // ============================================================================
 
-export function focusList(db: Database, projectId: number): Focus[] {
-  const history = db
-    .query<Focus, [number]>(`
+export async function focusList(db: DatabaseAdapter, projectId: number): Promise<Focus[]> {
+  const history = await db.all<Focus>(`
     SELECT * FROM focus
     WHERE project_id = ?
     ORDER BY created_at DESC
     LIMIT 20
-  `)
-    .all(projectId);
+  `, [projectId]);
 
   if (history.length === 0) {
     console.error("🎯 No focus history");
@@ -188,22 +184,20 @@ export function focusList(db: Database, projectId: number): Focus[] {
 // Get Focus for Query Boosting
 // ============================================================================
 
-export function getActiveFocus(
-  db: Database,
+export async function getActiveFocus(
+  db: DatabaseAdapter,
   projectId: number
-): {
+): Promise<{
   area: string;
   files: string[];
   keywords: string[];
-} | null {
-  const focus = db
-    .query<Focus, [number]>(`
+} | null> {
+  const focus = await db.get<Focus>(`
     SELECT * FROM focus
     WHERE project_id = ? AND cleared_at IS NULL
     ORDER BY created_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `, [projectId]);
 
   if (!focus) {
     return null;
@@ -220,7 +214,7 @@ export function getActiveFocus(
 // CLI Handler
 // ============================================================================
 
-export function handleFocusCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleFocusCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
   const subArgs = args.slice(1);
 
@@ -240,7 +234,7 @@ export function handleFocusCommand(db: Database, projectId: number, args: string
       // Allow area as positional argument
       const area = values.area || subArgs.find((a) => !a.startsWith("-"));
 
-      focusSet(db, projectId, {
+      await focusSet(db, projectId, {
         area: area || "",
         description: values.description,
         files: values.files ? JSON.parse(values.files) : undefined,
@@ -250,16 +244,16 @@ export function handleFocusCommand(db: Database, projectId: number, args: string
     }
 
     case "get":
-      focusGet(db, projectId);
+      await focusGet(db, projectId);
       break;
 
     case "clear":
-      focusClear(db, projectId);
+      await focusClear(db, projectId);
       break;
 
     case "list":
     case "history":
-      focusList(db, projectId);
+      await focusList(db, projectId);
       break;
 
     default:
@@ -274,7 +268,7 @@ export function handleFocusCommand(db: Database, projectId: number, args: string
         console.error("  list                  Show focus history");
       } else {
         // Treat as implicit "set"
-        focusSet(db, projectId, { area: subCmd });
+        await focusSet(db, projectId, { area: subCmd });
       }
   }
 }

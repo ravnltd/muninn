@@ -3,21 +3,22 @@
  * Track file reads, queries, and entity modifications within a session
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import { safeJsonParse } from "../utils/errors";
 
 /**
  * Get the current active session ID for a project
  */
-export function getActiveSessionId(db: Database, projectId: number): number | null {
-  const session = db
-    .query<{ id: number }, [number]>(`
+export async function getActiveSessionId(db: DatabaseAdapter, projectId: number): Promise<number | null> {
+  const session = await db.get<{ id: number }>(
+    `
     SELECT id FROM sessions
     WHERE project_id = ? AND ended_at IS NULL
     ORDER BY started_at DESC
     LIMIT 1
-  `)
-    .get(projectId);
+  `,
+    [projectId]
+  );
 
   return session?.id || null;
 }
@@ -25,21 +26,22 @@ export function getActiveSessionId(db: Database, projectId: number): number | nu
 /**
  * Track a file read in the current active session
  */
-export function trackFileRead(db: Database, projectId: number, filePath: string): void {
-  const sessionId = getActiveSessionId(db, projectId);
+export async function trackFileRead(db: DatabaseAdapter, projectId: number, filePath: string): Promise<void> {
+  const sessionId = await getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db
-    .query<{ files_read: string | null }, [number]>(`
+  const session = await db.get<{ files_read: string | null }>(
+    `
     SELECT files_read FROM sessions WHERE id = ?
-  `)
-    .get(sessionId);
+  `,
+    [sessionId]
+  );
 
   const filesRead = safeJsonParse<string[]>(session?.files_read || "[]", []);
 
   if (!filesRead.includes(filePath)) {
     filesRead.push(filePath);
-    db.run(
+    await db.run(
       `
       UPDATE sessions SET files_read = ? WHERE id = ?
     `,
@@ -51,15 +53,16 @@ export function trackFileRead(db: Database, projectId: number, filePath: string)
 /**
  * Track a query made in the current active session
  */
-export function trackQuery(db: Database, projectId: number, query: string): void {
-  const sessionId = getActiveSessionId(db, projectId);
+export async function trackQuery(db: DatabaseAdapter, projectId: number, query: string): Promise<void> {
+  const sessionId = await getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db
-    .query<{ queries_made: string | null }, [number]>(`
+  const session = await db.get<{ queries_made: string | null }>(
+    `
     SELECT queries_made FROM sessions WHERE id = ?
-  `)
-    .get(sessionId);
+  `,
+    [sessionId]
+  );
 
   const queriesMade = safeJsonParse<string[]>(session?.queries_made || "[]", []);
 
@@ -69,7 +72,7 @@ export function trackQuery(db: Database, projectId: number, query: string): void
   }
 
   queriesMade.push(query);
-  db.run(
+  await db.run(
     `
     UPDATE sessions SET queries_made = ? WHERE id = ?
   `,
@@ -80,21 +83,22 @@ export function trackQuery(db: Database, projectId: number, query: string): void
 /**
  * Track a file modification in the current active session
  */
-export function trackFileTouched(db: Database, projectId: number, filePath: string): void {
-  const sessionId = getActiveSessionId(db, projectId);
+export async function trackFileTouched(db: DatabaseAdapter, projectId: number, filePath: string): Promise<void> {
+  const sessionId = await getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db
-    .query<{ files_touched: string | null }, [number]>(`
+  const session = await db.get<{ files_touched: string | null }>(
+    `
     SELECT files_touched FROM sessions WHERE id = ?
-  `)
-    .get(sessionId);
+  `,
+    [sessionId]
+  );
 
   const filesTouched = safeJsonParse<string[]>(session?.files_touched || "[]", []);
 
   if (!filesTouched.includes(filePath)) {
     filesTouched.push(filePath);
-    db.run(
+    await db.run(
       `
       UPDATE sessions SET files_touched = ? WHERE id = ?
     `,
@@ -106,21 +110,22 @@ export function trackFileTouched(db: Database, projectId: number, filePath: stri
 /**
  * Track a decision made in the current active session
  */
-export function trackDecisionMade(db: Database, projectId: number, decisionId: number): void {
-  const sessionId = getActiveSessionId(db, projectId);
+export async function trackDecisionMade(db: DatabaseAdapter, projectId: number, decisionId: number): Promise<void> {
+  const sessionId = await getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db
-    .query<{ decisions_made: string | null }, [number]>(`
+  const session = await db.get<{ decisions_made: string | null }>(
+    `
     SELECT decisions_made FROM sessions WHERE id = ?
-  `)
-    .get(sessionId);
+  `,
+    [sessionId]
+  );
 
   const decisionsMade = safeJsonParse<number[]>(session?.decisions_made || "[]", []);
 
   if (!decisionsMade.includes(decisionId)) {
     decisionsMade.push(decisionId);
-    db.run(
+    await db.run(
       `
       UPDATE sessions SET decisions_made = ? WHERE id = ?
     `,
@@ -132,21 +137,22 @@ export function trackDecisionMade(db: Database, projectId: number, decisionId: n
 /**
  * Track an issue found in the current active session
  */
-export function trackIssueFound(db: Database, projectId: number, issueId: number): void {
-  const sessionId = getActiveSessionId(db, projectId);
+export async function trackIssueFound(db: DatabaseAdapter, projectId: number, issueId: number): Promise<void> {
+  const sessionId = await getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db
-    .query<{ issues_found: string | null }, [number]>(`
+  const session = await db.get<{ issues_found: string | null }>(
+    `
     SELECT issues_found FROM sessions WHERE id = ?
-  `)
-    .get(sessionId);
+  `,
+    [sessionId]
+  );
 
   const issuesFound = safeJsonParse<number[]>(session?.issues_found || "[]", []);
 
   if (!issuesFound.includes(issueId)) {
     issuesFound.push(issueId);
-    db.run(
+    await db.run(
       `
       UPDATE sessions SET issues_found = ? WHERE id = ?
     `,
@@ -158,21 +164,22 @@ export function trackIssueFound(db: Database, projectId: number, issueId: number
 /**
  * Track an issue resolved in the current active session
  */
-export function trackIssueResolved(db: Database, projectId: number, issueId: number): void {
-  const sessionId = getActiveSessionId(db, projectId);
+export async function trackIssueResolved(db: DatabaseAdapter, projectId: number, issueId: number): Promise<void> {
+  const sessionId = await getActiveSessionId(db, projectId);
   if (!sessionId) return;
 
-  const session = db
-    .query<{ issues_resolved: string | null }, [number]>(`
+  const session = await db.get<{ issues_resolved: string | null }>(
+    `
     SELECT issues_resolved FROM sessions WHERE id = ?
-  `)
-    .get(sessionId);
+  `,
+    [sessionId]
+  );
 
   const issuesResolved = safeJsonParse<number[]>(session?.issues_resolved || "[]", []);
 
   if (!issuesResolved.includes(issueId)) {
     issuesResolved.push(issueId);
-    db.run(
+    await db.run(
       `
       UPDATE sessions SET issues_resolved = ? WHERE id = ?
     `,

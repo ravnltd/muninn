@@ -4,7 +4,7 @@
  * Detects correlations, anomalies, recommendations, and patterns.
  */
 
-import type { Database } from "bun:sqlite";
+import type { DatabaseAdapter } from "../database/adapter";
 import type { InsightStatus, InsightType } from "../types";
 import { outputJson, outputSuccess } from "../utils/format";
 
@@ -24,19 +24,19 @@ interface Insight {
 // Generate Insights
 // ============================================================================
 
-export function generateInsights(db: Database, projectId: number): Insight[] {
+export async function generateInsights(db: DatabaseAdapter, projectId: number): Promise<Insight[]> {
   const insights: Insight[] = [];
 
-  detectCochangePatterns(db, projectId, insights);
-  detectFragilityTrends(db, projectId, insights);
-  detectDecisionPatterns(db, projectId, insights);
-  detectWorkflowDeviations(db, projectId, insights);
-  detectScopeCreep(db, projectId, insights);
+  await detectCochangePatterns(db, projectId, insights);
+  await detectFragilityTrends(db, projectId, insights);
+  await detectDecisionPatterns(db, projectId, insights);
+  await detectWorkflowDeviations(db, projectId, insights);
+  await detectScopeCreep(db, projectId, insights);
 
   // Persist new insights
   for (const insight of insights) {
     try {
-      db.run(
+      await db.run(
         `
         INSERT INTO insights (project_id, type, title, content, evidence, confidence)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -64,23 +64,18 @@ export function generateInsights(db: Database, projectId: number): Insight[] {
  * Detect files that always change together (cochange_count >= 5).
  * Suggests they might need to be merged or have a shared abstraction.
  */
-function detectCochangePatterns(db: Database, projectId: number, results: Insight[]): void {
+async function detectCochangePatterns(db: DatabaseAdapter, projectId: number, results: Insight[]): Promise<void> {
   try {
-    const pairs = db
-      .query<
-        {
-          file_a: string;
-          file_b: string;
-          cochange_count: number;
-        },
-        [number]
-      >(`
+    const pairs = await db.all<{
+      file_a: string;
+      file_b: string;
+      cochange_count: number;
+    }>(`
       SELECT file_a, file_b, cochange_count FROM file_correlations
       WHERE project_id = ? AND cochange_count >= 5
       ORDER BY cochange_count DESC
       LIMIT 5
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const pair of pairs) {
       results.push({
@@ -100,26 +95,21 @@ function detectCochangePatterns(db: Database, projectId: number, results: Insigh
  * Detect files with high velocity (changing too frequently).
  * May indicate instability or poor abstraction.
  */
-function detectFragilityTrends(db: Database, projectId: number, results: Insight[]): void {
+async function detectFragilityTrends(db: DatabaseAdapter, projectId: number, results: Insight[]): Promise<void> {
   try {
-    const hotFiles = db
-      .query<
-        {
-          path: string;
-          velocity_score: number;
-          change_count: number;
-          fragility: number;
-        },
-        [number]
-      >(`
+    const hotFiles = await db.all<{
+      path: string;
+      velocity_score: number;
+      change_count: number;
+      fragility: number;
+    }>(`
       SELECT path, COALESCE(velocity_score, 0) as velocity_score,
              COALESCE(change_count, 0) as change_count, fragility
       FROM files
       WHERE project_id = ? AND velocity_score > 0.5
       ORDER BY velocity_score DESC
       LIMIT 3
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const file of hotFiles) {
       if (file.fragility >= 7) {
@@ -152,21 +142,16 @@ function detectFragilityTrends(db: Database, projectId: number, results: Insight
 /**
  * Detect decision outcome patterns (success/failure rates by category).
  */
-function detectDecisionPatterns(db: Database, projectId: number, results: Insight[]): void {
+async function detectDecisionPatterns(db: DatabaseAdapter, projectId: number, results: Insight[]): Promise<void> {
   try {
-    const outcomes = db
-      .query<
-        {
-          outcome_status: string;
-          count: number;
-        },
-        [number]
-      >(`
+    const outcomes = await db.all<{
+      outcome_status: string;
+      count: number;
+    }>(`
       SELECT outcome_status, COUNT(*) as count FROM decisions
       WHERE project_id = ? AND outcome_status != 'pending'
       GROUP BY outcome_status
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     const total = outcomes.reduce((s, o) => s + o.count, 0);
     if (total < 3) return; // Not enough data
@@ -205,25 +190,20 @@ function detectDecisionPatterns(db: Database, projectId: number, results: Insigh
 /**
  * Detect departures from established workflow patterns.
  */
-function detectWorkflowDeviations(db: Database, projectId: number, results: Insight[]): void {
+async function detectWorkflowDeviations(db: DatabaseAdapter, projectId: number, results: Insight[]): Promise<void> {
   try {
     // Find workflows that haven't been used recently
-    const stale = db
-      .query<
-        {
-          task_type: string;
-          approach: string;
-          times_used: number;
-          last_used_at: string | null;
-        },
-        [number]
-      >(`
+    const stale = await db.all<{
+      task_type: string;
+      approach: string;
+      times_used: number;
+      last_used_at: string | null;
+    }>(`
       SELECT task_type, approach, times_used, last_used_at FROM workflow_patterns
       WHERE (project_id = ? OR project_id IS NULL)
         AND times_used >= 3
         AND (last_used_at IS NULL OR last_used_at < datetime('now', '-30 days'))
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     for (const wf of stale) {
       results.push({
@@ -242,27 +222,22 @@ function detectWorkflowDeviations(db: Database, projectId: number, results: Insi
 /**
  * Detect sessions touching many files correlating with more issues.
  */
-function detectScopeCreep(db: Database, projectId: number, results: Insight[]): void {
+async function detectScopeCreep(db: DatabaseAdapter, projectId: number, results: Insight[]): Promise<void> {
   try {
     // Find sessions with many files and issues
-    const bigSessions = db
-      .query<
-        {
-          id: number;
-          goal: string | null;
-          files_touched: string | null;
-          issues_found: string | null;
-        },
-        [number]
-      >(`
+    const bigSessions = await db.all<{
+      id: number;
+      goal: string | null;
+      files_touched: string | null;
+      issues_found: string | null;
+    }>(`
       SELECT id, goal, files_touched, issues_found FROM sessions
       WHERE project_id = ?
         AND ended_at IS NOT NULL
         AND files_touched IS NOT NULL
       ORDER BY started_at DESC
       LIMIT 20
-    `)
-      .all(projectId);
+    `, [projectId]);
 
     let bigSessionsWithIssues = 0;
     let totalBigSessions = 0;
@@ -302,11 +277,11 @@ function detectScopeCreep(db: Database, projectId: number, results: Insight[]): 
 // List & Manage Insights
 // ============================================================================
 
-export function listInsights(
-  db: Database,
+export async function listInsights(
+  db: DatabaseAdapter,
   projectId: number,
   options?: { status?: InsightStatus; limit?: number }
-): Array<{
+): Promise<Array<{
   id: number;
   type: string;
   title: string;
@@ -314,7 +289,7 @@ export function listInsights(
   confidence: number;
   status: string;
   generated_at: string;
-}> {
+}>> {
   const statusFilter = options?.status ? "AND status = ?" : "";
   const limit = options?.limit ?? 10;
   const params: (number | string)[] = [projectId];
@@ -322,34 +297,29 @@ export function listInsights(
   params.push(String(limit));
 
   try {
-    return db
-      .query<
-        {
-          id: number;
-          type: string;
-          title: string;
-          content: string;
-          confidence: number;
-          status: string;
-          generated_at: string;
-        },
-        (number | string)[]
-      >(`
+    return await db.all<{
+      id: number;
+      type: string;
+      title: string;
+      content: string;
+      confidence: number;
+      status: string;
+      generated_at: string;
+    }>(`
       SELECT id, type, title, content, confidence, status, generated_at
       FROM insights
       WHERE project_id = ? ${statusFilter}
       ORDER BY confidence DESC, generated_at DESC
       LIMIT ?
-    `)
-      .all(...params);
+    `, params);
   } catch {
     return [];
   }
 }
 
-export function acknowledgeInsight(db: Database, insightId: number): void {
+export async function acknowledgeInsight(db: DatabaseAdapter, insightId: number): Promise<void> {
   try {
-    db.run(
+    await db.run(
       `
       UPDATE insights SET status = 'acknowledged', acknowledged_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -361,17 +331,17 @@ export function acknowledgeInsight(db: Database, insightId: number): void {
   }
 }
 
-export function dismissInsight(db: Database, insightId: number): void {
+export async function dismissInsight(db: DatabaseAdapter, insightId: number): Promise<void> {
   try {
-    db.run(`UPDATE insights SET status = 'dismissed' WHERE id = ?`, [insightId]);
+    await db.run(`UPDATE insights SET status = 'dismissed' WHERE id = ?`, [insightId]);
   } catch {
     // Table might not exist
   }
 }
 
-export function applyInsight(db: Database, insightId: number): void {
+export async function applyInsight(db: DatabaseAdapter, insightId: number): Promise<void> {
   try {
-    db.run(`UPDATE insights SET status = 'applied' WHERE id = ?`, [insightId]);
+    await db.run(`UPDATE insights SET status = 'applied' WHERE id = ?`, [insightId]);
   } catch {
     // Table might not exist
   }
@@ -381,10 +351,10 @@ export function applyInsight(db: Database, insightId: number): void {
  * Increment shown_count for an insight (called on session start).
  * Auto-dismisses if shown >= 5 times without action.
  */
-export function incrementInsightShown(db: Database, insightId: number): void {
+export async function incrementInsightShown(db: DatabaseAdapter, insightId: number): Promise<void> {
   try {
     // Increment shown_count
-    db.run(
+    await db.run(
       `
       UPDATE insights SET shown_count = COALESCE(shown_count, 0) + 1
       WHERE id = ? AND status = 'new'
@@ -393,7 +363,7 @@ export function incrementInsightShown(db: Database, insightId: number): void {
     );
 
     // Auto-dismiss if shown >= 5 times
-    db.run(
+    await db.run(
       `
       UPDATE insights SET
         status = 'dismissed',
@@ -419,13 +389,13 @@ function basename(path: string): string {
 // CLI Handler
 // ============================================================================
 
-export function handleInsightsCommand(db: Database, projectId: number, args: string[]): void {
+export async function handleInsightsCommand(db: DatabaseAdapter, projectId: number, args: string[]): Promise<void> {
   const subCmd = args[0];
 
   switch (subCmd) {
     case "generate": {
       console.error("🧠 Generating insights...\n");
-      const insights = generateInsights(db, projectId);
+      const insights = await generateInsights(db, projectId);
 
       if (insights.length === 0) {
         console.error("No new insights generated. Use the system more to build patterns.");
@@ -447,7 +417,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
       const status = args.find((a) => ["new", "acknowledged", "dismissed", "applied"].includes(a)) as
         | InsightStatus
         | undefined;
-      const insights = listInsights(db, projectId, { status });
+      const insights = await listInsights(db, projectId, { status });
 
       if (insights.length === 0) {
         console.error("No insights yet. Run `muninn insights generate` to analyze patterns.");
@@ -474,7 +444,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
         console.error("Usage: muninn insights ack <id>");
         return;
       }
-      acknowledgeInsight(db, id);
+      await acknowledgeInsight(db, id);
       console.error(`✅ Insight #${id} acknowledged.`);
       outputSuccess({ id, status: "acknowledged" });
       break;
@@ -486,7 +456,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
         console.error("Usage: muninn insights dismiss <id>");
         return;
       }
-      dismissInsight(db, id);
+      await dismissInsight(db, id);
       console.error(`✗ Insight #${id} dismissed.`);
       outputSuccess({ id, status: "dismissed" });
       break;
@@ -498,7 +468,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
         console.error("Usage: muninn insights apply <id>");
         return;
       }
-      applyInsight(db, id);
+      await applyInsight(db, id);
       console.error(`✅ Insight #${id} applied.`);
       outputSuccess({ id, status: "applied" });
       break;
@@ -510,7 +480,7 @@ export function handleInsightsCommand(db: Database, projectId: number, args: str
         console.error("Usage: muninn insights shown <id>");
         return;
       }
-      incrementInsightShown(db, id);
+      await incrementInsightShown(db, id);
       outputSuccess({ id, action: "shown_incremented" });
       break;
     }
