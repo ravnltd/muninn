@@ -19,6 +19,11 @@
   let showSessions = $state(true);
   let connectOrphans = $state(true); // Connect orphan nodes to nearest neighbors
 
+  // Reactive derived value that tracks all visibility filter changes
+  let visibilityFilterVersion = $derived(
+    `${showFiles}-${showDecisions}-${showLearnings}-${showIssues}-${showSessions}`
+  );
+
   const NODE_COLORS: Record<string, string> = {
     file: "#06b6d4",
     decision: "#8b5cf6",
@@ -91,13 +96,27 @@
     }
   });
 
-  // Update visibility when filters change (no rebuild)
+  // Update visibility when filter checkboxes change (no rebuild)
   $effect(() => {
+    // Read dependency unconditionally for Svelte 5 tracking
+    const filterVersion = visibilityFilterVersion;
+
     if (graphData && svgRendered) {
-      // Access filter states to trigger reactivity
-      void [showFiles, showDecisions, showLearnings, showIssues, showSessions, connectOrphans];
       updateVisibility();
     }
+  });
+
+  // Rebuild graph when connectOrphans changes (adds/removes virtual edges)
+  let lastConnectOrphans = $state<boolean | undefined>(undefined);
+  $effect(() => {
+    // Read dependency unconditionally for Svelte 5 tracking
+    const currentConnectOrphans = connectOrphans;
+
+    if (graphData && lastConnectOrphans !== undefined && currentConnectOrphans !== lastConnectOrphans) {
+      svgRendered = false;
+      renderGraph(graphData);
+    }
+    lastConnectOrphans = currentConnectOrphans;
   });
 
   // Get which types are currently visible
@@ -119,18 +138,18 @@
 
     // Update node visibility
     d3.select(container).selectAll("circle")
-      .style("display", (d: any) => visibleTypes.has(d.type) ? "block" : "none");
+      .style("display", (d: any) => visibleTypes.has(d.type) ? null : "none");
 
     // Update label visibility
     d3.select(container).selectAll("text")
-      .style("display", (d: any) => visibleTypes.has(d.type) ? "block" : "none");
+      .style("display", (d: any) => visibleTypes.has(d.type) ? null : "none");
 
     // Update edge visibility (only show if both endpoints are visible)
     d3.select(container).selectAll("line")
       .style("display", (d: any) => {
         const sourceType = typeof d.source === 'string' ? d.source.split(':')[0] : d.source.type;
         const targetType = typeof d.target === 'string' ? d.target.split(':')[0] : d.target.type;
-        return visibleTypes.has(sourceType) && visibleTypes.has(targetType) ? "block" : "none";
+        return visibleTypes.has(sourceType) && visibleTypes.has(targetType) ? null : "none";
       });
   }
 
