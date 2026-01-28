@@ -14,6 +14,19 @@ import { getBlastRadius } from "./blast";
 import { getCorrelatedFiles } from "./session";
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Resolve a file path to an absolute path.
+ * If the path is already absolute (starts with /), return it as-is.
+ * Otherwise, join with projectPath.
+ */
+function resolveFilePath(projectPath: string, filePath: string): string {
+  return filePath.startsWith("/") ? filePath : join(projectPath, filePath);
+}
+
+// ============================================================================
 // Pre-Edit Check Command
 // ============================================================================
 
@@ -71,7 +84,7 @@ async function checkSingleFile(db: DatabaseAdapter, projectId: number, projectPa
     }
 
     // Check if file has changed since last analysis
-    const fullPath = join(projectPath, filePath);
+    const fullPath = resolveFilePath(projectPath, filePath);
     if (existsSync(fullPath) && fileRecord.content_hash) {
       try {
         const content = readFileSync(fullPath, "utf-8");
@@ -522,7 +535,7 @@ async function findStaleFiles(db: DatabaseAdapter, projectId: number, projectPat
   `, [projectId]);
 
   for (const file of trackedFiles) {
-    const fullPath = join(projectPath, file.path);
+    const fullPath = resolveFilePath(projectPath, file.path);
 
     if (!existsSync(fullPath)) {
       staleFiles.push({
@@ -530,7 +543,7 @@ async function findStaleFiles(db: DatabaseAdapter, projectId: number, projectPat
         lastAnalyzed: file.last_analyzed || "never",
         fsModified: "deleted",
         status: "missing",
-        reason: "File no longer exists",
+        reason: "File no longer exists on disk",
       });
       continue;
     }
@@ -650,7 +663,7 @@ export async function checkConflicts(
       continue;
     }
 
-    const fullPath = join(projectPath, filePath);
+    const fullPath = resolveFilePath(projectPath, filePath);
     if (!existsSync(fullPath)) {
       results.push({
         path: filePath,

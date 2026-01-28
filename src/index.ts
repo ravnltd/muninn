@@ -33,6 +33,7 @@ import {
   decisionAdd,
   decisionList,
   fileAdd,
+  fileCleanup,
   fileGet,
   fileList,
   issueAdd,
@@ -238,8 +239,13 @@ async function main(): Promise<void> {
           case "list":
             await fileList(db, projectId, subArgs[1]);
             break;
+          case "cleanup": {
+            const dryRun = subArgs.includes("--dry-run");
+            await fileCleanup(db, projectId, dryRun);
+            break;
+          }
           default:
-            console.error("Usage: muninn file <add|get|list> [args]");
+            console.error("Usage: muninn file <add|get|list|cleanup> [args]");
         }
         break;
       }
@@ -446,9 +452,9 @@ async function main(): Promise<void> {
         const analysis = await runAnalysis(db, projectId, process.cwd());
         outputSuccess({
           project: analysis.project,
-          filesAnalyzed: analysis.files.length,
-          decisionsFound: analysis.decisions.length,
-          issuesFound: analysis.potential_issues.length,
+          filesAnalyzed: analysis.files?.length || 0,
+          decisionsFound: analysis.decisions?.length || 0,
+          issuesFound: analysis.potential_issues?.length || 0,
           techDebtFound: analysis.tech_debt?.length || 0,
         });
         break;

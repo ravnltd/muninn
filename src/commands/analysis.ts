@@ -393,7 +393,7 @@ async function storeAnalysisResults(
   );
 
   // Store file analysis
-  for (const file of analysis.files) {
+  for (const file of analysis.files || []) {
     const fullPath = join(projectPath, file.path);
     let contentHash: string | null = null;
     let fsMtime: string | null = null;
@@ -438,7 +438,7 @@ async function storeAnalysisResults(
   }
 
   // Store decisions
-  for (const decision of analysis.decisions) {
+  for (const decision of analysis.decisions || []) {
     await db.run(
       `
       INSERT INTO decisions (project_id, title, decision, reasoning, affects)
@@ -449,7 +449,7 @@ async function storeAnalysisResults(
   }
 
   // Store issues
-  for (const issue of analysis.potential_issues) {
+  for (const issue of analysis.potential_issues || []) {
     await db.run(
       `
       INSERT INTO issues (project_id, title, description, type, severity, affected_files)

@@ -151,6 +151,81 @@ export async function fileList(db: DatabaseAdapter, projectId: number, filter?: 
   outputJson(files);
 }
 
+export async function fileCleanup(db: DatabaseAdapter, projectId: number, dryRun = false): Promise<void> {
+  const projectPath = process.cwd();
+
+  // Get all files from DB
+  const allFiles = await db.all<{ id: number; path: string; content_hash: string | null }>(
+    "SELECT id, path, content_hash FROM files WHERE project_id = ?",
+    [projectId]
+  );
+
+  let deletedCount = 0;
+  let updatedCount = 0;
+  const deleted: string[] = [];
+  const updated: string[] = [];
+
+  for (const file of allFiles) {
+    const fullPath = file.path.startsWith("/") ? file.path : join(projectPath, file.path);
+
+    if (!existsSync(fullPath)) {
+      // File no longer exists - delete record
+      if (!dryRun) {
+        await db.run("DELETE FROM files WHERE id = ?", [file.id]);
+      }
+      deleted.push(file.path);
+      deletedCount++;
+    } else {
+      // File exists - check if stale and update hash/timestamp
+      try {
+        const content = readFileSync(fullPath, "utf-8");
+        const newHash = computeContentHash(content);
+        const newMtime = getFileMtime(fullPath);
+
+        if (newHash !== file.content_hash) {
+          if (!dryRun) {
+            await db.run(
+              `UPDATE files SET
+                content_hash = ?,
+                fs_modified_at = ?,
+                last_analyzed = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+              WHERE id = ?`,
+              [newHash, newMtime, file.id]
+            );
+          }
+          updated.push(file.path);
+          updatedCount++;
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  }
+
+  const prefix = dryRun ? "[DRY RUN] " : "";
+  console.error(`\n${prefix}🧹 File Cleanup Results:\n`);
+  console.error(`  Deleted records: ${deletedCount}`);
+  console.error(`  Updated hashes: ${updatedCount}`);
+
+  if (deletedCount > 0 && deletedCount <= 10) {
+    console.error("\n  Deleted:");
+    for (const p of deleted) {
+      console.error(`    - ${p}`);
+    }
+  }
+
+  if (updatedCount > 0 && updatedCount <= 10) {
+    console.error("\n  Updated:");
+    for (const p of updated) {
+      console.error(`    - ${p}`);
+    }
+  }
+
+  console.error("");
+  outputSuccess({ deletedCount, updatedCount, deleted, updated, dryRun });
+}
+
 // ============================================================================
 // Decision Commands
 // ============================================================================

@@ -12,6 +12,19 @@ import { logError } from "../utils/errors";
 import { computeContentHash, outputJson } from "../utils/format";
 
 // ============================================================================
+// Path Helpers
+// ============================================================================
+
+/**
+ * Resolve a file path to an absolute path.
+ * If the path is already absolute (starts with /), return it as-is.
+ * Otherwise, join with projectPath.
+ */
+function resolveFilePath(projectPath: string, filePath: string): string {
+  return filePath.startsWith("/") ? filePath : join(projectPath, filePath);
+}
+
+// ============================================================================
 // Git Helpers
 // ============================================================================
 
@@ -118,7 +131,7 @@ export async function detectDrift(db: DatabaseAdapter, projectId: number, projec
 
   // Check each tracked file for staleness
   for (const file of trackedFiles) {
-    const fullPath = join(projectPath, file.path);
+    const fullPath = resolveFilePath(projectPath, file.path);
 
     // Check if file exists
     if (!existsSync(fullPath)) {
@@ -348,7 +361,7 @@ export async function syncFileHashes(
   );
 
   for (const file of files) {
-    const fullPath = join(projectPath, file.path);
+    const fullPath = resolveFilePath(projectPath, file.path);
 
     if (!existsSync(fullPath)) {
       missing++;
