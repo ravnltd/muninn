@@ -167,12 +167,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "muninn_predict",
         description:
-          "Bundle all context for a task: files, co-changers, decisions, issues, learnings. Uses FTS (keyword matching).",
+          "Bundle all context for a task: files, co-changers, decisions, issues, learnings. Uses FTS (keyword matching). Use --advise for planning recommendations.",
         inputSchema: {
           type: "object",
           properties: {
             task: { type: "string", description: "Task description" },
             files: { type: "array", items: { type: "string" }, description: "Files involved" },
+            advise: {
+              type: "boolean",
+              description: "Generate planning advisory with risk assessment and recommendations",
+            },
             cwd: { type: "string", description: "Working directory" },
           },
           required: [],
@@ -364,9 +368,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_predict": {
         const task = typedArgs.task as string | undefined;
         const files = typedArgs.files as string[] | undefined;
+        const advise = typedArgs.advise as boolean | undefined;
         let cmd = "predict";
         if (task) cmd += ` "${task.replace(/"/g, '\\"')}"`;
         if (files && files.length > 0) cmd += ` --files ${files.join(" ")}`;
+        if (advise) cmd += " --advise";
         result = runContext(cmd, cwd);
         break;
       }

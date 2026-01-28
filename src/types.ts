@@ -778,6 +778,26 @@ export interface PredictionBundle {
   } | null;
   // Test files for input files (test → source relationships)
   testFiles: Array<{ testPath: string; sourcePath: string }>;
+  // Advisory section (when --advise flag is used)
+  advisory?: PredictionAdvisory;
+}
+
+export interface PredictionAdvisory {
+  riskLevel: "low" | "medium" | "high";
+  riskScore: number; // 0-10
+  suggestedApproach: string | null;
+  watchOut: Array<{
+    warning: string;
+    source: string; // e.g., "learning #12" or "decision #8 (failed)"
+    severity: "info" | "warning" | "critical";
+  }>;
+  decisionOutcomes: Array<{
+    id: number;
+    title: string;
+    outcome: OutcomeStatus;
+    notes: string | null;
+  }>;
+  suggestedSteps: string[];
 }
 
 // ============================================================================
