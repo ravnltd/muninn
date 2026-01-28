@@ -12,6 +12,7 @@ import { computeBlastRadius, showBlastRadius, showHighImpactFiles } from "./comm
 import { handleBookmarkCommand } from "./commands/bookmark";
 import { handleChunkCommand } from "./commands/chunk";
 import { handleConsolidationCommand } from "./commands/consolidation";
+import { handleConversationsCommand } from "./commands/conversations";
 import { handleDatabaseCommand } from "./commands/database";
 import {
   findCircularDependencies,
@@ -356,6 +357,11 @@ async function main(): Promise<void> {
 
       case "consolidate":
         await handleConsolidationCommand(db, projectId, subArgs);
+        break;
+
+      case "convo":
+      case "conversations":
+        await handleConversationsCommand(db, projectId, subArgs);
         break;
 
       case "session":

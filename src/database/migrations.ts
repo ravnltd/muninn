@@ -875,6 +875,197 @@ export const MIGRATIONS: Migration[] = [
       return !!col;
     },
   },
+
+  // Version 19: Conversation History Import
+  {
+    version: 19,
+    name: "conversation_history",
+    description: "Add tables for imported conversation history (ChatGPT, Claude)",
+    up: `
+      -- Main conversations table (global, not project-scoped)
+      CREATE TABLE IF NOT EXISTS conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        external_id TEXT,
+        title TEXT,
+        started_at TEXT,
+        ended_at TEXT,
+        participant_model TEXT,
+        message_count INTEGER DEFAULT 0,
+        user_message_count INTEGER DEFAULT 0,
+        assistant_message_count INTEGER DEFAULT 0,
+        total_chars INTEGER DEFAULT 0,
+        tags TEXT,
+        notes TEXT,
+        extraction_status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source, external_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_conv_source ON conversations(source);
+      CREATE INDEX IF NOT EXISTS idx_conv_started ON conversations(started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_conv_title ON conversations(title);
+
+      -- Individual messages
+      CREATE TABLE IF NOT EXISTS conversation_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        message_index INTEGER NOT NULL,
+        timestamp TEXT,
+        model TEXT,
+        char_count INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_msg_conv ON conversation_messages(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_msg_conv_idx ON conversation_messages(conversation_id, message_index);
+
+      -- FTS for message search
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_conversation_messages USING fts5(
+        content,
+        content='conversation_messages',
+        content_rowid='id'
+      );
+
+      -- FTS sync triggers
+      CREATE TRIGGER IF NOT EXISTS conversation_messages_ai AFTER INSERT ON conversation_messages BEGIN
+        INSERT INTO fts_conversation_messages(rowid, content) VALUES (NEW.id, NEW.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS conversation_messages_ad AFTER DELETE ON conversation_messages BEGIN
+        INSERT INTO fts_conversation_messages(fts_conversation_messages, rowid, content)
+        VALUES('delete', OLD.id, OLD.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS conversation_messages_au AFTER UPDATE ON conversation_messages BEGIN
+        INSERT INTO fts_conversation_messages(fts_conversation_messages, rowid, content)
+        VALUES('delete', OLD.id, OLD.content);
+        INSERT INTO fts_conversation_messages(rowid, content) VALUES (NEW.id, NEW.content);
+      END;
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('conversation_history_enabled', 'true');
+    `,
+    validate: (db) => {
+      const conv = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'"
+        )
+        .get();
+      const msgs = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_messages'"
+        )
+        .get();
+      return !!conv && !!msgs;
+    },
+  },
+
+  // Version 20: Conversation extraction linking table
+  {
+    version: 20,
+    name: "conversation_extracts",
+    description: "Add linking table for knowledge extracted from conversations",
+    up: `
+      -- Linking table: what was extracted from which conversation
+      CREATE TABLE IF NOT EXISTS conversation_extracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        entity_type TEXT NOT NULL,        -- 'learning' | 'decision' | 'issue' | 'preference'
+        entity_id INTEGER NOT NULL,       -- ID in target table
+        confidence REAL,                  -- 0-1 extraction confidence
+        excerpt TEXT,                     -- Source quote from conversation
+        extracted_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_extract_conv ON conversation_extracts(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_extract_entity ON conversation_extracts(entity_type, entity_id);
+      CREATE INDEX IF NOT EXISTS idx_extract_type ON conversation_extracts(entity_type);
+
+      -- Add project linking to extracted entities
+      ALTER TABLE conversations ADD COLUMN project_id INTEGER REFERENCES projects(id);
+      CREATE INDEX IF NOT EXISTS idx_conv_project ON conversations(project_id);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('conversation_extracts_enabled', 'true');
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_extracts'"
+        )
+        .get();
+      return !!table;
+    },
+  },
+
+  // Version 21: Pattern tracking and reflection questions
+  {
+    version: 21,
+    name: "pattern_tracking",
+    description: "Pattern instances and reflection questions for conversation analysis",
+    up: `
+      -- Pattern instances (aggregated patterns across conversations)
+      CREATE TABLE IF NOT EXISTS pattern_instances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER,
+        pattern_type TEXT NOT NULL,           -- 'preference'|'principle'|'pattern'|'gotcha'|'contradiction'
+        title TEXT NOT NULL,                  -- Human-readable pattern name
+        description TEXT,                     -- Pattern explanation
+        entity_refs TEXT,                     -- JSON: [{entity_type, entity_id}, ...]
+        conversation_ids TEXT,                -- JSON: [conv_id, ...]
+        aggregate_confidence REAL DEFAULT 0,
+        frequency INTEGER DEFAULT 1,
+        status TEXT DEFAULT 'active',         -- 'active'|'dismissed'|'confirmed'
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pattern_type ON pattern_instances(pattern_type);
+      CREATE INDEX IF NOT EXISTS idx_pattern_project ON pattern_instances(project_id);
+      CREATE INDEX IF NOT EXISTS idx_pattern_status ON pattern_instances(status);
+      CREATE INDEX IF NOT EXISTS idx_pattern_frequency ON pattern_instances(frequency DESC);
+
+      -- Reflection questions generated from patterns
+      CREATE TABLE IF NOT EXISTS reflection_questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER,
+        pattern_id INTEGER REFERENCES pattern_instances(id),
+        question_type TEXT NOT NULL,          -- 'pattern'|'contradiction'|'validation'|'synthesis'
+        question TEXT NOT NULL,
+        context TEXT,                         -- Additional context for the question
+        source_entities TEXT,                 -- JSON: [{entity_type, entity_id}, ...]
+        conversation_ids TEXT,                -- JSON: conversations involved
+        confidence REAL,
+        status TEXT DEFAULT 'open',           -- 'open'|'answered'|'dismissed'
+        answer TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        answered_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reflection_status ON reflection_questions(status);
+      CREATE INDEX IF NOT EXISTS idx_reflection_type ON reflection_questions(question_type);
+      CREATE INDEX IF NOT EXISTS idx_reflection_project ON reflection_questions(project_id);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES ('pattern_tracking_enabled', 'true');
+    `,
+    validate: (db) => {
+      const patterns = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='pattern_instances'"
+        )
+        .get();
+      const questions = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='reflection_questions'"
+        )
+        .get();
+      return !!patterns && !!questions;
+    },
+  },
 ];
 
 // ============================================================================
