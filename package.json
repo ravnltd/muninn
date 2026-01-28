@@ -32,6 +32,7 @@
     "precommit": "bun run typecheck && bun run lint && bun test"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@huggingface/transformers": "^3.5.0",
     "@libsql/client": "^0.17.0",
     "@modelcontextprotocol/sdk": "^1.25.2",

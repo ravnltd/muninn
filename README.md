@@ -15,37 +15,178 @@ Every session automatically:
 
 Projects are auto-initialized on first session — no manual setup required.
 
-## Setup
+## Getting Started
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) runtime (v1.0+)
+- [Claude Code](https://claude.ai/code) CLI
+- Git
+
+### Step 1: Install Bun
 
 ```bash
-# Install Bun (if needed)
 curl -fsSL https://bun.sh/install | bash
+```
 
-# Clone and build
+### Step 2: Clone and Build
+
+```bash
 git clone https://github.com/ravnltd/muninn.git
 cd muninn
+bun install
 bun run build
+bun run build:mcp
+```
 
-# Install globally
-cp muninn ~/.local/bin/
+### Step 3: Install Globally
 
-# Register MCP server (user scope = all projects)
-claude mcp add --scope user muninn -- bunx muninn-mcp
+**Option A: Using the install script (recommended)**
+```bash
+./install.sh
+```
 
-# Verify
+**Option B: Manual install**
+```bash
+mkdir -p ~/.local/bin
+cp muninn muninn-mcp ~/.local/bin/
+
+# Add to PATH if not already (add to ~/.bashrc or ~/.zshrc)
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Step 4: Register MCP Server
+
+```bash
+# Register for all projects (user scope)
+claude mcp add --scope user muninn -- muninn-mcp
+
+# Verify registration
 claude mcp list
 ```
 
-### Hooks (Optional but Recommended)
+### Step 5: Set Up Hooks (Recommended)
 
-Add to `~/.claude/settings.json` for automatic session management:
+Hooks enable automatic session management. Copy the example hooks:
 
-- **SessionStart**: Loads resume context, smart status, auto-inits `.claude/` database
-- **PreToolUse**: Checks file fragility before edits
-- **PostToolUse**: Tracks edited files in memory
+```bash
+# Create hooks directory
+mkdir -p ~/.claude/hooks
+
+# Copy hook scripts
+cp docs/hooks/*.sh ~/.claude/hooks/
+chmod +x ~/.claude/hooks/*.sh
+```
+
+Then add hooks to `~/.claude/settings.json`. You can either:
+- Copy the example: `cp docs/hooks/settings.example.json ~/.claude/settings.json`
+- Or merge into your existing settings (see `docs/hooks/settings.example.json`)
+
+**What the hooks do:**
+- **SessionStart**: Loads resume context, shows smart status, auto-inits database
+- **PreToolUse**: Checks file fragility before edits (warns on risky files)
+- **PostToolUse**: Tracks edited files in session memory
 - **Stop**: Persists session state on exit
 
-See `~/.claude/hooks/` for the hook scripts.
+### Step 6: Verify Installation
+
+```bash
+# Check CLI works
+muninn --help
+
+# Check MCP server is registered
+claude mcp list | grep muninn
+
+# Start Claude Code in any project
+cd /path/to/your/project
+claude
+
+# You should see "Session Resume" output if hooks are working
+```
+
+## External API Connections (Optional)
+
+Muninn works fully offline, but optional API integrations enhance capabilities:
+
+### Voyage AI (Better Embeddings)
+
+Voyage AI provides higher quality embeddings (512 dimensions) for semantic search. Without it, Muninn uses local Transformers.js embeddings (384 dimensions).
+
+```bash
+# Get API key from https://www.voyageai.com/
+export VOYAGE_API_KEY=pa-your-key-here
+
+# Add to your shell profile (~/.bashrc or ~/.zshrc) to persist
+echo 'export VOYAGE_API_KEY=pa-your-key-here' >> ~/.bashrc
+
+# Generate embeddings for existing knowledge
+muninn embed backfill
+
+# Verify
+muninn embed status
+```
+
+### Anthropic API (Smart Re-ranking)
+
+The Anthropic API enables LLM-powered re-ranking for search results (the `--smart` flag).
+
+```bash
+# Get API key from https://console.anthropic.com/
+export ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+# Add to your shell profile
+echo 'export ANTHROPIC_API_KEY=sk-ant-your-key-here' >> ~/.bashrc
+
+# Use smart search
+muninn query "authentication flow" --smart
+```
+
+### API Key Summary
+
+| Feature | API Key | Required? | Fallback |
+|---------|---------|-----------|----------|
+| Vector search | `VOYAGE_API_KEY` | No | Local Transformers.js |
+| Smart re-ranking | `ANTHROPIC_API_KEY` | No | Standard FTS results |
+
+## First Project Walkthrough
+
+Once installed, here's how to use Muninn with a project:
+
+```bash
+# Navigate to your project
+cd /path/to/your/project
+
+# Start Claude Code
+claude
+
+# Muninn auto-initializes on first session
+# You'll see the .claude/ directory created with memory.db
+
+# During the session, Claude can use muninn tools:
+# - muninn_query "search term" to find relevant context
+# - muninn_check to verify file safety before edits
+# - muninn_decision_add to record architectural choices
+# - muninn_learn_add to save patterns for future sessions
+
+# When you end the session, Muninn saves the state
+# Next session picks up where you left off
+```
+
+### Common First Commands
+
+```bash
+# Check project status
+muninn status
+
+# See what files are known
+muninn file list
+
+# Search for context
+muninn query "authentication"
+
+# Check file safety before editing
+muninn check src/important-file.ts
+```
 
 ## Architecture
 
@@ -160,19 +301,42 @@ muninn embed backfill              # Generate missing embeddings
 muninn ship                        # Pre-deploy checklist
 ```
 
-## Vector Search
+## Troubleshooting
 
-Semantic search is always available via local [Transformers.js](https://huggingface.co/docs/transformers.js) embeddings (384 dimensions, offline). For higher quality, set a Voyage AI key:
+### "muninn: command not found"
 
+Ensure `~/.local/bin` is in your PATH:
 ```bash
-# Optional: use Voyage AI for better embeddings (512 dimensions)
-export VOYAGE_API_KEY=your-key
+export PATH="$HOME/.local/bin:$PATH"
+# Add this line to ~/.bashrc or ~/.zshrc
+```
 
-# Generate embeddings for existing knowledge
-muninn embed backfill
+### MCP server not appearing in Claude Code
 
-# Search by meaning (not just keywords)
-muninn query "how does error handling work" --vector
+1. Check registration: `claude mcp list`
+2. Re-register: `claude mcp remove muninn && claude mcp add --scope user muninn -- muninn-mcp`
+3. Restart Claude Code
+
+### Hooks not running
+
+1. Verify scripts are executable: `ls -la ~/.claude/hooks/`
+2. Check settings.json syntax: `cat ~/.claude/settings.json | jq .`
+3. Test hook manually: `~/.claude/hooks/session-start.sh`
+
+### "No project found" errors
+
+Muninn auto-initializes, but you can manually init:
+```bash
+cd /path/to/your/project
+muninn init
+```
+
+### Embeddings not working
+
+Check API key status:
+```bash
+muninn embed status
+# Shows which embedding provider is active
 ```
 
 ## Philosophy
