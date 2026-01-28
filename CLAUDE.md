@@ -150,3 +150,34 @@ When triggered:
 ---
 
 *Query, don't preload. Address REQUIRED ACTIONS first. The tools are in your tool list.*
+
+<!-- MUNINN:START -->
+## Muninn Memory Tools
+
+This project uses [Muninn](https://github.com/ravnltd/muninn) for persistent memory.
+
+### Before Editing Files
+```
+muninn_check [files...]  → Pre-edit warnings (fragility, issues, staleness)
+```
+
+### Core Tools
+| Tool | Purpose |
+|------|---------|
+| `muninn_query` | Search project memory |
+| `muninn_check` | Pre-edit warnings (MANDATORY) |
+| `muninn_suggest` | Semantic file suggestions |
+| `muninn_predict` | FTS-based context bundle |
+| `muninn_file_add` | Record file knowledge |
+| `muninn_decision_add` | Record decisions |
+| `muninn_learn_add` | Save learnings |
+
+### After Changes
+```
+muninn_file_add          # Update file knowledge
+muninn_decision_add      # Record significant choices
+muninn_learn_add         # Save insights
+```
+
+*Run `muninn --help` for full CLI reference.*
+<!-- MUNINN:END -->
