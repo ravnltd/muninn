@@ -141,6 +141,7 @@ interface LearningSearchResult {
   title: string;
   content: string;
   relevance: number;
+  native_format?: string | null;
 }
 
 /**
@@ -315,36 +316,66 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
     logError("semanticQuery:issues", error);
   }
 
-  // Search learnings
+  // Search learnings (with native format when available)
   try {
-    const learnings = projectId
-      ? await db.all<LearningSearchResult>(
-          `SELECT l.id, l.title, l.content,
-                 bm25(fts_learnings) as relevance
-          FROM fts_learnings
-          JOIN learnings l ON fts_learnings.rowid = l.id
-          WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
-          ORDER BY relevance
-          LIMIT 5`,
-          [query, projectId]
-        )
-      : await db.all<LearningSearchResult>(
-          `SELECT l.id, l.title, l.content,
-                 bm25(fts_learnings) as relevance
-          FROM fts_learnings
-          JOIN learnings l ON fts_learnings.rowid = l.id
-          WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
-          ORDER BY relevance
-          LIMIT 5`,
-          [query]
-        );
+    // Try with native_knowledge join first
+    let learnings: LearningSearchResult[];
+    try {
+      learnings = projectId
+        ? await db.all<LearningSearchResult>(
+            `SELECT l.id, l.title, l.content, nk.native_format,
+                   bm25(fts_learnings) as relevance
+            FROM fts_learnings
+            JOIN learnings l ON fts_learnings.rowid = l.id
+            LEFT JOIN native_knowledge nk ON nk.source_table = 'learnings' AND nk.source_id = l.id
+            WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query, projectId]
+          )
+        : await db.all<LearningSearchResult>(
+            `SELECT l.id, l.title, l.content, nk.native_format,
+                   bm25(fts_learnings) as relevance
+            FROM fts_learnings
+            JOIN learnings l ON fts_learnings.rowid = l.id
+            LEFT JOIN native_knowledge nk ON nk.source_table = 'learnings' AND nk.source_id = l.id
+            WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query]
+          );
+    } catch {
+      // Fallback if native_knowledge table doesn't exist
+      learnings = projectId
+        ? await db.all<LearningSearchResult>(
+            `SELECT l.id, l.title, l.content,
+                   bm25(fts_learnings) as relevance
+            FROM fts_learnings
+            JOIN learnings l ON fts_learnings.rowid = l.id
+            WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query, projectId]
+          )
+        : await db.all<LearningSearchResult>(
+            `SELECT l.id, l.title, l.content,
+                   bm25(fts_learnings) as relevance
+            FROM fts_learnings
+            JOIN learnings l ON fts_learnings.rowid = l.id
+            WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query]
+          );
+    }
 
     results.push(
       ...learnings.map((l) => ({
         type: "learning" as const,
         id: l.id,
         title: l.title,
-        content: l.content,
+        // Use native format when available, fall back to prose
+        content: l.native_format ?? l.content,
         relevance: l.relevance,
       }))
     );

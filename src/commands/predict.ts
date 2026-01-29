@@ -150,12 +150,12 @@ async function searchForTask(
 ): Promise<{
   decisions: Array<{ id: number; title: string }>;
   issues: Array<{ id: number; title: string; severity: number }>;
-  learnings: Array<{ id: number; title: string; content: string }>;
+  learnings: Array<{ id: number; title: string; content: string; native?: string }>;
 }> {
   const result = {
     decisions: [] as Array<{ id: number; title: string }>,
     issues: [] as Array<{ id: number; title: string; severity: number }>,
-    learnings: [] as Array<{ id: number; title: string; content: string }>,
+    learnings: [] as Array<{ id: number; title: string; content: string; native?: string }>,
   };
 
   // Search decisions via FTS
@@ -184,17 +184,35 @@ async function searchForTask(
     /* FTS might fail */
   }
 
-  // Search learnings
+  // Search learnings with native format
   try {
-    result.learnings = await db.all<{ id: number; title: string; content: string }>(`
-      SELECT l.id, l.title, l.content FROM fts_learnings
+    result.learnings = await db.all<{ id: number; title: string; content: string; native_format: string | null }>(`
+      SELECT l.id, l.title, l.content, nk.native_format
+      FROM fts_learnings
       JOIN learnings l ON fts_learnings.rowid = l.id
+      LEFT JOIN native_knowledge nk ON nk.source_table = 'learnings' AND nk.source_id = l.id
       WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL)
       ORDER BY bm25(fts_learnings)
       LIMIT 5
-    `, [task, projectId]);
+    `, [task, projectId]).then(rows => rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      content: r.content,
+      native: r.native_format ?? undefined,
+    })));
   } catch {
-    /* FTS might fail */
+    /* FTS might fail or native_knowledge table might not exist */
+    try {
+      result.learnings = await db.all<{ id: number; title: string; content: string }>(`
+        SELECT l.id, l.title, l.content FROM fts_learnings
+        JOIN learnings l ON fts_learnings.rowid = l.id
+        WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL)
+        ORDER BY bm25(fts_learnings)
+        LIMIT 5
+      `, [task, projectId]);
+    } catch {
+      /* FTS might fail */
+    }
   }
 
   return result;
@@ -713,7 +731,13 @@ export async function handlePredictCommand(db: DatabaseAdapter, projectId: numbe
   if (bundle.applicableLearnings.length > 0) {
     console.error("  💡 Applicable Learnings:");
     for (const l of bundle.applicableLearnings) {
-      console.error(`     ${l.title}: ${l.content.slice(0, 60)}`);
+      if (l.native) {
+        // Use native format (transformer-optimized)
+        console.error(`     ${l.native}`);
+      } else {
+        // Fallback to prose
+        console.error(`     ${l.title}: ${l.content.slice(0, 60)}`);
+      }
     }
     console.error("");
   }

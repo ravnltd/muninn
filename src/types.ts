@@ -764,7 +764,7 @@ export interface PredictionBundle {
   cochangingFiles: Array<{ path: string; cochange_count: number }>;
   relevantDecisions: Array<{ id: number; title: string }>;
   openIssues: Array<{ id: number; title: string; severity: number }>;
-  applicableLearnings: Array<{ id: number; title: string; content: string }>;
+  applicableLearnings: Array<{ id: number; title: string; content: string; native?: string }>;
   workflowPattern: { task_type: string; approach: string } | null;
   profileEntries: Array<{ key: string; value: string; confidence: number; category: string }>;
   // Session context from relationship graph
