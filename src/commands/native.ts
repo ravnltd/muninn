@@ -104,7 +104,7 @@ export async function ensureNativeSchema(db: DatabaseAdapter): Promise<void> {
 /**
  * Convert a learning to native format using LLM
  */
-async function convertToNative(
+export async function convertToNative(
   title: string,
   content: string,
   category: string
@@ -233,6 +233,142 @@ function heuristicConvert(
   const why = title.slice(0, 50);
 
   return { type, ent: entities, when: condition, do: action, why, conf: 70 };
+}
+
+// ============================================================================
+// Decision Conversion
+// ============================================================================
+
+const DECISION_CONVERSION_PROMPT = `Convert this architectural decision into transformer-native format.
+
+Rules:
+- Extract ENTITIES: key concepts, files, tools affected (max 5, comma-separated, lowercase)
+- Extract CHOICE: what was chosen (short phrase)
+- Extract ALT: main alternative considered (short phrase or null)
+- Extract WHY: reasoning compressed to <15 words
+- CONFIDENCE: 0-99 based on how firm/reversible this decision is
+
+Input:
+Title: {title}
+Decision: {decision}
+Reasoning: {reasoning}
+
+Output JSON only:
+{"ent":["api","auth"],"choice":"JWT tokens","alt":"session cookies","why":"stateless, scales horizontally","conf":85}`;
+
+interface DecisionNativeResult {
+  ent: string[];
+  choice: string;
+  alt: string | null;
+  why: string;
+  conf: number;
+}
+
+/**
+ * Convert a decision to native format using LLM
+ */
+export async function convertDecisionToNative(
+  title: string,
+  decision: string,
+  reasoning: string | null
+): Promise<DecisionNativeResult> {
+  const apiKey = getApiKey("anthropic");
+  if (!apiKey.ok) {
+    return heuristicDecisionConvert(title, decision, reasoning);
+  }
+
+  const client = new Anthropic({ apiKey: apiKey.value });
+
+  const prompt = DECISION_CONVERSION_PROMPT
+    .replace("{title}", title)
+    .replace("{decision}", decision)
+    .replace("{reasoning}", reasoning || "Not specified");
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 200,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return heuristicDecisionConvert(title, decision, reasoning);
+    }
+
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    return heuristicDecisionConvert(title, decision, reasoning);
+  }
+}
+
+/**
+ * Heuristic decision conversion when API unavailable
+ */
+function heuristicDecisionConvert(
+  title: string,
+  decision: string,
+  reasoning: string | null
+): DecisionNativeResult {
+  // Extract entities from title and decision
+  const words = `${title} ${decision} ${reasoning || ""}`.toLowerCase();
+  const entities: string[] = [];
+
+  // Common entity patterns
+  const entityPatterns = [
+    /\b(auth|authentication|login)\b/,
+    /\b(api|endpoint|route)\b/,
+    /\b(database|db|sql|sqlite|postgres)\b/,
+    /\b(test|testing|jest|vitest)\b/,
+    /\b(react|svelte|vue|angular)\b/,
+    /\b(typescript|ts|javascript|js)\b/,
+    /\b(validation|zod|schema)\b/,
+    /\b(cache|redis|memory)\b/,
+    /\b(docker|container|deploy)\b/,
+    /\b(mcp|claude|llm|ai)\b/,
+  ];
+
+  for (const pattern of entityPatterns) {
+    const match = words.match(pattern);
+    if (match && entities.length < 5) {
+      entities.push(match[1]);
+    }
+  }
+
+  if (entities.length === 0) {
+    entities.push("architecture");
+  }
+
+  // Extract choice (first sentence of decision)
+  const choice = decision.split(/[.!?]/)[0].slice(0, 50);
+
+  // Extract why (first part of reasoning or title)
+  const why = reasoning ? reasoning.slice(0, 50) : title.slice(0, 50);
+
+  return { ent: entities, choice, alt: null, why, conf: 75 };
+}
+
+/**
+ * Format decision as native knowledge
+ */
+export function formatDecisionNative(
+  title: string,
+  result: DecisionNativeResult
+): string {
+  const parts = [`D[${title.slice(0, 30)}`];
+
+  if (result.ent.length > 0) {
+    parts.push(`ent:${result.ent.join(",")}`);
+  }
+  parts.push(`choice:${result.choice}`);
+  if (result.alt) {
+    parts.push(`alt:${result.alt}`);
+  }
+  parts.push(`why:${result.why}`);
+  parts.push(`conf:${result.conf}`);
+
+  return parts.join("|") + "]";
 }
 
 /**

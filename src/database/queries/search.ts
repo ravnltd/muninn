@@ -127,6 +127,7 @@ interface DecisionSearchResult {
   title: string;
   content: string;
   relevance: number;
+  native_format?: string | null;
 }
 
 interface IssueSearchResult {
@@ -242,36 +243,65 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
     logError("semanticQuery:files", error);
   }
 
-  // Search decisions
+  // Search decisions (with native format when available)
   try {
-    const decisions = projectId
-      ? await db.all<DecisionSearchResult>(
-          `SELECT d.id, d.title, d.decision as content,
-                 bm25(fts_decisions) as relevance
-          FROM fts_decisions
-          JOIN decisions d ON fts_decisions.rowid = d.id
-          WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
-          ORDER BY relevance
-          LIMIT 5`,
-          [query, projectId]
-        )
-      : await db.all<DecisionSearchResult>(
-          `SELECT d.id, d.title, d.decision as content,
-                 bm25(fts_decisions) as relevance
-          FROM fts_decisions
-          JOIN decisions d ON fts_decisions.rowid = d.id
-          WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
-          ORDER BY relevance
-          LIMIT 5`,
-          [query]
-        );
+    let decisions: DecisionSearchResult[];
+    try {
+      decisions = projectId
+        ? await db.all<DecisionSearchResult>(
+            `SELECT d.id, d.title, d.decision as content, nk.native_format,
+                   bm25(fts_decisions) as relevance
+            FROM fts_decisions
+            JOIN decisions d ON fts_decisions.rowid = d.id
+            LEFT JOIN native_knowledge nk ON nk.source_table = 'decisions' AND nk.source_id = d.id
+            WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query, projectId]
+          )
+        : await db.all<DecisionSearchResult>(
+            `SELECT d.id, d.title, d.decision as content, nk.native_format,
+                   bm25(fts_decisions) as relevance
+            FROM fts_decisions
+            JOIN decisions d ON fts_decisions.rowid = d.id
+            LEFT JOIN native_knowledge nk ON nk.source_table = 'decisions' AND nk.source_id = d.id
+            WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query]
+          );
+    } catch {
+      // Fallback if native_knowledge table doesn't exist
+      decisions = projectId
+        ? await db.all<DecisionSearchResult>(
+            `SELECT d.id, d.title, d.decision as content,
+                   bm25(fts_decisions) as relevance
+            FROM fts_decisions
+            JOIN decisions d ON fts_decisions.rowid = d.id
+            WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query, projectId]
+          )
+        : await db.all<DecisionSearchResult>(
+            `SELECT d.id, d.title, d.decision as content,
+                   bm25(fts_decisions) as relevance
+            FROM fts_decisions
+            JOIN decisions d ON fts_decisions.rowid = d.id
+            WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
+            ORDER BY relevance
+            LIMIT 5`,
+            [query]
+          );
+    }
 
     results.push(
       ...decisions.map((d) => ({
         type: "decision" as const,
         id: d.id,
         title: d.title,
-        content: d.content,
+        // Use native format when available, fall back to prose
+        content: d.native_format ?? d.content,
         relevance: d.relevance,
       }))
     );

@@ -178,6 +178,8 @@ async function searchTable(
     // Symbols need special handling - they're linked through files
     let records: RecordWithEmbedding[];
     const hasArchived = ["files", "decisions", "issues", "learnings"].includes(table);
+    const hasNativeFormat = ["decisions", "learnings"].includes(table);
+
     if (table === "symbols") {
       records = await db.all<RecordWithEmbedding>(
         `SELECT s.id, s.${titleCol} as title, s.${contentCol} as content, s.embedding, NULL as archived_at
@@ -185,6 +187,16 @@ async function searchTable(
         JOIN files f ON s.file_id = f.id
         WHERE f.project_id = ? AND s.embedding IS NOT NULL`,
         [projectId]
+      );
+    } else if (hasNativeFormat) {
+      // Join with native_knowledge for learnings and decisions
+      const archivedCol = ", t.archived_at";
+      records = await db.all<RecordWithEmbedding>(
+        `SELECT t.id, t.${titleCol} as title, COALESCE(nk.native_format, t.${contentCol}) as content, t.embedding${archivedCol}
+        FROM ${table} t
+        LEFT JOIN native_knowledge nk ON nk.source_table = ? AND nk.source_id = t.id
+        WHERE t.project_id = ? AND t.embedding IS NOT NULL`,
+        [table, projectId]
       );
     } else {
       const archivedCol = hasArchived ? ", archived_at" : ", NULL as archived_at";

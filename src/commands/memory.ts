@@ -36,6 +36,13 @@ import {
   parsePatternArgs,
 } from "../utils/validation";
 import { autoRelateIssueFiles, autoRelateLearningFiles } from "./relationships";
+import {
+  convertToNative,
+  convertDecisionToNative,
+  ensureNativeSchema,
+  formatNative,
+  formatDecisionNative,
+} from "./native";
 import { trackDecisionMade } from "./session";
 
 // ============================================================================
@@ -265,10 +272,61 @@ export async function decisionAdd(db: DatabaseAdapter, projectId: number, args: 
     }
   }
 
+  // Auto-convert to native format
+  let nativeFormat: string | null = null;
+  try {
+    await ensureNativeSchema(db);
+    const native = await convertDecisionToNative(
+      values.title,
+      values.decision,
+      values.reasoning || null
+    );
+
+    nativeFormat = formatDecisionNative(values.title, native);
+
+    const originalTokens = Math.ceil(`${values.title}\n${values.decision}\n${values.reasoning || ""}`.length / 4);
+    const nativeTokens = Math.ceil(nativeFormat.length / 4);
+
+    await db.run(
+      `INSERT INTO native_knowledge
+       (type, entities, condition, action, reasoning, confidence, source_id, source_table, native_format, original_tokens, native_tokens)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(source_table, source_id) DO UPDATE SET
+       type = excluded.type,
+       entities = excluded.entities,
+       action = excluded.action,
+       reasoning = excluded.reasoning,
+       confidence = excluded.confidence,
+       native_format = excluded.native_format,
+       original_tokens = excluded.original_tokens,
+       native_tokens = excluded.native_tokens`,
+      [
+        "decision",
+        JSON.stringify(native.ent),
+        null, // decisions don't have conditions
+        native.choice,
+        native.why,
+        native.conf,
+        insertedId,
+        "decisions",
+        nativeFormat,
+        originalTokens,
+        nativeTokens,
+      ]
+    );
+  } catch (error) {
+    logError("decisionAdd:nativeConvert", error);
+    // Don't block decision creation on conversion failure
+  }
+
   console.error(`✅ Decision D${insertedId} recorded`);
+  if (nativeFormat) {
+    console.error(`   Native: ${nativeFormat}`);
+  }
   outputSuccess({
     id: insertedId,
     title: values.title,
+    native_format: nativeFormat,
   });
 }
 
@@ -468,14 +526,77 @@ export async function learnAdd(db: DatabaseAdapter, projectId: number, args: str
       }
     }
 
+    // Auto-convert to native format
+    let nativeFormat: string | null = null;
+    try {
+      await ensureNativeSchema(db);
+      const native = await convertToNative(
+        values.title,
+        values.content,
+        values.category || "pattern"
+      );
+
+      nativeFormat = formatNative({
+        id: 0,
+        type: native.type as "pattern" | "gotcha" | "decision" | "fact" | "pref",
+        entities: native.ent,
+        condition: native.when,
+        action: native.do,
+        reasoning: native.why,
+        confidence: native.conf,
+        embedding: null,
+        sourceId: insertedId,
+        sourceTable: "learnings",
+      });
+
+      const originalTokens = Math.ceil(`${values.title}\n${values.content}`.length / 4);
+      const nativeTokens = Math.ceil(nativeFormat.length / 4);
+
+      await db.run(
+        `INSERT INTO native_knowledge
+         (type, entities, condition, action, reasoning, confidence, source_id, source_table, native_format, original_tokens, native_tokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source_table, source_id) DO UPDATE SET
+         type = excluded.type,
+         entities = excluded.entities,
+         condition = excluded.condition,
+         action = excluded.action,
+         reasoning = excluded.reasoning,
+         confidence = excluded.confidence,
+         native_format = excluded.native_format,
+         original_tokens = excluded.original_tokens,
+         native_tokens = excluded.native_tokens`,
+        [
+          native.type,
+          JSON.stringify(native.ent),
+          native.when,
+          native.do,
+          native.why,
+          native.conf,
+          insertedId,
+          "learnings",
+          nativeFormat,
+          originalTokens,
+          nativeTokens,
+        ]
+      );
+    } catch (error) {
+      logError("learnAdd:nativeConvert", error);
+      // Don't block learning creation on conversion failure
+    }
+
     const foundationalNote = isFoundational ? " (foundational, review every " + reviewAfterSessions + " sessions)" : "";
     console.error(`✅ Learning L${insertedId} recorded${foundationalNote}`);
+    if (nativeFormat) {
+      console.error(`   Native: ${nativeFormat}`);
+    }
     outputSuccess({
       id: insertedId,
       title: values.title,
       global: false,
       foundational: !!isFoundational,
       reviewAfterSessions,
+      native_format: nativeFormat,
     });
   }
 }
