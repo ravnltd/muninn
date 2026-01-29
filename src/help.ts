@@ -57,6 +57,12 @@ export const HELP_TEXT = `Muninn — Elite Mode
   embed backfill [table]      Generate missing embeddings
   embed test "text"           Test embedding generation
 
+🧬 Transformer-Native Storage:
+  native convert [--limit=N]  Convert learnings to native format
+  native stats                Show conversion statistics
+  native query <text>         Search native knowledge
+  native export [--type=X]    Export for context injection
+
 🧩 Code Chunking Commands:
   chunk run [-v]              Extract symbols from all code files
   chunk status                Show symbol statistics

@@ -26,6 +26,7 @@ import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { handleDebtCommand, handlePatternCommand, handleStackCommand } from "./commands/global";
 import { hookBrain, hookCheck, hookInit, hookPostEdit } from "./commands/hooks";
 import { handleInfraCommand } from "./commands/infra";
+import { handleNativeCommand } from "./commands/native";
 import { handleNetworkCommand } from "./commands/network";
 import { generateInsights, handleInsightsCommand } from "./commands/insights";
 import { analyzeImpact, checkConflicts, checkFiles, getSmartStatus } from "./commands/intelligence";
@@ -220,6 +221,10 @@ async function main(): Promise<void> {
 
       case "embed":
         await handleEmbedCommand(db, projectId, subArgs);
+        break;
+
+      case "native":
+        await handleNativeCommand(db, projectId, subArgs);
         break;
 
       case "chunk":
