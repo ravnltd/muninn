@@ -21,6 +21,7 @@ import {
   showDependencies,
 } from "./commands/deps";
 import { handleEmbedCommand } from "./commands/embed";
+import { handleEnrichCommand, handleApproveCommand, handleEnrichmentStatusCommand } from "./commands/enrich";
 import { handleFocusCommand } from "./commands/focus";
 import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { handleDebtCommand, handlePatternCommand, handleStackCommand } from "./commands/global";
@@ -344,6 +345,18 @@ async function main(): Promise<void> {
 
       case "predict":
         await handlePredictCommand(db, projectId, subArgs);
+        break;
+
+      case "enrich":
+        await handleEnrichCommand(db, projectId, process.cwd(), subArgs);
+        break;
+
+      case "approve":
+        await handleApproveCommand(db, subArgs);
+        break;
+
+      case "enrich-status":
+        await handleEnrichmentStatusCommand();
         break;
 
       case "suggest":

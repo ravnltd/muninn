@@ -1066,6 +1066,86 @@ export const MIGRATIONS: Migration[] = [
       return !!patterns && !!questions;
     },
   },
+
+  // Version 22: Context Enrichment Layer
+  {
+    version: 22,
+    name: "context_enrichment",
+    description: "Tables for automatic context enrichment, pending approvals, and metrics",
+    up: `
+      -- Pending approvals for blocked operations (high-fragility file edits)
+      CREATE TABLE IF NOT EXISTS pending_approvals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operation_id TEXT UNIQUE NOT NULL,    -- Unique ID for this operation (e.g., op_abc123)
+        tool TEXT NOT NULL,                   -- Edit, Write, Bash, etc.
+        file_path TEXT,                       -- File being modified (if applicable)
+        reason TEXT NOT NULL,                 -- Why this operation was blocked
+        block_level TEXT NOT NULL,            -- 'warn', 'soft', 'hard'
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME,                  -- Auto-expire old approvals
+        approved_at DATETIME                  -- NULL until approved
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_approvals_operation ON pending_approvals(operation_id);
+      CREATE INDEX IF NOT EXISTS idx_approvals_file ON pending_approvals(file_path);
+      CREATE INDEX IF NOT EXISTS idx_approvals_expires ON pending_approvals(expires_at);
+
+      -- Enrichment metrics for performance monitoring and optimization
+      CREATE TABLE IF NOT EXISTS enrichment_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool TEXT NOT NULL,                   -- Which tool was enriched
+        file_path TEXT,                       -- Primary file involved
+        latency_ms INTEGER NOT NULL,          -- How long enrichment took
+        enrichers_used TEXT,                  -- JSON array of enricher names
+        tokens_injected INTEGER,              -- Approximate tokens in output
+        blocked INTEGER DEFAULT 0,            -- Whether operation was blocked
+        cache_hits INTEGER DEFAULT 0,         -- Cache hits during enrichment
+        cache_misses INTEGER DEFAULT 0,       -- Cache misses during enrichment
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_enrichment_tool ON enrichment_metrics(tool);
+      CREATE INDEX IF NOT EXISTS idx_enrichment_time ON enrichment_metrics(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_enrichment_latency ON enrichment_metrics(latency_ms);
+
+      -- Auto-cleanup: keep last 10000 metrics
+      CREATE TRIGGER IF NOT EXISTS enrichment_metrics_cleanup
+      AFTER INSERT ON enrichment_metrics
+      BEGIN
+        DELETE FROM enrichment_metrics
+        WHERE id NOT IN (
+          SELECT id FROM enrichment_metrics ORDER BY created_at DESC LIMIT 10000
+        );
+      END;
+
+      -- Auto-cleanup: expire old pending approvals
+      CREATE TRIGGER IF NOT EXISTS pending_approvals_cleanup
+      AFTER INSERT ON pending_approvals
+      BEGIN
+        DELETE FROM pending_approvals
+        WHERE expires_at IS NOT NULL AND expires_at < datetime('now');
+      END;
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('context_enrichment_enabled', 'true'),
+        ('pending_approvals_enabled', 'true'),
+        ('enrichment_metrics_enabled', 'true');
+    `,
+    validate: (db) => {
+      const approvals = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='pending_approvals'"
+        )
+        .get();
+      const metrics = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='enrichment_metrics'"
+        )
+        .get();
+      return !!approvals && !!metrics;
+    },
+  },
 ];
 
 // ============================================================================

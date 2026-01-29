@@ -93,3 +93,92 @@ The pre-edit hook can either warn or block:
 - **Block**: Requires explanation before proceeding
 
 To enable blocking, the hook script exits with code 1.
+
+## Context Enrichment Hooks
+
+Muninn includes a powerful context enrichment system that automatically injects relevant context before tool calls.
+
+### Enrichment Hook Setup
+
+Add the enrichment hook to inject context before Read/Edit/Write operations:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [{
+          "type": "command",
+          "command": "muninn enrich $TOOL_NAME \"$TOOL_INPUT\""
+        }]
+      }
+    ]
+  }
+}
+```
+
+### What Enrichment Provides
+
+When you read or edit a file, the enrichment layer automatically surfaces:
+
+1. **File Knowledge** - Fragility score, purpose, type, dependencies
+2. **Blocking** - Hard blocks on fragility >= 9, soft blocks on 8
+3. **Learnings** - Relevant patterns and gotchas
+4. **Issues** - Open issues affecting the file
+5. **Decisions** - Active architectural decisions
+6. **Blast Radius** - Impact score if file is modified
+7. **Correlations** - Files that often change together
+8. **Test Files** - Related tests to update
+
+### Output Format (Transformer-Native)
+
+Enrichment uses a dense, token-efficient format:
+
+```
+## Muninn Context (auto-injected)
+F[src/auth/login.ts|frag:8|purpose:User auth flow|deps:12]
+K[gotcha|ent:auth,jwt|when:token refresh|do:check expiry race|conf:90]
+D[JWT over sessions|choice:stateless|why:horizontal scaling|conf:85]
+I[#23|sev:7|Race condition in token refresh]
+B[score:45|direct:8|trans:24|tests:3|risk:medium]
+R[cochangers:session.ts,middleware.ts|tests:auth.test.ts]
+```
+
+### Approval Workflow
+
+When editing a file with fragility >= 9:
+
+1. Enrichment blocks the operation with an operation ID
+2. You must either:
+   - Explain your approach (soft block)
+   - Run `muninn approve <operation-id>` (hard block)
+3. Then retry the edit
+
+Example blocked message:
+```
+!BLOCKED: Fragility 9/10 - This file is critical.
+File: src/core/engine.ts
+
+To proceed: muninn approve op_abc123
+```
+
+### MCP Tools
+
+Use these MCP tools for enrichment:
+
+- `muninn_enrich` - Auto-inject context for a tool call
+- `muninn_approve` - Approve a blocked operation
+
+### CLI Commands
+
+```bash
+# Run enrichment for a tool call
+muninn enrich Edit '{"file_path": "src/index.ts"}'
+
+# Approve a blocked operation
+muninn approve op_abc123
+
+# Check enrichment engine status
+muninn enrich-status
+```

@@ -199,6 +199,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
 
+      {
+        name: "muninn_enrich",
+        description:
+          "Auto-inject context for a tool call. Returns file fragility, decisions, learnings, issues, blast radius, and related files. Use this before Read/Edit/Write operations to get relevant context automatically.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tool: {
+              type: "string",
+              enum: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
+              description: "Tool being called (Read, Edit, Write, Bash, etc.)",
+            },
+            input: { type: "string", description: "Tool input (JSON string)" },
+            cwd: { type: "string", description: "Working directory" },
+          },
+          required: ["tool", "input"],
+        },
+      },
+
+      {
+        name: "muninn_approve",
+        description:
+          "Approve a blocked operation. Required when editing high-fragility files (fragility >= 9). Use the operation ID from the blocked message.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            operationId: { type: "string", description: "Operation ID from blocked message (e.g., op_abc123)" },
+            cwd: { type: "string", description: "Working directory" },
+          },
+          required: ["operationId"],
+        },
+      },
+
       // ========== PASSTHROUGH TOOL ==========
 
       {
@@ -386,6 +419,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (limit) cmd += ` --limit ${limit}`;
         if (includeSymbols) cmd += " --symbols";
         result = runContext(cmd, cwd);
+        break;
+      }
+
+      case "muninn_enrich": {
+        const tool = typedArgs.tool as string;
+        const input = typedArgs.input as string;
+        if (!tool) throw new Error("Tool name required");
+        if (!input) throw new Error("Tool input required");
+        // Escape the JSON input for shell
+        const escapedInput = input.replace(/'/g, "'\\''");
+        result = runContext(`enrich ${tool} '${escapedInput}'`, cwd);
+        break;
+      }
+
+      case "muninn_approve": {
+        const operationId = typedArgs.operationId as string;
+        if (!operationId) throw new Error("Operation ID required");
+        result = runContext(`approve ${operationId}`, cwd);
         break;
       }
 

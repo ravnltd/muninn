@@ -13,6 +13,15 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "muninn enrich $TOOL_NAME '$TOOL_INPUT'"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
