@@ -13,6 +13,7 @@ const ConfigSchema = z.object({
   primaryUrl: z.string().url().optional(),
   authToken: z.string().optional(),
   syncInterval: z.number().int().positive().default(60000),
+  outputFormat: z.enum(["native", "human"]).default("native"),
 });
 
 export type MuninnConfig = z.infer<typeof ConfigSchema>;
@@ -34,6 +35,7 @@ export function loadConfig(): MuninnConfig {
     syncInterval: process.env.MUNINN_SYNC_INTERVAL
       ? parseInt(process.env.MUNINN_SYNC_INTERVAL, 10)
       : 60000,
+    outputFormat: process.env.MUNINN_OUTPUT_FORMAT || "native",
   };
 
   // Validate with Zod
@@ -53,6 +55,26 @@ export function loadConfig(): MuninnConfig {
   }
 
   return config;
+}
+
+// Cached config instance (loaded once at startup)
+let cachedConfig: MuninnConfig | null = null;
+
+/**
+ * Get the cached config or load it
+ */
+export function getConfig(): MuninnConfig {
+  if (!cachedConfig) {
+    cachedConfig = loadConfig();
+  }
+  return cachedConfig;
+}
+
+/**
+ * Check if native output format is enabled
+ */
+export function isNativeFormat(): boolean {
+  return getConfig().outputFormat === "native";
 }
 
 /**

@@ -10,6 +10,7 @@ import type { QueryResult } from "../types";
 import { getApiKey, redactApiKeys } from "../utils/api-keys";
 import { logError } from "../utils/errors";
 import { outputJson } from "../utils/format";
+import { isNativeFormat, formatQueryResult } from "../output/formatter.js";
 
 // ============================================================================
 // Semantic Query with Global Learning Integration
@@ -108,25 +109,43 @@ function displayQueryResults(results: QueryResult[], brief = false): void {
     return;
   }
 
-  console.error(`\n🔍 Found ${results.length} result(s):\n`);
+  if (isNativeFormat()) {
+    // Native format: dense, token-efficient output
+    console.error(`Q[count:${results.length}]`);
+    for (const result of results) {
+      console.error(
+        formatQueryResult(
+          {
+            id: result.id,
+            title: result.title,
+            content: result.content ?? undefined,
+            type: result.type,
+            relevance: result.relevance,
+          },
+          brief
+        )
+      );
+    }
+  } else {
+    // Human format: emoji/prose output
+    console.error(`\n🔍 Found ${results.length} result(s):\n`);
 
-  for (const result of results) {
-    const typeIcon = getTypeIcon(result.type);
-
-    if (brief) {
-      // Brief mode: one line per result
-      const summary = getBriefSummary(result);
-      console.error(`${typeIcon} ${result.title} — ${summary}`);
-    } else {
-      // Full mode: show content preview
-      const content = result.content?.substring(0, 100) || "";
-      const ellipsis = (result.content?.length || 0) > 100 ? "..." : "";
-
-      console.error(`${typeIcon} [${result.type}] ${result.title}`);
-      if (content) {
-        console.error(`   ${content}${ellipsis}`);
+    for (const result of results) {
+      console.error(
+        formatQueryResult(
+          {
+            id: result.id,
+            title: result.title,
+            content: result.content ?? undefined,
+            type: result.type,
+            relevance: result.relevance,
+          },
+          brief
+        )
+      );
+      if (!brief) {
+        console.error("");
       }
-      console.error("");
     }
   }
 }
@@ -165,22 +184,6 @@ function toBriefResults(results: QueryResult[]): BriefResult[] {
     title: r.title,
     summary: getBriefSummary(r),
   }));
-}
-
-function getTypeIcon(type: string): string {
-  switch (type) {
-    case "file":
-      return "📁";
-    case "decision":
-      return "📋";
-    case "issue":
-      return "🐛";
-    case "learning":
-    case "global-learning":
-      return "💡";
-    default:
-      return "📄";
-  }
 }
 
 // ============================================================================

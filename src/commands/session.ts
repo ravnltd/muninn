@@ -4,10 +4,18 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { isNativeFormat } from "../config/index.js";
 import { getApiKey } from "../utils/api-keys";
 import { exitWithUsage, logError, safeJsonParse } from "../utils/errors";
 import { getTimeAgo, outputJson, outputSuccess } from "../utils/format";
 import { parseSessionEndArgs } from "../utils/validation";
+import {
+  formatSession,
+  formatProfile,
+  formatDecision,
+  formatInsight,
+  formatHotContext,
+} from "../output/formatter.js";
 import { generateInsights, listInsights } from "./insights";
 import {
   getDecisionsDue,
@@ -301,15 +309,30 @@ export async function generateResume(db: DatabaseAdapter, projectId: number): Pr
   const timeAgo = getTimeAgo((lastSession.ended_at || lastSession.started_at) as string);
   const isOngoing = !lastSession.ended_at;
 
-  md += `# Resume Point\n\n`;
-  md += `**Last session:** ${timeAgo}${isOngoing ? " (still ongoing)" : ""}\n`;
-  md += `**Goal:** ${lastSession.goal || "Not specified"}\n`;
+  if (isNativeFormat()) {
+    // Native format: dense session info
+    md += `# Resume Point\n\n`;
+    md += formatSession({
+      id: lastSession.id as number,
+      goal: lastSession.goal as string | null,
+      outcome: lastSession.outcome as string | null,
+      nextSteps: lastSession.next_steps as string | null,
+      timeAgo,
+      isOngoing,
+    });
+    md += "\n\n";
+  } else {
+    // Human format: prose
+    md += `# Resume Point\n\n`;
+    md += `**Last session:** ${timeAgo}${isOngoing ? " (still ongoing)" : ""}\n`;
+    md += `**Goal:** ${lastSession.goal || "Not specified"}\n`;
 
-  if (lastSession.outcome) {
-    md += `**Outcome:** ${lastSession.outcome}\n`;
+    if (lastSession.outcome) {
+      md += `**Outcome:** ${lastSession.outcome}\n`;
+    }
+
+    md += "\n";
   }
-
-  md += "\n";
 
   if (lastSession.files_touched) {
     try {
@@ -424,14 +447,18 @@ export async function generateResume(db: DatabaseAdapter, projectId: number): Pr
 
   if (hasHot) {
     md += `## Hot Context\n`;
-    if (hotEntities.files.length > 0) {
-      md += `**Files:** ${hotEntities.files.map((f) => f.path).join(", ")}\n`;
-    }
-    if (hotEntities.decisions.length > 0) {
-      md += `**Decisions:** ${hotEntities.decisions.map((d) => d.title).join(", ")}\n`;
-    }
-    if (hotEntities.learnings.length > 0) {
-      md += `**Learnings:** ${hotEntities.learnings.map((l) => l.title).join(", ")}\n`;
+    if (isNativeFormat()) {
+      md += formatHotContext(hotEntities);
+    } else {
+      if (hotEntities.files.length > 0) {
+        md += `**Files:** ${hotEntities.files.map((f) => f.path).join(", ")}\n`;
+      }
+      if (hotEntities.decisions.length > 0) {
+        md += `**Decisions:** ${hotEntities.decisions.map((d) => d.title).join(", ")}\n`;
+      }
+      if (hotEntities.learnings.length > 0) {
+        md += `**Learnings:** ${hotEntities.learnings.map((l) => l.title).join(", ")}\n`;
+      }
     }
     md += "\n";
   }
@@ -721,18 +748,26 @@ export async function sessionEndEnhanced(
  * and surfaces the developer profile + active state.
  */
 async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promise<string> {
+  const native = isNativeFormat();
   let md = `# Context Intelligence System\n\n`;
 
+  // Tools section - always human readable for learnability
   md += `## Your Tools (use proactively)\n`;
-  md += `- \`muninn_predict "task"\` — Bundle all relevant context for a task in one call\n`;
-  md += `- \`muninn_profile\` — Your developer preferences (coding style, patterns, anti-patterns)\n`;
-  md += `- \`muninn_check [files]\` — Pre-edit safety check (MANDATORY before editing)\n`;
-  md += `- \`muninn_query "topic"\` — Search all knowledge (decisions, learnings, issues, files)\n`;
-  md += `- \`muninn_insights\` — Cross-session pattern insights\n`;
-  md += `- \`muninn_decisions_due\` — Decisions needing outcome review\n`;
-  md += `- \`muninn_outcome <id> <status>\` — Record whether a decision worked out\n`;
-  md += `- \`muninn_observe "note"\` — Record a quick observation (auto-dedupes)\n`;
-  md += `- \`muninn_focus_set "area"\` — Boost queries toward your current work\n`;
+  if (native) {
+    // Compact tool list
+    md += `- \`muninn_predict\` \`muninn_check\` \`muninn_query\` \`muninn_observe\` \`muninn_focus_set\`\n`;
+    md += `- \`muninn_profile\` \`muninn_insights\` \`muninn_decisions_due\` \`muninn_outcome\`\n`;
+  } else {
+    md += `- \`muninn_predict "task"\` — Bundle all relevant context for a task in one call\n`;
+    md += `- \`muninn_profile\` — Your developer preferences (coding style, patterns, anti-patterns)\n`;
+    md += `- \`muninn_check [files]\` — Pre-edit safety check (MANDATORY before editing)\n`;
+    md += `- \`muninn_query "topic"\` — Search all knowledge (decisions, learnings, issues, files)\n`;
+    md += `- \`muninn_insights\` — Cross-session pattern insights\n`;
+    md += `- \`muninn_decisions_due\` — Decisions needing outcome review\n`;
+    md += `- \`muninn_outcome <id> <status>\` — Record whether a decision worked out\n`;
+    md += `- \`muninn_observe "note"\` — Record a quick observation (auto-dedupes)\n`;
+    md += `- \`muninn_focus_set "area"\` — Boost queries toward your current work\n`;
+  }
   md += `\n`;
 
   // Developer profile top entries
@@ -740,8 +775,18 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
   if (profileEntries.length > 0) {
     md += `## Developer Profile (top preferences)\n`;
     for (const entry of profileEntries) {
-      const pct = Math.round(entry.confidence * 100);
-      md += `- ${entry.key} (${pct}%): ${entry.value.slice(0, 60)}\n`;
+      if (native) {
+        md += formatProfile({
+          key: entry.key,
+          value: entry.value,
+          confidence: entry.confidence,
+          category: entry.category,
+        });
+      } else {
+        const pct = Math.round(entry.confidence * 100);
+        md += `- ${entry.key} (${pct}%): ${entry.value.slice(0, 60)}`;
+      }
+      md += `\n`;
     }
     md += `\n`;
   }
@@ -766,16 +811,20 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
 
   // Hot files
   try {
-    const hotFiles = await db.all<{ path: string }>(
+    const hotFiles = await db.all<{ path: string; fragility?: number }>(
       `
-      SELECT path FROM files
+      SELECT path, fragility FROM files
       WHERE project_id = ? AND temperature = 'hot'
       ORDER BY last_referenced_at DESC LIMIT 3
     `,
       [projectId]
     );
     if (hotFiles.length > 0) {
-      md += `- Hot files: ${hotFiles.map((f) => f.path).join(", ")}\n`;
+      if (native) {
+        md += `- Hot: ${hotFiles.map((f) => `F[${f.path}${f.fragility ? `|frag:${f.fragility}` : ""}]`).join(" ")}\n`;
+      } else {
+        md += `- Hot files: ${hotFiles.map((f) => f.path).join(", ")}\n`;
+      }
     }
   } catch {
     /* temperature column might not exist */
@@ -786,7 +835,11 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
   if (decisionsDue.length > 0) {
     md += `- Decisions due for review:\n`;
     for (const d of decisionsDue.slice(0, 3)) {
-      md += `  - "${d.title}" (${d.sessions_since} sessions)\n`;
+      if (native) {
+        md += `  ${formatDecision({ id: d.id, title: d.title, sessionsSince: d.sessions_since })}\n`;
+      } else {
+        md += `  - "${d.title}" (${d.sessions_since} sessions)\n`;
+      }
     }
     if (decisionsDue.length > 3) {
       md += `  - ...and ${decisionsDue.length - 3} more\n`;
@@ -798,7 +851,11 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
   if (foundationalDue.length > 0) {
     md += `- Foundational learnings for review:\n`;
     for (const l of foundationalDue.slice(0, 3)) {
-      md += `  - L${l.id}: "${l.title}" (${l.sessions_since_review} sessions)\n`;
+      if (native) {
+        md += `  K[foundational|#${l.id}|${l.title.slice(0, 40)}|sessions:${l.sessions_since_review}]\n`;
+      } else {
+        md += `  - L${l.id}: "${l.title}" (${l.sessions_since_review} sessions)\n`;
+      }
     }
     if (foundationalDue.length > 3) {
       md += `  - ...and ${foundationalDue.length - 3} more\n`;
@@ -810,7 +867,11 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
   if (newInsights.length > 0) {
     md += `- New insights:\n`;
     for (const i of newInsights.slice(0, 3)) {
-      md += `  - [${i.type}] ${i.title}: ${i.content.slice(0, 80)}\n`;
+      if (native) {
+        md += `  ${formatInsight({ id: i.id, type: i.type, title: i.title, content: i.content })}\n`;
+      } else {
+        md += `  - [${i.type}] ${i.title}: ${i.content.slice(0, 80)}\n`;
+      }
     }
     if (newInsights.length > 3) {
       md += `  - ...and ${newInsights.length - 3} more\n`;
@@ -820,7 +881,11 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
   // Velocity anomalies — hot-changing files
   const anomalies = await detectAnomalies(db, projectId);
   if (anomalies.length > 0) {
-    md += `- Velocity anomalies: ${anomalies.map((a) => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
+    if (native) {
+      md += `- Velocity: ${anomalies.map((a) => `${a.path}(${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
+    } else {
+      md += `- Velocity anomalies: ${anomalies.map((a) => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
+    }
   }
 
   // Open questions count
@@ -832,7 +897,11 @@ async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promis
   if (promotionCandidates.length > 0) {
     md += `- Promotion candidates (ready for CLAUDE.md):\n`;
     for (const c of promotionCandidates.slice(0, 3)) {
-      md += `  - L${c.id}: "${c.title}" (conf ${c.confidence})\n`;
+      if (native) {
+        md += `  K[promo|#${c.id}|${c.title.slice(0, 40)}|conf:${c.confidence}]\n`;
+      } else {
+        md += `  - L${c.id}: "${c.title}" (conf ${c.confidence})\n`;
+      }
     }
     if (promotionCandidates.length > 3) {
       md += `  - ...and ${promotionCandidates.length - 3} more\n`;

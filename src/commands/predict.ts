@@ -10,6 +10,7 @@ import type { OutcomeStatus, PredictionAdvisory, PredictionBundle } from "../typ
 import { outputJson } from "../utils/format";
 import { getTopProfileEntries } from "./profile";
 import { getCorrelatedFiles } from "./session";
+import { isNativeFormat, formatPredictBundle } from "../output/formatter.js";
 
 // ============================================================================
 // Predictive Context
@@ -694,137 +695,179 @@ export async function handlePredictCommand(db: DatabaseAdapter, projectId: numbe
 
   const bundle = await predictContext(db, projectId, { task, files, advise });
 
-  console.error("\n🔮 Predictive Context Bundle:\n");
+  if (isNativeFormat()) {
+    // Native format: dense, token-efficient output
+    console.error("Predict[bundle]");
+    console.error(
+      formatPredictBundle({
+        relatedFiles: bundle.relatedFiles,
+        cochangingFiles: bundle.cochangingFiles,
+        relevantDecisions: bundle.relevantDecisions,
+        openIssues: bundle.openIssues,
+        applicableLearnings: bundle.applicableLearnings,
+        testFiles: bundle.testFiles,
+        workflowPattern: bundle.workflowPattern,
+      })
+    );
 
-  if (bundle.relatedFiles.length > 0) {
-    console.error("  📁 Related Files:");
-    for (const f of bundle.relatedFiles) {
-      console.error(`     ${f.path} — ${f.reason}`);
-    }
-    console.error("");
-  }
-
-  if (bundle.cochangingFiles.length > 0) {
-    console.error("  🔗 Co-changing Files:");
-    for (const f of bundle.cochangingFiles) {
-      console.error(`     ${f.path} (${f.cochange_count}x together)`);
-    }
-    console.error("");
-  }
-
-  if (bundle.relevantDecisions.length > 0) {
-    console.error("  📋 Relevant Decisions:");
-    for (const d of bundle.relevantDecisions) {
-      console.error(`     #${d.id}: ${d.title}`);
-    }
-    console.error("");
-  }
-
-  if (bundle.openIssues.length > 0) {
-    console.error("  ⚠️  Open Issues:");
-    for (const i of bundle.openIssues) {
-      console.error(`     #${i.id} [sev ${i.severity}]: ${i.title}`);
-    }
-    console.error("");
-  }
-
-  if (bundle.applicableLearnings.length > 0) {
-    console.error("  💡 Applicable Learnings:");
-    for (const l of bundle.applicableLearnings) {
-      if (l.native) {
-        // Use native format (transformer-optimized)
-        console.error(`     ${l.native}`);
-      } else {
-        // Fallback to prose
-        console.error(`     ${l.title}: ${l.content.slice(0, 60)}`);
+    // Profile entries in native format
+    if (bundle.profileEntries.length > 0) {
+      for (const p of bundle.profileEntries) {
+        const pct = Math.round(p.confidence * 100);
+        console.error(`P[${p.key}|val:${p.value.slice(0, 50)}|conf:${pct}]`);
       }
     }
-    console.error("");
-  }
 
-  if (bundle.workflowPattern) {
-    console.error(`  🔄 Workflow: ${bundle.workflowPattern.task_type}`);
-    console.error(`     ${bundle.workflowPattern.approach.slice(0, 80)}`);
-    console.error("");
-  }
+    // Last session context in native format
+    if (bundle.lastSessionContext) {
+      const ctx = bundle.lastSessionContext;
+      const parts = [`#${ctx.sessionId}`];
+      if (ctx.goal) parts.push(`goal:${ctx.goal.slice(0, 40)}`);
+      if (ctx.decisionsMade.length > 0) parts.push(`decisions:${ctx.decisionsMade.map((d) => d.id).join(",")}`);
+      if (ctx.issuesResolved.length > 0) parts.push(`resolved:${ctx.issuesResolved.map((i) => i.id).join(",")}`);
+      console.error(`S[${parts.join("|")}]`);
+    }
 
-  if (bundle.profileEntries.length > 0) {
-    console.error("  👤 Profile Hints:");
-    for (const p of bundle.profileEntries) {
-      console.error(`     [${p.category}] ${p.key}: ${p.value.slice(0, 50)}`);
-    }
-    console.error("");
-  }
-
-  // New: Last session context from relationship graph
-  if (bundle.lastSessionContext) {
-    const ctx = bundle.lastSessionContext;
-    console.error(`  📍 Last Session (#${ctx.sessionId}):`);
-    if (ctx.goal) {
-      console.error(`     Goal: ${ctx.goal.slice(0, 60)}`);
-    }
-    if (ctx.decisionsMade.length > 0) {
-      console.error(`     Decisions made: ${ctx.decisionsMade.map((d) => `D${d.id}`).join(", ")}`);
-    }
-    if (ctx.issuesFound.length > 0) {
-      console.error(`     Issues found: ${ctx.issuesFound.map((i) => `#${i.id}`).join(", ")}`);
-    }
-    if (ctx.issuesResolved.length > 0) {
-      console.error(`     Issues resolved: ${ctx.issuesResolved.map((i) => `#${i.id}`).join(", ")}`);
-    }
-    if (ctx.learningsExtracted.length > 0) {
-      console.error(`     Learnings: ${ctx.learningsExtracted.map((l) => l.title.slice(0, 30)).join(", ")}`);
-    }
-    console.error("");
-  }
-
-  // New: Test files for input files
-  if (bundle.testFiles.length > 0) {
-    console.error("  🧪 Test Coverage:");
-    for (const t of bundle.testFiles) {
-      console.error(`     ${t.testPath} → ${t.sourcePath}`);
-    }
-    console.error("");
-  }
-
-  // Advisory section (when --advise flag is used)
-  if (bundle.advisory) {
-    const a = bundle.advisory;
-    const riskEmoji = a.riskLevel === "high" ? "🔴" : a.riskLevel === "medium" ? "🟡" : "🟢";
-
-    console.error(`\n⚡ Advisory (${riskEmoji} ${a.riskLevel.toUpperCase()} risk, score: ${a.riskScore}/10):\n`);
-
-    if (a.watchOut.length > 0) {
-      console.error("  ⚠️  Watch Out:");
+    // Advisory in native format
+    if (bundle.advisory) {
+      const a = bundle.advisory;
+      console.error(`A[risk:${a.riskLevel}|score:${a.riskScore}]`);
       for (const w of a.watchOut) {
-        const icon = w.severity === "critical" ? "🔴" : w.severity === "warning" ? "🟠" : "💡";
-        console.error(`     ${icon} ${w.warning}`);
-        console.error(`        Source: ${w.source}`);
+        console.error(`!${w.severity === "critical" ? "CRIT" : "WARN"}: ${w.warning.slice(0, 60)}`);
+      }
+      if (a.suggestedSteps.length > 0) {
+        console.error(`Steps: ${a.suggestedSteps.slice(0, 3).join(" | ")}`);
+      }
+    }
+  } else {
+    // Human format: emoji/prose output
+    console.error("\n🔮 Predictive Context Bundle:\n");
+
+    if (bundle.relatedFiles.length > 0) {
+      console.error("  📁 Related Files:");
+      for (const f of bundle.relatedFiles) {
+        console.error(`     ${f.path} — ${f.reason}`);
       }
       console.error("");
     }
 
-    if (a.suggestedApproach) {
-      console.error(`  📋 Approach: ${a.suggestedApproach.slice(0, 80)}`);
-      console.error("");
-    }
-
-    if (a.suggestedSteps.length > 0) {
-      console.error("  📝 Suggested Steps:");
-      for (let i = 0; i < a.suggestedSteps.length; i++) {
-        console.error(`     ${i + 1}. ${a.suggestedSteps[i]}`);
+    if (bundle.cochangingFiles.length > 0) {
+      console.error("  🔗 Co-changing Files:");
+      for (const f of bundle.cochangingFiles) {
+        console.error(`     ${f.path} (${f.cochange_count}x together)`);
       }
       console.error("");
     }
 
-    if (a.decisionOutcomes.length > 0) {
-      console.error("  📊 Past Decision Outcomes:");
-      for (const d of a.decisionOutcomes) {
-        const icon = d.outcome === "succeeded" ? "✅" : d.outcome === "failed" ? "❌" : "🔄";
-        console.error(`     ${icon} D#${d.id}: ${d.title} (${d.outcome})`);
-        if (d.notes) console.error(`        Notes: ${d.notes.slice(0, 60)}`);
+    if (bundle.relevantDecisions.length > 0) {
+      console.error("  📋 Relevant Decisions:");
+      for (const d of bundle.relevantDecisions) {
+        console.error(`     #${d.id}: ${d.title}`);
       }
       console.error("");
+    }
+
+    if (bundle.openIssues.length > 0) {
+      console.error("  ⚠️  Open Issues:");
+      for (const i of bundle.openIssues) {
+        console.error(`     #${i.id} [sev ${i.severity}]: ${i.title}`);
+      }
+      console.error("");
+    }
+
+    if (bundle.applicableLearnings.length > 0) {
+      console.error("  💡 Applicable Learnings:");
+      for (const l of bundle.applicableLearnings) {
+        if (l.native) {
+          console.error(`     ${l.native}`);
+        } else {
+          console.error(`     ${l.title}: ${l.content.slice(0, 60)}`);
+        }
+      }
+      console.error("");
+    }
+
+    if (bundle.workflowPattern) {
+      console.error(`  🔄 Workflow: ${bundle.workflowPattern.task_type}`);
+      console.error(`     ${bundle.workflowPattern.approach.slice(0, 80)}`);
+      console.error("");
+    }
+
+    if (bundle.profileEntries.length > 0) {
+      console.error("  👤 Profile Hints:");
+      for (const p of bundle.profileEntries) {
+        console.error(`     [${p.category}] ${p.key}: ${p.value.slice(0, 50)}`);
+      }
+      console.error("");
+    }
+
+    if (bundle.lastSessionContext) {
+      const ctx = bundle.lastSessionContext;
+      console.error(`  📍 Last Session (#${ctx.sessionId}):`);
+      if (ctx.goal) {
+        console.error(`     Goal: ${ctx.goal.slice(0, 60)}`);
+      }
+      if (ctx.decisionsMade.length > 0) {
+        console.error(`     Decisions made: ${ctx.decisionsMade.map((d) => `D${d.id}`).join(", ")}`);
+      }
+      if (ctx.issuesFound.length > 0) {
+        console.error(`     Issues found: ${ctx.issuesFound.map((i) => `#${i.id}`).join(", ")}`);
+      }
+      if (ctx.issuesResolved.length > 0) {
+        console.error(`     Issues resolved: ${ctx.issuesResolved.map((i) => `#${i.id}`).join(", ")}`);
+      }
+      if (ctx.learningsExtracted.length > 0) {
+        console.error(`     Learnings: ${ctx.learningsExtracted.map((l) => l.title.slice(0, 30)).join(", ")}`);
+      }
+      console.error("");
+    }
+
+    if (bundle.testFiles.length > 0) {
+      console.error("  🧪 Test Coverage:");
+      for (const t of bundle.testFiles) {
+        console.error(`     ${t.testPath} → ${t.sourcePath}`);
+      }
+      console.error("");
+    }
+
+    if (bundle.advisory) {
+      const a = bundle.advisory;
+      const riskEmoji = a.riskLevel === "high" ? "🔴" : a.riskLevel === "medium" ? "🟡" : "🟢";
+
+      console.error(`\n⚡ Advisory (${riskEmoji} ${a.riskLevel.toUpperCase()} risk, score: ${a.riskScore}/10):\n`);
+
+      if (a.watchOut.length > 0) {
+        console.error("  ⚠️  Watch Out:");
+        for (const w of a.watchOut) {
+          const icon = w.severity === "critical" ? "🔴" : w.severity === "warning" ? "🟠" : "💡";
+          console.error(`     ${icon} ${w.warning}`);
+          console.error(`        Source: ${w.source}`);
+        }
+        console.error("");
+      }
+
+      if (a.suggestedApproach) {
+        console.error(`  📋 Approach: ${a.suggestedApproach.slice(0, 80)}`);
+        console.error("");
+      }
+
+      if (a.suggestedSteps.length > 0) {
+        console.error("  📝 Suggested Steps:");
+        for (let i = 0; i < a.suggestedSteps.length; i++) {
+          console.error(`     ${i + 1}. ${a.suggestedSteps[i]}`);
+        }
+        console.error("");
+      }
+
+      if (a.decisionOutcomes.length > 0) {
+        console.error("  📊 Past Decision Outcomes:");
+        for (const d of a.decisionOutcomes) {
+          const icon = d.outcome === "succeeded" ? "✅" : d.outcome === "failed" ? "❌" : "🔄";
+          console.error(`     ${icon} D#${d.id}: ${d.title} (${d.outcome})`);
+          if (d.notes) console.error(`        Notes: ${d.notes.slice(0, 60)}`);
+        }
+        console.error("");
+      }
     }
   }
 
