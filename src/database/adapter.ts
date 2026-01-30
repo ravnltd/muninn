@@ -17,17 +17,20 @@ export interface DatabaseAdapter {
   /**
    * Get a single row from a query
    */
+  // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   get<T = any>(sql: string, params?: any[]): Promise<T | null>;
 
   /**
    * Get all rows from a query
    */
+  // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   all<T = any>(sql: string, params?: any[]): Promise<T[]>;
 
   /**
    * Execute a single statement (INSERT, UPDATE, DELETE)
    * Returns last insert ID and affected row count
    */
+  // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   run(sql: string, params?: any[]): Promise<QueryResult>;
 
   /**
@@ -40,6 +43,7 @@ export interface DatabaseAdapter {
    * Execute multiple statements in a transaction
    * All succeed or all fail
    */
+  // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void>;
 
   /**
@@ -58,6 +62,7 @@ export interface DatabaseAdapter {
    * Local: returns bun:sqlite Database
    * Network: returns libSQL Client
    */
+  // biome-ignore lint/suspicious/noExplicitAny: Returns underlying DB instance (bun:sqlite or libSQL)
   raw(): any;
 
   /**

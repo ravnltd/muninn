@@ -12,15 +12,18 @@ import type { DatabaseAdapter, QueryResult } from "../adapter";
 export class LocalAdapter implements DatabaseAdapter {
   constructor(private db: Database) {}
 
+  // biome-ignore lint/suspicious/noExplicitAny: bun:sqlite requires any[] for query params
   async get<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const result = this.db.query<T, any[]>(sql).get(...(params || []));
     return result || null;
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: bun:sqlite requires any[] for query params
   async all<T = any>(sql: string, params?: any[]): Promise<T[]> {
     return this.db.query<T, any[]>(sql).all(...(params || []));
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: bun:sqlite requires any[] for query params
   async run(sql: string, params?: any[]): Promise<QueryResult> {
     const result = this.db.run(sql, params || []);
     return {
@@ -33,6 +36,7 @@ export class LocalAdapter implements DatabaseAdapter {
     this.db.exec(sql);
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: bun:sqlite requires any[] for query params
   async batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void> {
     // Use transaction for atomicity
     this.db.run("BEGIN");

@@ -55,16 +55,19 @@ export class NetworkAdapter implements DatabaseAdapter {
     }, interval);
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async get<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const result = await this.client.execute({ sql, args: params || [] });
     return (result.rows[0] as T) || null;
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async all<T = any>(sql: string, params?: any[]): Promise<T[]> {
     const result = await this.client.execute({ sql, args: params || [] });
     return result.rows as T[];
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async run(sql: string, params?: any[]): Promise<QueryResult> {
     const result = await this.client.execute({ sql, args: params || [] });
     return {
@@ -200,6 +203,7 @@ export class NetworkAdapter implements DatabaseAdapter {
     return statements;
   }
 
+  // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void> {
     await this.client.batch(
       statements.map((stmt) => ({

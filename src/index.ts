@@ -318,21 +318,21 @@ async function main(): Promise<void> {
           case "history":
             await handleHistoryCommand(db, projectId, subArgs.slice(1));
             break;
+          case "conflicts":
+            await handleConflictsCommand(db, projectId, subArgs.slice(1));
+            break;
           default:
-            console.error("Usage: muninn learn <add|list|reinforce|history> [args]");
+            console.error("Usage: muninn learn <add|list|reinforce|history|conflicts> [args]");
             console.error("");
             console.error("Commands:");
             console.error("  add <title> --content <content>  Add a new learning");
             console.error("  list                             List all learnings");
             console.error("  reinforce <id>                   Boost confidence and reset decay timer");
             console.error("  history <id>                     Show version history of a learning");
+            console.error("  conflicts [list|resolve]         Manage learning contradictions");
         }
         break;
       }
-
-      case "conflicts":
-        await handleConflictsCommand(db, projectId, subArgs);
-        break;
 
       // Continuity commands
       case "observe":

@@ -45,9 +45,9 @@ function validateSshKeyPath(keyPath: string): string {
   const normalizedPath = normalize(resolve(keyPath));
   const home = homedir();
   const allowedPrefixes = [
-    resolve(home, ".ssh") + "/",
+    `${resolve(home, ".ssh")}/`,
     "/etc/ssh/",
-    process.cwd() + "/",
+    `${process.cwd()}/`,
   ];
 
   const isAllowed = allowedPrefixes.some((prefix) => normalizedPath.startsWith(prefix));
