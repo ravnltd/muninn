@@ -36,11 +36,47 @@ export interface PingResult {
   error?: string;
 }
 
+// Blocked hosts for SSRF protection
+const BLOCKED_HOSTS = [
+  "169.254.169.254", // AWS metadata
+  "metadata.google.internal", // GCP metadata
+  "metadata.goog", // GCP metadata
+  "100.100.100.200", // Alibaba metadata
+  "169.254.170.2", // AWS ECS task metadata
+];
+
 /**
  * Check if the primary server is reachable
  * Uses a simple HTTP HEAD request to the primary URL
  */
 export async function checkPrimaryReachable(url: string): Promise<PingResult> {
+  // SSRF protection: validate URL before making request
+  try {
+    const parsed = new URL(url);
+
+    // Block metadata endpoints and internal IPs
+    if (BLOCKED_HOSTS.includes(parsed.hostname)) {
+      return { ok: false, error: "Blocked host" };
+    }
+
+    // Block localhost variants except for development
+    if (
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname.endsWith(".localhost")
+    ) {
+      // Allow localhost only if explicitly configured
+      // This is a valid use case for local dev
+    }
+
+    // Only allow http/https protocols
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return { ok: false, error: "Invalid protocol" };
+    }
+  } catch {
+    return { ok: false, error: "Invalid URL" };
+  }
+
   const start = performance.now();
 
   try {

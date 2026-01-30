@@ -9,6 +9,33 @@ import { isEmbeddingAvailable } from "../../embeddings";
 import type { GlobalLearning, Pattern, QueryResult } from "../../types";
 import { logError } from "../../utils/errors";
 import { hasEmbeddings, hybridSearch as vectorHybridSearch } from "./vector";
+import { validateTableName } from "./utils";
+
+// ============================================================================
+// FTS5 Query Escaping
+// ============================================================================
+
+/**
+ * Escape FTS5 special characters to prevent query injection.
+ * FTS5 operators: AND, OR, NOT, NEAR, *, ", ^
+ */
+export function escapeFtsQuery(query: string): string {
+  // Remove FTS operators and wildcards
+  const sanitized = query
+    .replace(/["*^]/g, " ") // Remove special chars
+    .trim()
+    .slice(0, 200); // Limit length
+
+  if (!sanitized) return '""';
+
+  // Split into terms, filter operators, wrap in quotes
+  return sanitized
+    .split(/\s+/)
+    .filter((term) => !["OR", "AND", "NOT", "NEAR"].includes(term.toUpperCase()))
+    .filter((term) => term.length > 0)
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(" ");
+}
 
 // ============================================================================
 // Focus & Temperature Integration
@@ -98,14 +125,16 @@ async function heatQueryResults(db: DatabaseAdapter, results: QueryResult[]): Pr
     const table = tableMap[result.type];
     if (table) {
       try {
+        // Validate table name to prevent SQL injection
+        const validTable = validateTableName(table);
         await db.run(
-          `UPDATE ${table}
+          `UPDATE ${validTable}
           SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
           WHERE id = ?`,
           [result.id]
         );
       } catch {
-        // Temperature columns might not exist
+        // Temperature columns might not exist or table validation failed
       }
     }
   }
@@ -206,6 +235,10 @@ export async function semanticQuery(
 async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: number): Promise<QueryResult[]> {
   const results: QueryResult[] = [];
 
+  // Escape the query to prevent FTS5 injection
+  const safeQuery = escapeFtsQuery(query);
+  if (!safeQuery || safeQuery === '""') return results;
+
   // Search files
   try {
     const files = projectId
@@ -217,7 +250,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
           WHERE fts_files MATCH ?1 AND f.project_id = ?2 AND f.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5`,
-          [query, projectId]
+          [safeQuery, projectId]
         )
       : await db.all<FileSearchResult>(
           `SELECT f.id, f.path as title, f.purpose as content,
@@ -227,7 +260,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
           WHERE fts_files MATCH ?1 AND f.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5`,
-          [query]
+          [safeQuery]
         );
 
     results.push(
@@ -257,7 +290,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query, projectId]
+            [safeQuery, projectId]
           )
         : await db.all<DecisionSearchResult>(
             `SELECT d.id, d.title, d.decision as content, nk.native_format,
@@ -268,7 +301,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query]
+            [safeQuery]
           );
     } catch {
       // Fallback if native_knowledge table doesn't exist
@@ -281,7 +314,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_decisions MATCH ?1 AND d.project_id = ?2 AND d.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query, projectId]
+            [safeQuery, projectId]
           )
         : await db.all<DecisionSearchResult>(
             `SELECT d.id, d.title, d.decision as content,
@@ -291,7 +324,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_decisions MATCH ?1 AND d.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query]
+            [safeQuery]
           );
     }
 
@@ -320,7 +353,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
           WHERE fts_issues MATCH ?1 AND i.project_id = ?2 AND i.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5`,
-          [query, projectId]
+          [safeQuery, projectId]
         )
       : await db.all<IssueSearchResult>(
           `SELECT i.id, i.title, i.description as content,
@@ -330,7 +363,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
           WHERE fts_issues MATCH ?1 AND i.archived_at IS NULL
           ORDER BY relevance
           LIMIT 5`,
-          [query]
+          [safeQuery]
         );
 
     results.push(
@@ -361,7 +394,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query, projectId]
+            [safeQuery, projectId]
           )
         : await db.all<LearningSearchResult>(
             `SELECT l.id, l.title, l.content, nk.native_format,
@@ -372,7 +405,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query]
+            [safeQuery]
           );
     } catch {
       // Fallback if native_knowledge table doesn't exist
@@ -385,7 +418,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL) AND l.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query, projectId]
+            [safeQuery, projectId]
           )
         : await db.all<LearningSearchResult>(
             `SELECT l.id, l.title, l.content,
@@ -395,7 +428,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
             WHERE fts_learnings MATCH ?1 AND l.archived_at IS NULL
             ORDER BY relevance
             LIMIT 5`,
-            [query]
+            [safeQuery]
           );
     }
 
@@ -435,7 +468,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
           WHERE fts_symbols MATCH ?1 AND f.project_id = ?2
           ORDER BY relevance
           LIMIT 10`,
-          [query, projectId]
+          [safeQuery, projectId]
         )
       : await db.all<SymbolSearchResult>(
           `SELECT s.id, s.name, s.type, s.signature, s.purpose, f.path as file_path,
@@ -446,7 +479,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
           WHERE fts_symbols MATCH ?1
           ORDER BY relevance
           LIMIT 10`,
-          [query]
+          [safeQuery]
         );
 
     results.push(
@@ -477,7 +510,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
       WHERE fts_observations MATCH ?1
       ORDER BY relevance
       LIMIT 3`,
-      [query]
+      [safeQuery]
     );
 
     results.push(
@@ -508,7 +541,7 @@ async function ftsOnlyQuery(db: DatabaseAdapter, query: string, projectId?: numb
       WHERE fts_questions MATCH ?1 AND q.status = 'open'
       ORDER BY relevance
       LIMIT 3`,
-      [query]
+      [safeQuery]
     );
 
     results.push(
@@ -562,6 +595,9 @@ function mergeResults(vectorResults: QueryResult[], ftsResults: QueryResult[]): 
 // ============================================================================
 
 export async function searchGlobalLearnings(db: DatabaseAdapter, query: string): Promise<GlobalLearning[]> {
+  const safeQuery = escapeFtsQuery(query);
+  if (!safeQuery || safeQuery === '""') return [];
+
   try {
     return await db.all<GlobalLearning>(
       `SELECT g.* FROM fts_global_learnings
@@ -569,7 +605,7 @@ export async function searchGlobalLearnings(db: DatabaseAdapter, query: string):
       WHERE fts_global_learnings MATCH ?
       ORDER BY g.times_applied DESC
       LIMIT 10`,
-      [query]
+      [safeQuery]
     );
   } catch (error) {
     logError("searchGlobalLearnings", error);
@@ -606,13 +642,16 @@ export async function addGlobalLearning(
 // ============================================================================
 
 export async function searchPatterns(db: DatabaseAdapter, query: string): Promise<Pattern[]> {
+  const safeQuery = escapeFtsQuery(query);
+  if (!safeQuery || safeQuery === '""') return [];
+
   try {
     return await db.all<Pattern>(
       `SELECT p.* FROM fts_patterns
       JOIN patterns p ON fts_patterns.rowid = p.id
       WHERE fts_patterns MATCH ?
       LIMIT 10`,
-      [query]
+      [safeQuery]
     );
   } catch (error) {
     logError("searchPatterns", error);

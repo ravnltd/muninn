@@ -1,36 +1,134 @@
 #!/usr/bin/env bun
 
 /**
- * Muninn — MCP Server (Optimized)
+ * Muninn — MCP Server (Optimized + Hardened)
  *
  * Hybrid tool approach:
- * - 8 core tools with full schemas (frequently used, benefit from validation)
- * - 1 passthrough tool for all other commands (saves ~8k tokens)
+ * - 9 core tools with full schemas (frequently used, benefit from validation)
+ * - 1 passthrough tool for whitelisted commands (saves ~8k tokens)
+ *
+ * Security:
+ * - Uses Bun.spawnSync with argument arrays (no shell interpolation)
+ * - Command whitelist for passthrough tool
+ * - Input validation via Zod schemas
  */
 
-import { execSync } from "node:child_process";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  QueryInput,
+  CheckInput,
+  FileAddInput,
+  DecisionAddInput,
+  LearnAddInput,
+  IssueInput,
+  SessionInput,
+  PredictInput,
+  SuggestInput,
+  EnrichInput,
+  ApproveInput,
+  PassthroughInput,
+  validateInput,
+} from "./mcp-validation.js";
 
 function log(msg: string): void {
   process.stderr.write(`[muninn-mcp] ${msg}\n`);
 }
 
-function runContext(args: string, cwd?: string): string {
+/**
+ * Execute muninn CLI with safe argument array (no shell interpolation).
+ * Uses Bun.spawnSync to avoid shell injection vulnerabilities.
+ */
+function runContext(args: string[], cwd?: string): string {
   try {
-    const result = execSync(`muninn ${args}`, {
+    const result = Bun.spawnSync(["muninn", ...args], {
       cwd: cwd || process.cwd(),
-      encoding: "utf-8",
+      stdout: "pipe",
+      stderr: "pipe",
       timeout: 30000,
     });
-    return result;
-  } catch (error) {
-    if (error instanceof Error && "stderr" in error) {
-      return (error as { stderr: string }).stderr || error.message;
+
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+
+    if (result.exitCode !== 0) {
+      return stderr || stdout || `Command failed with exit code ${result.exitCode}`;
     }
-    return String(error);
+
+    return stdout || stderr;
+  } catch (error) {
+    return `Error: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+// ============================================================================
+// Command Whitelist for Passthrough Tool
+// ============================================================================
+
+const ALLOWED_PASSTHROUGH_COMMANDS = new Set([
+  "status",
+  "fragile",
+  "brief",
+  "resume",
+  "outcome",
+  "insights",
+  "bookmark",
+  "bm",
+  "focus",
+  "observe",
+  "obs",
+  "debt",
+  "pattern",
+  "stack",
+  "temporal",
+  "profile",
+  "workflow",
+  "wf",
+  "foundational",
+  "correlations",
+  "git-info",
+  "sync-hashes",
+  "drift",
+  "conflicts",
+  "deps",
+  "blast",
+  "db",
+  "smart-status",
+  "ss",
+]);
+
+/**
+ * Parse command string into argument array without shell interpretation.
+ * Handles quoted strings safely.
+ */
+function parseCommandArgs(command: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuote = false;
+  let quoteChar = "";
+
+  for (const char of command) {
+    if (inQuote) {
+      if (char === quoteChar) {
+        inQuote = false;
+      } else {
+        current += char;
+      }
+    } else if (char === '"' || char === "'") {
+      inQuote = true;
+      quoteChar = char;
+    } else if (char === " " || char === "\t") {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current) args.push(current);
+  return args;
 }
 
 const server = new Server({ name: "muninn", version: "2.0.0" }, { capabilities: { tools: {} } });
@@ -277,104 +375,96 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ========== CORE TOOLS ==========
 
       case "muninn_query": {
-        const query = typedArgs.query as string;
-        const flags = [
-          typedArgs.smart ? "--smart" : "",
-          typedArgs.vector ? "--vector" : "",
-          typedArgs.fts ? "--fts" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        result = runContext(`query "${query}" ${flags}`.trim(), cwd);
+        const validation = validateInput(QueryInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { query, smart, vector, fts } = validation.data;
+        const args = ["query", query];
+        if (smart) args.push("--smart");
+        if (vector) args.push("--vector");
+        if (fts) args.push("--fts");
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_check": {
-        const files = typedArgs.files as string[];
-        if (!files || files.length === 0) {
-          throw new Error("Files array required");
-        }
-        result = runContext(`check ${files.map((f) => `"${f}"`).join(" ")}`, cwd);
+        const validation = validateInput(CheckInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { files } = validation.data;
+        result = runContext(["check", ...files], validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_file_add": {
-        const path = typedArgs.path as string;
-        const purpose = typedArgs.purpose as string;
-        const fragility = typedArgs.fragility as number;
-        const fragReason = typedArgs.fragility_reason ? `--fragility-reason "${typedArgs.fragility_reason}"` : "";
-        const fileType = typedArgs.type ? `--type ${typedArgs.type}` : "";
-        result = runContext(
-          `file add "${path}" --purpose "${purpose}" --fragility ${fragility} ${fragReason} ${fileType}`.trim(),
-          cwd
-        );
+        const validation = validateInput(FileAddInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { path, purpose, fragility, fragility_reason, type } = validation.data;
+        const args = ["file", "add", path, "--purpose", purpose, "--fragility", String(fragility)];
+        if (fragility_reason) args.push("--fragility-reason", fragility_reason);
+        if (type) args.push("--type", type);
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_decision_add": {
-        const title = typedArgs.title as string;
-        const decision = typedArgs.decision as string;
-        const reasoning = typedArgs.reasoning as string;
-        const affects = typedArgs.affects ? `--affects '${typedArgs.affects}'` : "";
-        result = runContext(
-          `decision add --title "${title}" --decision "${decision}" --reasoning "${reasoning}" ${affects}`.trim(),
-          cwd
-        );
+        const validation = validateInput(DecisionAddInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { title, decision, reasoning, affects } = validation.data;
+        const args = ["decision", "add", "--title", title, "--decision", decision, "--reasoning", reasoning];
+        if (affects) args.push("--affects", affects);
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_learn_add": {
-        const title = typedArgs.title as string;
-        const content = typedArgs.content as string;
-        const category = typedArgs.category ? `--category ${typedArgs.category}` : "";
-        const context = typedArgs.context ? `--context "${typedArgs.context}"` : "";
-        const global = typedArgs.global ? "--global" : "";
-        const files = typedArgs.files ? `--files '${typedArgs.files}'` : "";
-        const foundational = typedArgs.foundational ? "--foundational" : "";
-        const reviewAfter = typedArgs.reviewAfter ? `--review-after ${typedArgs.reviewAfter}` : "";
-        result = runContext(
-          `learn add --title "${title}" --content "${content}" ${category} ${context} ${global} ${files} ${foundational} ${reviewAfter}`.trim(),
-          cwd
-        );
+        const validation = validateInput(LearnAddInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { title, content, category, context, global: isGlobal, files, foundational, reviewAfter } =
+          validation.data;
+        const args = ["learn", "add", "--title", title, "--content", content];
+        if (category) args.push("--category", category);
+        if (context) args.push("--context", context);
+        if (isGlobal) args.push("--global");
+        if (files) args.push("--files", files);
+        if (foundational) args.push("--foundational");
+        if (reviewAfter) args.push("--review-after", String(reviewAfter));
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_issue": {
-        const action = typedArgs.action as string;
-        if (action === "add") {
-          const title = typedArgs.title as string;
-          const severity = (typedArgs.severity as number) || 5;
-          const desc = typedArgs.description ? `--description "${typedArgs.description}"` : "";
-          const issueType = typedArgs.type ? `--type ${typedArgs.type}` : "";
-          result = runContext(`issue add --title "${title}" --severity ${severity} ${desc} ${issueType}`.trim(), cwd);
-        } else if (action === "resolve") {
-          const id = typedArgs.id as number;
-          const resolution = typedArgs.resolution as string;
-          result = runContext(`issue resolve ${id} "${resolution}"`, cwd);
+        const validation = validateInput(IssueInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const data = validation.data;
+        if (data.action === "add") {
+          const args = ["issue", "add", "--title", data.title, "--severity", String(data.severity ?? 5)];
+          if (data.description) args.push("--description", data.description);
+          if (data.type) args.push("--type", data.type);
+          result = runContext(args, data.cwd || cwd);
         } else {
-          throw new Error("Action must be 'add' or 'resolve'");
+          result = runContext(["issue", "resolve", String(data.id), data.resolution], data.cwd || cwd);
         }
         break;
       }
 
       case "muninn_session": {
-        const action = typedArgs.action as string;
-        if (action === "start") {
-          const goal = typedArgs.goal as string;
-          if (!goal) throw new Error("Goal required for session start");
+        const validation = validateInput(SessionInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const data = validation.data;
+        const workingCwd = data.cwd || cwd;
+        if (data.action === "start") {
           // Auto-end any active session
-          const prevSession = runContext("session last --json", cwd);
+          const prevSession = runContext(["session", "last", "--json"], workingCwd);
           try {
             const prev = JSON.parse(prevSession);
             if (prev && !prev.ended_at) {
-              runContext(`session end ${prev.id} --outcome "Replaced by new session"`, cwd);
+              runContext(["session", "end", String(prev.id), "--outcome", "Replaced by new session"], workingCwd);
             }
           } catch {
             /* no previous session */
           }
-          result = runContext(`session start "${goal.replace(/"/g, '\\"')}"`, cwd);
-        } else if (action === "end") {
-          const lastSession = runContext("session last --json", cwd);
+          result = runContext(["session", "start", data.goal], workingCwd);
+        } else {
+          const lastSession = runContext(["session", "last", "--json"], workingCwd);
           let sessionId: number | null = null;
           try {
             const parsed = JSON.parse(lastSession);
@@ -387,65 +477,72 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return { content: [{ type: "text", text: JSON.stringify({ error: "No active session" }) }] };
           }
 
-          let cmd = `session end ${sessionId}`;
-          if (typedArgs.outcome) cmd += ` --outcome "${(typedArgs.outcome as string).replace(/"/g, '\\"')}"`;
-          if (typedArgs.next_steps) cmd += ` --next "${(typedArgs.next_steps as string).replace(/"/g, '\\"')}"`;
-          if (typedArgs.success !== undefined) cmd += ` --success ${typedArgs.success}`;
-          result = runContext(cmd, cwd);
-        } else {
-          throw new Error("Action must be 'start' or 'end'");
+          const args = ["session", "end", String(sessionId)];
+          if (data.outcome) args.push("--outcome", data.outcome);
+          if (data.next_steps) args.push("--next", data.next_steps);
+          if (data.success !== undefined) args.push("--success", String(data.success));
+          result = runContext(args, workingCwd);
         }
         break;
       }
 
       case "muninn_predict": {
-        const task = typedArgs.task as string | undefined;
-        const files = typedArgs.files as string[] | undefined;
-        const advise = typedArgs.advise as boolean | undefined;
-        let cmd = "predict";
-        if (task) cmd += ` "${task.replace(/"/g, '\\"')}"`;
-        if (files && files.length > 0) cmd += ` --files ${files.join(" ")}`;
-        if (advise) cmd += " --advise";
-        result = runContext(cmd, cwd);
+        const validation = validateInput(PredictInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { task, files, advise } = validation.data;
+        const args = ["predict"];
+        if (task) args.push(task);
+        if (files && files.length > 0) args.push("--files", ...files);
+        if (advise) args.push("--advise");
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_suggest": {
-        const task = typedArgs.task as string;
-        if (!task) throw new Error("Task description required");
-        const limit = typedArgs.limit as number | undefined;
-        const includeSymbols = typedArgs.includeSymbols as boolean | undefined;
-        let cmd = `suggest "${task.replace(/"/g, '\\"')}"`;
-        if (limit) cmd += ` --limit ${limit}`;
-        if (includeSymbols) cmd += " --symbols";
-        result = runContext(cmd, cwd);
+        const validation = validateInput(SuggestInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { task, limit, includeSymbols } = validation.data;
+        const args = ["suggest", task];
+        if (limit) args.push("--limit", String(limit));
+        if (includeSymbols) args.push("--symbols");
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_enrich": {
-        const tool = typedArgs.tool as string;
-        const input = typedArgs.input as string;
-        if (!tool) throw new Error("Tool name required");
-        if (!input) throw new Error("Tool input required");
-        // Escape the JSON input for shell
-        const escapedInput = input.replace(/'/g, "'\\''");
-        result = runContext(`enrich ${tool} '${escapedInput}'`, cwd);
+        const validation = validateInput(EnrichInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { tool, input } = validation.data;
+        result = runContext(["enrich", tool, input], validation.data.cwd || cwd);
         break;
       }
 
       case "muninn_approve": {
-        const operationId = typedArgs.operationId as string;
-        if (!operationId) throw new Error("Operation ID required");
-        result = runContext(`approve ${operationId}`, cwd);
+        const validation = validateInput(ApproveInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { operationId } = validation.data;
+        result = runContext(["approve", operationId], validation.data.cwd || cwd);
         break;
       }
 
       // ========== PASSTHROUGH ==========
 
       case "muninn": {
-        const command = typedArgs.command as string;
-        if (!command) throw new Error("Command required");
-        result = runContext(command, cwd);
+        const validation = validateInput(PassthroughInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const { command } = validation.data;
+
+        const args = parseCommandArgs(command);
+        if (args.length === 0) throw new Error("Empty command");
+
+        const subcommand = args[0].toLowerCase();
+        if (!ALLOWED_PASSTHROUGH_COMMANDS.has(subcommand)) {
+          throw new Error(
+            `Command "${subcommand}" not allowed via passthrough. Use dedicated tools for: query, check, file, decision, learn, issue, session, predict, suggest, enrich, approve. Allowed passthrough commands: ${[...ALLOWED_PASSTHROUGH_COMMANDS].sort().join(", ")}`
+          );
+        }
+
+        result = runContext(args, validation.data.cwd || cwd);
         break;
       }
 

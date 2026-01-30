@@ -54,7 +54,9 @@ function parseChatGPTExport(data: unknown[]): ParsedConversation[] {
   return (data as Record<string, unknown>[]).map((conv) => {
     const mapping = conv.mapping as Record<string, unknown> | undefined;
     const messages = mapping ? extractChatGPTMessages(mapping) : [];
-    const timestamps = messages.filter((m) => m.timestamp).map((m) => m.timestamp!);
+    const timestamps = messages
+      .filter((m): m is typeof m & { timestamp: number } => !!m.timestamp)
+      .map((m) => m.timestamp);
 
     const createTime = conv.create_time as number | undefined;
     const updateTime = conv.update_time as number | undefined;

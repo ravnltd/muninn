@@ -4,6 +4,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { validateTableName } from "../database/queries/utils";
 
 /**
  * Decay temperature based on session count since last reference.
@@ -11,14 +12,16 @@ import type { DatabaseAdapter } from "../database/adapter";
  * Hot = referenced in last 3 sessions, Warm = 3-10, Cold = 10+
  */
 export async function decayTemperatures(db: DatabaseAdapter, projectId: number): Promise<void> {
-  const tables = ["files", "decisions", "issues", "learnings"];
+  const tables = ["files", "decisions", "issues", "learnings"] as const;
 
   for (const table of tables) {
+    // Validate table name to prevent SQL injection
+    const validTable = validateTableName(table);
     try {
       // Set cold: last_referenced_at more than 10 sessions ago or null
       await db.run(
         `
-        UPDATE ${table}
+        UPDATE ${validTable}
         SET temperature = 'cold'
         WHERE project_id = ? AND temperature != 'cold'
         AND (last_referenced_at IS NULL OR
@@ -30,7 +33,7 @@ export async function decayTemperatures(db: DatabaseAdapter, projectId: number):
       // Set warm: last_referenced between 3-10 sessions ago
       await db.run(
         `
-        UPDATE ${table}
+        UPDATE ${validTable}
         SET temperature = 'warm'
         WHERE project_id = ? AND temperature = 'hot'
         AND last_referenced_at IS NOT NULL
@@ -48,10 +51,12 @@ export async function decayTemperatures(db: DatabaseAdapter, projectId: number):
  * Heat an entity when it's queried/referenced
  */
 export async function heatEntity(db: DatabaseAdapter, table: string, id: number): Promise<void> {
+  // Validate table name to prevent SQL injection
+  const validTable = validateTableName(table);
   try {
     await db.run(
       `
-      UPDATE ${table}
+      UPDATE ${validTable}
       SET temperature = 'hot', last_referenced_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `,

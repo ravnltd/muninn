@@ -4,6 +4,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import type { DatabaseAdapter } from "../database/adapter";
 import type {
   Conversation,
@@ -12,6 +13,58 @@ import type {
   ExtractEntityType,
 } from "../types";
 import { outputJson, outputError } from "../utils/format";
+import { getApiKey } from "../utils/api-keys";
+
+// ============================================================================
+// Response Validation Schema
+// ============================================================================
+
+const ExtractionResultSchema = z.object({
+  decisions: z
+    .array(
+      z.object({
+        title: z.string().max(200),
+        decision: z.string().max(2000),
+        reasoning: z.string().max(2000).default(""),
+        confidence: z.number().min(0).max(1),
+        excerpt: z.string().max(2000).optional(),
+      })
+    )
+    .default([]),
+  learnings: z
+    .array(
+      z.object({
+        title: z.string().max(200),
+        content: z.string().max(2000),
+        category: z.enum(["pattern", "gotcha", "preference", "convention"]),
+        confidence: z.number().min(0).max(1),
+        excerpt: z.string().max(2000).optional(),
+      })
+    )
+    .default([]),
+  issues: z
+    .array(
+      z.object({
+        title: z.string().max(200),
+        description: z.string().max(2000).default(""),
+        resolution: z.string().max(2000).optional(),
+        confidence: z.number().min(0).max(1).default(0.8),
+        excerpt: z.string().max(2000).optional(),
+      })
+    )
+    .default([]),
+  preferences: z
+    .array(
+      z.object({
+        key: z.string().max(200),
+        value: z.string().max(2000),
+        confidence: z.number().min(0).max(1),
+        excerpt: z.string().max(2000).optional(),
+      })
+    )
+    .default([]),
+  projects_mentioned: z.array(z.string().max(200)).default([]),
+});
 
 // ============================================================================
 // Configuration
@@ -159,13 +212,13 @@ async function extractWithLLM(
   conversationContent: string,
   title: string | null
 ): Promise<ExtractionResult | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const keyResult = getApiKey("anthropic");
+  if (!keyResult.ok) {
     console.error("⚠️  ANTHROPIC_API_KEY not set, skipping extraction");
     return null;
   }
 
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey: keyResult.value });
 
   try {
     const response = await client.messages.create({
@@ -190,7 +243,14 @@ async function extractWithLLM(
       return null;
     }
 
-    return JSON.parse(jsonMatch[0]) as ExtractionResult;
+    // Validate the response structure using Zod
+    const rawResult = JSON.parse(jsonMatch[0]);
+    const parsed = ExtractionResultSchema.safeParse(rawResult);
+    if (!parsed.success) {
+      console.error("⚠️  Invalid extraction result:", parsed.error.message);
+      return null;
+    }
+    return parsed.data as ExtractionResult;
   } catch (error) {
     console.error(`⚠️  Extraction error: ${error}`);
     return null;

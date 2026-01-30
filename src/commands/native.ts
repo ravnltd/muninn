@@ -368,7 +368,7 @@ export function formatDecisionNative(
   parts.push(`why:${result.why}`);
   parts.push(`conf:${result.conf}`);
 
-  return parts.join("|") + "]";
+  return `${parts.join("|")}]`;
 }
 
 /**
@@ -391,7 +391,7 @@ export function formatNative(k: NativeKnowledge): string {
   }
   parts.push(`conf:${k.confidence}`);
 
-  return parts.join("|") + "]";
+  return `${parts.join("|")}]`;
 }
 
 /**

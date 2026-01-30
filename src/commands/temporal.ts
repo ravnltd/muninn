@@ -5,6 +5,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { validateTableName } from "../database/queries/utils";
 import type { QueryResult } from "../types";
 import { outputJson, outputSuccess } from "../utils/format";
 
@@ -76,8 +77,10 @@ async function getEntityTemperature(db: DatabaseAdapter, type: string, id: numbe
   if (!table) return null;
 
   try {
+    // Validate table name to prevent SQL injection
+    const validTable = validateTableName(table);
     const result = await db.get<{ temperature: string }>(
-      `SELECT COALESCE(temperature, 'cold') as temperature FROM ${table} WHERE id = ?`,
+      `SELECT COALESCE(temperature, 'cold') as temperature FROM ${validTable} WHERE id = ?`,
       [id]
     );
     return result?.temperature ?? null;

@@ -147,9 +147,9 @@ function extractFilePaths(input: string): string[] {
   // - Absolute paths: /foo/bar.ts
   // - Relative paths: ./foo/bar.ts, ../foo/bar.ts
   // - Simple paths: foo/bar.ts, src/index.ts
-  const pathPattern = /(?:^|[\s"'])([.\/]?[\w\-./]+\.[a-zA-Z0-9]+)(?:[\s"']|$)/g;
+  const pathPattern = /(?:^|[\s"'])([./]?[\w\-./]+\.[a-zA-Z0-9]+)(?:[\s"']|$)/g;
 
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = pathPattern.exec(input)) !== null) {
     const path = match[1];
     // Filter out obvious non-files
@@ -180,7 +180,7 @@ function extractFilesFromCommand(command: string): string[] {
   ];
 
   for (const pattern of patterns) {
-    let match;
+    let match: RegExpExecArray | null;
     while ((match = pattern.exec(command)) !== null) {
       const path = match[1];
       if (looksLikeFilePath(path)) {

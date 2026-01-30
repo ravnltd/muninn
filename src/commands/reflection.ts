@@ -7,6 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { DatabaseAdapter } from "../database/adapter";
 import type { PatternInstance, ReflectionQuestion, ReflectionQuestionType } from "../types";
 import { outputJson, outputError } from "../utils/format";
+import { getApiKey } from "../utils/api-keys";
 
 // ============================================================================
 // LLM Question Generation
@@ -50,13 +51,13 @@ async function generateQuestionsWithLLM(
   patterns: PatternInstance[],
   contradictions: PatternInstance[]
 ): Promise<GeneratedQuestion[]> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const keyResult = getApiKey("anthropic");
+  if (!keyResult.ok) {
     console.error("⚠️  ANTHROPIC_API_KEY not set, using rule-based generation");
     return generateQuestionsRuleBased(patterns, contradictions);
   }
 
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey: keyResult.value });
 
   // Format patterns for the prompt
   const patternSummary = patterns

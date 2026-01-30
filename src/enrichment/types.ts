@@ -52,6 +52,7 @@ export interface EnrichmentResult {
     cacheHits: number;
     cacheMisses: number;
   };
+  error?: string;
 }
 
 // ============================================================================

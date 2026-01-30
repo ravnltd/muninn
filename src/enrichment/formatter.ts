@@ -17,6 +17,22 @@
 import type { BlockLevel, EnricherOutput, EnrichmentResult } from "./types";
 
 // ============================================================================
+// String Escaping
+// ============================================================================
+
+/**
+ * Escape special characters in user data to prevent format injection.
+ * Escapes |, [, and ] which are used as delimiters in the native format.
+ */
+function escapeNativeFormat(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\") // Escape backslashes first
+    .replace(/\|/g, "\\|") // Escape pipe delimiter
+    .replace(/\[/g, "\\[") // Escape opening bracket
+    .replace(/\]/g, "\\]"); // Escape closing bracket
+}
+
+// ============================================================================
 // Token Estimation
 // ============================================================================
 
@@ -41,16 +57,16 @@ export function formatFileNative(opts: {
   deps?: number;
   type?: string;
 }): string {
-  const parts = [opts.path];
+  const parts = [escapeNativeFormat(opts.path)];
 
   if (opts.fragility !== undefined && opts.fragility > 0) {
     parts.push(`frag:${opts.fragility}`);
   }
   if (opts.type) {
-    parts.push(`type:${opts.type}`);
+    parts.push(`type:${escapeNativeFormat(opts.type)}`);
   }
   if (opts.purpose) {
-    parts.push(`purpose:${opts.purpose.slice(0, 50)}`);
+    parts.push(`purpose:${escapeNativeFormat(opts.purpose.slice(0, 50))}`);
   }
   if (opts.deps !== undefined && opts.deps > 0) {
     parts.push(`deps:${opts.deps}`);
@@ -70,19 +86,19 @@ export function formatLearningNative(opts: {
   why?: string;
   confidence?: number;
 }): string {
-  const parts = [opts.type];
+  const parts = [escapeNativeFormat(opts.type)];
 
   if (opts.entities && opts.entities.length > 0) {
-    parts.push(`ent:${opts.entities.slice(0, 5).join(",")}`);
+    parts.push(`ent:${opts.entities.slice(0, 5).map(escapeNativeFormat).join(",")}`);
   }
   if (opts.when) {
-    parts.push(`when:${opts.when.slice(0, 30)}`);
+    parts.push(`when:${escapeNativeFormat(opts.when.slice(0, 30))}`);
   }
   if (opts.action) {
-    parts.push(`do:${opts.action.slice(0, 30)}`);
+    parts.push(`do:${escapeNativeFormat(opts.action.slice(0, 30))}`);
   }
   if (opts.why) {
-    parts.push(`why:${opts.why.slice(0, 40)}`);
+    parts.push(`why:${escapeNativeFormat(opts.why.slice(0, 40))}`);
   }
   if (opts.confidence !== undefined) {
     parts.push(`conf:${opts.confidence}`);
@@ -102,22 +118,22 @@ export function formatDecisionNative(opts: {
   confidence?: number;
   outcome?: string;
 }): string {
-  const parts = [opts.title.slice(0, 40)];
+  const parts = [escapeNativeFormat(opts.title.slice(0, 40))];
 
   if (opts.choice) {
-    parts.push(`choice:${opts.choice.slice(0, 30)}`);
+    parts.push(`choice:${escapeNativeFormat(opts.choice.slice(0, 30))}`);
   }
   if (opts.alt) {
-    parts.push(`alt:${opts.alt.slice(0, 20)}`);
+    parts.push(`alt:${escapeNativeFormat(opts.alt.slice(0, 20))}`);
   }
   if (opts.why) {
-    parts.push(`why:${opts.why.slice(0, 40)}`);
+    parts.push(`why:${escapeNativeFormat(opts.why.slice(0, 40))}`);
   }
   if (opts.confidence !== undefined) {
     parts.push(`conf:${opts.confidence}`);
   }
   if (opts.outcome && opts.outcome !== "pending") {
-    parts.push(`out:${opts.outcome}`);
+    parts.push(`out:${escapeNativeFormat(opts.outcome)}`);
   }
 
   return `D[${parts.join("|")}]`;
@@ -135,9 +151,9 @@ export function formatIssueNative(opts: {
   const parts = [`#${opts.id}`, `sev:${opts.severity}`];
 
   if (opts.type && opts.type !== "bug") {
-    parts.push(`type:${opts.type}`);
+    parts.push(`type:${escapeNativeFormat(opts.type)}`);
   }
-  parts.push(opts.title.slice(0, 50));
+  parts.push(escapeNativeFormat(opts.title.slice(0, 50)));
 
   return `I[${parts.join("|")}]`;
 }
@@ -254,7 +270,7 @@ export function assembleResult(
 
   // Add non-empty enricher content
   for (const output of sorted) {
-    if (output.content && output.content.trim()) {
+    if (output.content?.trim()) {
       contextParts.push(output.content);
     }
   }

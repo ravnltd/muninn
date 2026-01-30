@@ -133,6 +133,7 @@ function buildBlockReason(fragility: number, fragilityReason: string | null): st
 
 function generateOperationId(): string {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 8);
+  const { randomBytes } = require("node:crypto");
+  const random = randomBytes(12).toString("hex");
   return `op_${timestamp}_${random}`;
 }

@@ -279,9 +279,15 @@ async function main(): Promise<void> {
           case "add":
             await issueAdd(db, projectId, subArgs.slice(1));
             break;
-          case "resolve":
-            await issueResolve(db, parseInt(subArgs[1], 10), subArgs.slice(2).join(" "));
+          case "resolve": {
+            const issueId = parseInt(subArgs[1], 10);
+            if (Number.isNaN(issueId)) {
+              console.error("Error: Invalid issue ID");
+              break;
+            }
+            await issueResolve(db, issueId, subArgs.slice(2).join(" "));
             break;
+          }
           case "list":
             await issueList(db, projectId, subArgs[1]);
             break;
@@ -618,9 +624,18 @@ async function main(): Promise<void> {
         Bun.serve({ fetch: app.fetch, port });
 
         if (shouldOpen) {
-          const { exec } = await import("node:child_process");
-          const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-          exec(`${openCmd} http://localhost:${port}`);
+          const { spawn } = await import("node:child_process");
+          const openCmd =
+            process.platform === "darwin"
+              ? "open"
+              : process.platform === "win32"
+                ? "cmd"
+                : "xdg-open";
+          const args =
+            process.platform === "win32"
+              ? ["/c", "start", `http://localhost:${port}`]
+              : [`http://localhost:${port}`];
+          spawn(openCmd, args, { detached: true, stdio: "ignore" }).unref();
         }
 
         // Keep the process running

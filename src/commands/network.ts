@@ -252,6 +252,12 @@ export async function networkMigrate(
     return;
   }
 
+  if (!config.primaryUrl) {
+    console.error("❌ Primary URL not configured for network mode.");
+    outputJson({ migrated: false, error: "Primary URL not configured" });
+    return;
+  }
+
   // Verify backup file exists
   if (!existsSync(backupPath)) {
     console.error(`❌ Backup file not found: ${backupPath}`);
@@ -276,7 +282,7 @@ export async function networkMigrate(
   // Create direct connection to primary for migration writes
   // This bypasses the embedded replica to avoid corruption
   const directClient = createClient({
-    url: config.primaryUrl!,
+    url: config.primaryUrl,
     authToken: config.authToken,
   });
 
@@ -401,7 +407,7 @@ export async function networkMigrate(
           } else {
             skipped++;
           }
-        } catch (error) {
+        } catch (_error) {
           // Row might already exist or have constraint issues
           skipped++;
         }

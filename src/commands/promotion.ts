@@ -267,7 +267,7 @@ async function getPromotedLearnings(
       if (!bySection.has(section)) {
         bySection.set(section, []);
       }
-      bySection.get(section)!.push({
+      bySection.get(section)?.push({
         id: l.id,
         title: l.title,
         content: l.content,
@@ -299,7 +299,7 @@ async function generatePromotedSection(db: DatabaseAdapter, projectId: number): 
     md += `### ${section}\n`;
     for (const l of learnings) {
       // Truncate content for readability
-      const summary = l.content.length > 100 ? l.content.slice(0, 100) + "..." : l.content;
+      const summary = l.content.length > 100 ? `${l.content.slice(0, 100)}...` : l.content;
       md += `- **L${l.id}: ${l.title}** - ${summary}\n`;
     }
     md += "\n";
@@ -339,7 +339,7 @@ export async function syncPromotedToCLAUDEMD(
       updated = `${before.trimEnd()}\n\n${promotedSection}${after.trimStart()}`;
     } else {
       // No promoted learnings - remove section entirely
-      updated = `${before.trimEnd()}${after.trimStart() ? "\n\n" + after.trimStart() : ""}`;
+      updated = `${before.trimEnd()}${after.trimStart() ? `\n\n${after.trimStart()}` : ""}`;
     }
   } else if (promotedSection) {
     // No existing section - append before the end
@@ -478,7 +478,7 @@ export async function handlePromotionCommand(
     default: {
       // Check if it's a numeric ID (promote command)
       const id = parseInt(subCmd, 10);
-      if (id && !isNaN(id)) {
+      if (id && !Number.isNaN(id)) {
         // Look for --to flag
         const toIdx = args.indexOf("--to");
         const section = toIdx !== -1 ? args.slice(toIdx + 1).join(" ") : "General";

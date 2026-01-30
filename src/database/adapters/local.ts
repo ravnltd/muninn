@@ -6,7 +6,7 @@
  * for minimal overhead while maintaining interface compatibility.
  */
 
-import { Database } from "bun:sqlite";
+import type { Database } from "bun:sqlite";
 import type { DatabaseAdapter, QueryResult } from "../adapter";
 
 export class LocalAdapter implements DatabaseAdapter {

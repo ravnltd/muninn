@@ -25,6 +25,9 @@ import type {
 } from "./types";
 import { DEFAULT_CONFIG } from "./types";
 
+// Maximum allowed raw input length (1MB)
+const MAX_RAW_INPUT_LENGTH = 1_000_000;
+
 // ============================================================================
 // Engine Class
 // ============================================================================
@@ -72,6 +75,21 @@ export class EnrichmentEngine {
     rawInput: string
   ): Promise<EnrichmentResult> {
     const startTime = performance.now();
+
+    // Validate raw input length to prevent DoS
+    if (rawInput.length > MAX_RAW_INPUT_LENGTH) {
+      return {
+        context: "",
+        totalTokens: 0,
+        enrichersUsed: [],
+        metrics: {
+          latencyMs: performance.now() - startTime,
+          cacheHits: 0,
+          cacheMisses: 0,
+        },
+        error: "Input too large",
+      };
+    }
 
     // Parse the input to extract files
     const parsed = parseToolInput(tool, rawInput);
@@ -173,11 +191,13 @@ export class EnrichmentEngine {
 
   /**
    * Approve a pending operation
+   * Uses atomic UPDATE with WHERE clause to prevent race conditions
    */
   async approve(db: DatabaseAdapter, operationId: string): Promise<boolean> {
     try {
+      // Only approve if not already approved (atomic check-and-set)
       const result = await db.run(
-        "UPDATE pending_approvals SET approved_at = CURRENT_TIMESTAMP WHERE operation_id = ?",
+        "UPDATE pending_approvals SET approved_at = CURRENT_TIMESTAMP WHERE operation_id = ? AND approved_at IS NULL",
         [operationId]
       );
       return (result.changes ?? 0) > 0;
@@ -266,11 +286,12 @@ export class EnrichmentEngine {
 // ============================================================================
 
 /**
- * Generate a unique operation ID
+ * Generate a unique operation ID using cryptographic randomness
  */
 function generateOperationId(): string {
   const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 8);
+  const { randomBytes } = require("node:crypto");
+  const random = randomBytes(12).toString("hex");
   return `op_${timestamp}_${random}`;
 }
 

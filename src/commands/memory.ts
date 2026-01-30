@@ -5,7 +5,7 @@
 
 import type { DatabaseAdapter } from "../database/adapter";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { closeGlobalDb, getGlobalDb } from "../database/connection";
 import {
   addGlobalLearning,
@@ -56,7 +56,16 @@ export async function fileAdd(db: DatabaseAdapter, projectId: number, args: stri
     exitWithUsage("Error: path is required");
   }
 
-  const fullPath = join(process.cwd(), values.path);
+  // Validate path to prevent traversal attacks
+  const basePath = process.cwd();
+  const fullPath = resolve(basePath, values.path);
+  const relativePath = relative(basePath, fullPath);
+
+  // Reject if path escapes base directory
+  if (relativePath.startsWith("..") || resolve(fullPath) !== fullPath) {
+    exitWithUsage("Error: Invalid path - path traversal not allowed");
+  }
+
   let contentHash: string | null = null;
   let fsMtime: string | null = null;
 
@@ -585,7 +594,7 @@ export async function learnAdd(db: DatabaseAdapter, projectId: number, args: str
       // Don't block learning creation on conversion failure
     }
 
-    const foundationalNote = isFoundational ? " (foundational, review every " + reviewAfterSessions + " sessions)" : "";
+    const foundationalNote = isFoundational ? ` (foundational, review every ${reviewAfterSessions} sessions)` : "";
     console.error(`✅ Learning L${insertedId} recorded${foundationalNote}`);
     if (nativeFormat) {
       console.error(`   Native: ${nativeFormat}`);

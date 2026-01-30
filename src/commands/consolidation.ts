@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { validateTableName } from "../database/queries/utils";
 import { generateEmbedding, serializeEmbedding } from "../embeddings";
 import { logError } from "../utils/errors";
 import { outputJson } from "../utils/format";
@@ -61,6 +62,8 @@ async function getColdEntities(
   table: ConsolidatableTable,
   currentSessionNumber: number
 ): Promise<ColdEntity[]> {
+  // Validate table name to prevent SQL injection
+  const validTable = validateTableName(table);
   const titleCol = table === "files" ? "path" : "title";
   const contentCol =
     table === "files" ? "purpose" : table === "decisions" ? "decision" : table === "issues" ? "description" : "content";
@@ -69,7 +72,7 @@ async function getColdEntities(
     return await db.all<ColdEntity>(
       `SELECT id, ${titleCol} as title, COALESCE(${contentCol}, '') as content,
              temperature, last_referenced_at as lastReferencedAt
-      FROM ${table}
+      FROM ${validTable}
       WHERE project_id = ?
         AND archived_at IS NULL
         AND (temperature = 'cold' OR temperature IS NULL)
@@ -77,8 +80,8 @@ async function getColdEntities(
           last_referenced_at IS NULL
           OR (
             CAST(? - COALESCE(
-              (SELECT MAX(session_number) FROM sessions WHERE project_id = ${table}.project_id
-                AND started_at <= ${table}.last_referenced_at),
+              (SELECT MAX(session_number) FROM sessions WHERE project_id = ${validTable}.project_id
+                AND started_at <= ${validTable}.last_referenced_at),
               0
             ) AS INTEGER) >= ${COLD_SESSION_THRESHOLD}
           )
@@ -87,7 +90,7 @@ async function getColdEntities(
       [projectId, currentSessionNumber]
     );
   } catch (error) {
-    logError(`consolidation:getCold:${table}`, error);
+    logError(`consolidation:getCold:${validTable}`, error);
     return [];
   }
 }

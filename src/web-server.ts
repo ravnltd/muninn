@@ -5,9 +5,11 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
+import { rateLimiter } from "hono-rate-limiter";
 import { z } from "zod";
 
 // ============================================================================
@@ -37,7 +39,6 @@ async function serveStaticFile(filePath: string, options: ServeFileOptions): Pro
       "Content-Length": String(content.byteLength),
       "Cache-Control": cacheControl,
       ...(options.cache === "no-cache" && { Pragma: "no-cache", Expires: "0" }),
-      "Access-Control-Allow-Origin": "*",
     },
   });
 }
@@ -57,30 +58,50 @@ function parseProjectId(id: string): number | null {
   return result.success ? result.data : null;
 }
 
-// Write operation schemas
+/**
+ * Escape FTS5 special characters to prevent query injection.
+ * FTS5 operators: AND, OR, NOT, NEAR, *, ", ^
+ */
+function escapeFtsQuery(query: string): string {
+  const sanitized = query
+    .replace(/["*^]/g, " ")
+    .trim()
+    .slice(0, 200);
+
+  if (!sanitized) return '""';
+
+  return sanitized
+    .split(/\s+/)
+    .filter((term) => !["OR", "AND", "NOT", "NEAR"].includes(term.toUpperCase()))
+    .filter((term) => term.length > 0)
+    .map((term) => `"${term.replace(/"/g, '""')}"`)
+    .join(" ");
+}
+
+// Write operation schemas with input length limits
 const CreateIssueInput = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
+  title: z.string().min(1).max(500),
+  description: z.string().max(10000).optional(),
   type: z.enum(["bug", "tech-debt", "enhancement", "question", "potential"]).default("bug"),
   severity: z.number().int().min(1).max(10).default(5),
-  workaround: z.string().optional(),
+  workaround: z.string().max(5000).optional(),
 });
 
 const ResolveIssueInput = z.object({
-  resolution: z.string().min(1),
+  resolution: z.string().min(1).max(5000),
 });
 
 const CreateDecisionInput = z.object({
-  title: z.string().min(1),
-  decision: z.string().min(1),
-  reasoning: z.string().optional(),
+  title: z.string().min(1).max(500),
+  decision: z.string().min(1).max(10000),
+  reasoning: z.string().max(10000).optional(),
 });
 
 const CreateLearningInput = z.object({
-  title: z.string().min(1),
-  content: z.string().min(1),
+  title: z.string().min(1).max(500),
+  content: z.string().min(1).max(10000),
   category: z.enum(["pattern", "gotcha", "preference", "convention", "architecture"]).default("pattern"),
-  context: z.string().optional(),
+  context: z.string().max(5000).optional(),
 });
 
 // ============================================================================
@@ -137,7 +158,63 @@ function safeQueryGet<T>(db: Database, query: string, fallbackQuery: string, par
 export function createApp(dbPath?: string): Hono {
   const app = new Hono();
 
-  app.use("/*", cors());
+  // Security headers
+  app.use(
+    "*",
+    secureHeaders({
+      xFrameOptions: "DENY",
+      xContentTypeOptions: "nosniff",
+      referrerPolicy: "strict-origin-when-cross-origin",
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    })
+  );
+
+  // CORS: Restrict to localhost origins only
+  app.use(
+    "/*",
+    cors({
+      origin: (origin) => {
+        // Allow same-origin requests (no Origin header)
+        if (!origin) return "*";
+        // Only allow localhost/127.0.0.1 origins
+        const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+        return localhostPattern.test(origin) ? origin : "";
+      },
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type"],
+      maxAge: 600,
+    })
+  );
+
+  // Rate limiting for write endpoints (30 requests per minute)
+  // NOTE: x-forwarded-for can be spoofed. In production, use a trusted proxy that sets
+  // this header. For local development, "localhost" fallback is acceptable.
+  const writeRateLimiter = rateLimiter({
+    windowMs: 60 * 1000,
+    limit: 30,
+    keyGenerator: (c) => c.req.header("x-forwarded-for") ?? "localhost",
+    message: { error: "Too many write requests, please slow down" },
+    standardHeaders: "draft-7",
+  });
+
+  // Rate limiting for read endpoints (200 requests per minute)
+  const readRateLimiter = rateLimiter({
+    windowMs: 60 * 1000,
+    limit: 200,
+    keyGenerator: (c) => c.req.header("x-forwarded-for") ?? "localhost",
+    message: { error: "Too many requests" },
+    standardHeaders: "draft-7",
+  });
+
+  // Apply rate limiting to API routes
+  app.use("/api/*", readRateLimiter);
 
   // Global DB for project listing
   function getGlobalDb(): Database {
@@ -261,18 +338,17 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
 
-    // Optional pagination
+    // Pagination with parameterized LIMIT/OFFSET
     const limitParam = c.req.query("limit");
-    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
-    const offset = parseInt(c.req.query("offset") || "0", 10);
+    const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 500, 1), 500) : 500;
+    const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
 
     try {
-      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const files = safeQuery(
         db,
-        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path${limitClause}`,
-        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path${limitClause}`,
-        [localProjectId]
+        `SELECT id, path, purpose, fragility, temperature, archived_at, velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path LIMIT ? OFFSET ?`,
+        `SELECT id, path, purpose, fragility, NULL as temperature, NULL as archived_at, NULL as velocity_score FROM files WHERE project_id = ? ORDER BY fragility DESC, path LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
       );
       return c.json(files);
     } finally {
@@ -287,17 +363,17 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
 
+    // Pagination with parameterized LIMIT/OFFSET
     const limitParam = c.req.query("limit");
-    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
-    const offset = parseInt(c.req.query("offset") || "0", 10);
+    const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 500, 1), 500) : 500;
+    const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
 
     try {
-      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const decisions = safeQuery(
         db,
-        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC${limitClause}`,
-        `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC${limitClause}`,
-        [localProjectId]
+        `SELECT id, title, decision, status, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT id, title, decision, status, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
       );
       return c.json(decisions);
     } finally {
@@ -312,17 +388,17 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
 
+    // Pagination with parameterized LIMIT/OFFSET
     const limitParam = c.req.query("limit");
-    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
-    const offset = parseInt(c.req.query("offset") || "0", 10);
+    const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 500, 1), 500) : 500;
+    const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
 
     try {
-      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const issues = safeQuery(
         db,
-        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC${limitClause}`,
-        `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC${limitClause}`,
-        [localProjectId]
+        `SELECT id, title, description, severity, status, type, temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT id, title, description, severity, status, NULL as type, NULL as temperature, created_at FROM issues WHERE project_id = ? ORDER BY severity DESC, created_at DESC LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
       );
       return c.json(issues);
     } finally {
@@ -337,17 +413,17 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json({ error: "Project not found" }, 404);
     const { db, localProjectId } = result;
 
+    // Pagination with parameterized LIMIT/OFFSET
     const limitParam = c.req.query("limit");
-    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
-    const offset = parseInt(c.req.query("offset") || "0", 10);
+    const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 500, 1), 500) : 500;
+    const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
 
     try {
-      const limitClause = limit ? ` LIMIT ${limit} OFFSET ${offset}` : "";
       const learnings = safeQuery(
         db,
-        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC${limitClause}`,
-        `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC${limitClause}`,
-        [localProjectId]
+        `SELECT id, title, content, category, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        `SELECT id, title, content, NULL as category, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        [localProjectId, limit, offset]
       );
       return c.json(learnings);
     } finally {
@@ -560,6 +636,10 @@ export function createApp(dbPath?: string): Hono {
     if (!result) return c.json([]);
     const { db, localProjectId } = result;
 
+    // Escape FTS5 query to prevent injection
+    const safeQuery = escapeFtsQuery(query);
+    if (!safeQuery || safeQuery === '""') return c.json([]);
+
     try {
       const files = db
         .query(`
@@ -568,7 +648,7 @@ export function createApp(dbPath?: string): Hono {
         WHERE fts_files MATCH ? AND f.project_id = ? AND f.archived_at IS NULL
         LIMIT 5
       `)
-        .all(query, localProjectId);
+        .all(safeQuery, localProjectId);
       return c.json(files);
     } finally {
       db.close();
@@ -576,11 +656,11 @@ export function createApp(dbPath?: string): Hono {
   });
 
   // ============================================================================
-  // Write API Routes (POST/PUT)
+  // Write API Routes (POST/PUT) - with stricter rate limiting
   // ============================================================================
 
   // Create Issue
-  app.post("/api/projects/:id/issues", async (c) => {
+  app.post("/api/projects/:id/issues", writeRateLimiter, async (c) => {
     const projectId = parseProjectId(c.req.param("id"));
     if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId, false);
@@ -610,14 +690,16 @@ export function createApp(dbPath?: string): Hono {
       if (e instanceof z.ZodError) {
         return c.json({ error: "Validation failed", details: e.errors }, 400);
       }
-      return c.json({ error: String(e) }, 500);
+      // Log full error internally, return generic message to client
+      console.error("API Error:", e);
+      return c.json({ error: "Internal server error" }, 500);
     } finally {
       db.close();
     }
   });
 
   // Resolve Issue
-  app.put("/api/projects/:id/issues/:issueId/resolve", async (c) => {
+  app.put("/api/projects/:id/issues/:issueId/resolve", writeRateLimiter, async (c) => {
     const projectId = parseProjectId(c.req.param("id"));
     if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const issueId = IssueIdParam.safeParse(c.req.param("issueId"));
@@ -646,14 +728,16 @@ export function createApp(dbPath?: string): Hono {
       if (e instanceof z.ZodError) {
         return c.json({ error: "Validation failed", details: e.errors }, 400);
       }
-      return c.json({ error: String(e) }, 500);
+      // Log full error internally, return generic message to client
+      console.error("API Error:", e);
+      return c.json({ error: "Internal server error" }, 500);
     } finally {
       db.close();
     }
   });
 
   // Create Decision
-  app.post("/api/projects/:id/decisions", async (c) => {
+  app.post("/api/projects/:id/decisions", writeRateLimiter, async (c) => {
     const projectId = parseProjectId(c.req.param("id"));
     if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId, false);
@@ -676,14 +760,16 @@ export function createApp(dbPath?: string): Hono {
       if (e instanceof z.ZodError) {
         return c.json({ error: "Validation failed", details: e.errors }, 400);
       }
-      return c.json({ error: String(e) }, 500);
+      // Log full error internally, return generic message to client
+      console.error("API Error:", e);
+      return c.json({ error: "Internal server error" }, 500);
     } finally {
       db.close();
     }
   });
 
   // Create Learning
-  app.post("/api/projects/:id/learnings", async (c) => {
+  app.post("/api/projects/:id/learnings", writeRateLimiter, async (c) => {
     const projectId = parseProjectId(c.req.param("id"));
     if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
     const result = getDbForProject(projectId, false);
@@ -706,7 +792,9 @@ export function createApp(dbPath?: string): Hono {
       if (e instanceof z.ZodError) {
         return c.json({ error: "Validation failed", details: e.errors }, 400);
       }
-      return c.json({ error: String(e) }, 500);
+      // Log full error internally, return generic message to client
+      console.error("API Error:", e);
+      return c.json({ error: "Internal server error" }, 500);
     } finally {
       db.close();
     }
@@ -721,7 +809,20 @@ export function createApp(dbPath?: string): Hono {
   // Serve static assets (JS, CSS) - use helper to ensure correct Content-Length
   app.get("/assets/:filename", async (c) => {
     const filename = c.req.param("filename");
-    const filePath = join(dashboardDist, "assets", filename);
+
+    // Block path traversal attempts
+    if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
+      return c.json({ error: "Invalid filename" }, 400);
+    }
+
+    const assetsDir = resolve(dashboardDist, "assets");
+    const filePath = resolve(assetsDir, filename);
+
+    // Ensure path is within assets directory
+    if (!filePath.startsWith(`${assetsDir}/`) && filePath !== assetsDir) {
+      return c.json({ error: "Invalid path" }, 400);
+    }
+
     const contentType = Bun.file(filePath).type || "application/octet-stream";
     const response = await serveStaticFile(filePath, { contentType, cache: "no-cache" });
     return response ?? c.notFound();
