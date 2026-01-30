@@ -28,12 +28,16 @@ function resolveFilePath(projectPath: string, filePath: string): string {
 // Git Helpers
 // ============================================================================
 
+// Default timeout for git operations (M1: prevent hangs from malicious/corrupted repos)
+const GIT_TIMEOUT_MS = 10000; // 10 seconds
+
 function isGitRepo(path: string): boolean {
   try {
     execSync("git rev-parse --git-dir", {
       cwd: path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
     });
     return true;
   } catch {
@@ -47,6 +51,7 @@ function getGitStatus(path: string): string[] {
       cwd: path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
     });
     return output
       .trim()
@@ -66,6 +71,7 @@ function getUntrackedFiles(path: string): string[] {
       cwd: path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
     });
     return output.trim().split("\n").filter(Boolean);
   } catch {
@@ -79,6 +85,7 @@ function getRecentCommits(path: string, count: number = 5): Array<{ hash: string
       cwd: path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
     });
     return output
       .trim()
@@ -314,6 +321,7 @@ export function getGitInfo(projectPath: string): {
       cwd: projectPath,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      timeout: GIT_TIMEOUT_MS,
     }).trim();
   } catch {
     // Ignore

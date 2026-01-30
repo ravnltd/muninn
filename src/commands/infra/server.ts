@@ -4,11 +4,104 @@
  */
 
 import type { DatabaseAdapter } from "../../database/adapter";
+import { homedir } from "node:os";
+import { resolve, normalize } from "node:path";
 import { getAllServers, getServerByName, logInfraEvent } from "../../database/queries/infra";
 import type { Server } from "../../types";
 import { exitWithUsage } from "../../utils/errors";
 import { formatServerList, getStatusIcon, outputJson, outputSuccess } from "../../utils/format";
 import { parseServerArgs, ServerAddInput } from "../../utils/validation";
+
+// ============================================================================
+// SSH Security Validation (H1, H2)
+// ============================================================================
+
+/**
+ * Pattern for valid SSH jump host format.
+ * Allows: user@host, host, user@host:port, host:port
+ * Also allows multiple hops separated by commas
+ * Rejects: anything with shell metacharacters or options
+ */
+const VALID_JUMP_HOST_PATTERN = /^([a-zA-Z0-9_.-]+@)?[a-zA-Z0-9.-]+(:\d+)?(,([a-zA-Z0-9_.-]+@)?[a-zA-Z0-9.-]+(:\d+)?)*$/;
+
+/**
+ * Characters that should never appear in SSH arguments.
+ * These could be used for option injection.
+ */
+const SSH_DANGEROUS_CHARS = /[`$(){}|;&<>\\'"!]/;
+
+/**
+ * Validate SSH key path is within allowed directories (H1).
+ * Prevents arbitrary file access via SSH -i option.
+ *
+ * Allowed locations:
+ * - ~/.ssh/
+ * - /etc/ssh/ (for host keys)
+ * - Current working directory (for project-specific keys)
+ *
+ * @throws Error if path is outside allowed directories
+ */
+function validateSshKeyPath(keyPath: string): string {
+  const normalizedPath = normalize(resolve(keyPath));
+  const home = homedir();
+  const allowedPrefixes = [
+    resolve(home, ".ssh") + "/",
+    "/etc/ssh/",
+    process.cwd() + "/",
+  ];
+
+  const isAllowed = allowedPrefixes.some((prefix) => normalizedPath.startsWith(prefix));
+
+  if (!isAllowed) {
+    throw new Error(
+      `SSH key path must be within ~/.ssh/, /etc/ssh/, or current directory. Got: ${keyPath}`
+    );
+  }
+
+  // Additional check: no shell metacharacters
+  if (SSH_DANGEROUS_CHARS.test(keyPath)) {
+    throw new Error(`SSH key path contains invalid characters: ${keyPath}`);
+  }
+
+  return normalizedPath;
+}
+
+/**
+ * Validate SSH jump host format (H2).
+ * Prevents command injection via -J option.
+ *
+ * Valid formats:
+ * - hostname
+ * - user@hostname
+ * - user@hostname:port
+ * - Multiple hops: user@host1,user@host2
+ *
+ * @throws Error if jump host format is invalid
+ */
+function validateSshJumpHost(jumpHost: string): string {
+  // Check for dangerous characters first
+  if (SSH_DANGEROUS_CHARS.test(jumpHost)) {
+    throw new Error(`SSH jump host contains invalid characters: ${jumpHost}`);
+  }
+
+  // Validate format
+  if (!VALID_JUMP_HOST_PATTERN.test(jumpHost)) {
+    throw new Error(
+      `Invalid SSH jump host format. Expected: [user@]host[:port]. Got: ${jumpHost}`
+    );
+  }
+
+  // Check individual components aren't too long (prevent buffer issues)
+  const parts = jumpHost.split(",");
+  for (const part of parts) {
+    if (part.length > 253) {
+      // Max DNS name length
+      throw new Error(`SSH jump host component too long: ${part.substring(0, 50)}...`);
+    }
+  }
+
+  return jumpHost;
+}
 
 // ============================================================================
 // Server Add
@@ -31,6 +124,28 @@ export async function serverAdd(db: DatabaseAdapter, args: string[]): Promise<vo
   }
 
   const input = parsed.data;
+
+  // Security validation for SSH key path (H1)
+  if (input.key) {
+    try {
+      validateSshKeyPath(input.key);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Invalid SSH key path";
+      console.error(`❌ ${msg}`);
+      process.exit(1);
+    }
+  }
+
+  // Security validation for SSH jump host (H2)
+  if (input.jump) {
+    try {
+      validateSshJumpHost(input.jump);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Invalid SSH jump host";
+      console.error(`❌ ${msg}`);
+      process.exit(1);
+    }
+  }
 
   // Check if server already exists
   const existing = await getServerByName(db, input.name);
@@ -139,15 +254,40 @@ export async function serverCheck(db: DatabaseAdapter, targetName?: string): Pro
   for (const server of servers) {
     const startTime = Date.now();
 
-    // Build SSH command
+    // Build SSH command with security validation (H1, H2)
     const sshArgs: string[] = [];
 
     if (server.ssh_key_path) {
-      sshArgs.push("-i", server.ssh_key_path);
+      try {
+        const validatedKeyPath = validateSshKeyPath(server.ssh_key_path);
+        sshArgs.push("-i", validatedKeyPath);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Invalid key path";
+        console.error(`  ⚠️  ${server.name} - skipped: ${errorMessage}`);
+        results.push({ name: server.name, status: "offline", error: errorMessage });
+        continue;
+      }
     }
 
     if (server.ssh_jump_host) {
-      sshArgs.push("-J", server.ssh_jump_host);
+      try {
+        const validatedJumpHost = validateSshJumpHost(server.ssh_jump_host);
+        sshArgs.push("-J", validatedJumpHost);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Invalid jump host";
+        console.error(`  ⚠️  ${server.name} - skipped: ${errorMessage}`);
+        results.push({ name: server.name, status: "offline", error: errorMessage });
+        continue;
+      }
+    }
+
+    // Validate target host doesn't contain dangerous characters
+    const targetHost = server.ip_addresses ? JSON.parse(server.ip_addresses)[0] : server.hostname;
+    if (!targetHost || SSH_DANGEROUS_CHARS.test(targetHost) || SSH_DANGEROUS_CHARS.test(server.ssh_user)) {
+      const errorMessage = "Invalid target host or user format";
+      console.error(`  ⚠️  ${server.name} - skipped: ${errorMessage}`);
+      results.push({ name: server.name, status: "offline", error: errorMessage });
+      continue;
     }
 
     sshArgs.push(
@@ -159,7 +299,7 @@ export async function serverCheck(db: DatabaseAdapter, targetName?: string): Pro
       "BatchMode=yes",
       "-p",
       String(server.ssh_port),
-      `${server.ssh_user}@${server.ip_addresses ? JSON.parse(server.ip_addresses)[0] : server.hostname}`,
+      `${server.ssh_user}@${targetHost}`,
       "echo ok"
     );
 

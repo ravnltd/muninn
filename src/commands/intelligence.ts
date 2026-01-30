@@ -442,10 +442,12 @@ export async function getSmartStatus(db: DatabaseAdapter, projectId: number, pro
   }
 
   // Check for high fragility files recently modified (git)
+  // M1: Add timeout to prevent hangs from malicious/corrupted repos
   try {
     const gitChanges = execSync("git diff --name-only HEAD~5 2>/dev/null || echo ''", {
       cwd: projectPath,
       encoding: "utf-8",
+      timeout: 10000, // 10 second timeout
     })
       .trim()
       .split("\n")

