@@ -939,7 +939,7 @@ export function createApp(dbPath?: string): Hono {
     const filePath = resolve(assetsDir, filename);
 
     // Ensure path is within assets directory
-    if (!filePath.startsWith(`${assetsDir}/`) && filePath !== assetsDir) {
+    if (!filePath.startsWith(assetsDir + "/")) {
       return c.json({ error: "Invalid path" }, 400);
     }
 

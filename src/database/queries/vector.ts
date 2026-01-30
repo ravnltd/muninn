@@ -15,6 +15,7 @@ import {
 } from "../../embeddings";
 import type { QueryResult, QueryResultType } from "../../types";
 import { logError } from "../../utils/errors";
+import { validateTableName } from "./utils";
 
 // ============================================================================
 // Types
@@ -120,8 +121,9 @@ export async function hasEmbeddings(db: DatabaseAdapter, projectId: number): Pro
  * Update embedding for a record
  */
 export async function updateEmbedding(db: DatabaseAdapter, table: string, id: number, embedding: Float32Array): Promise<void> {
+  const validTable = validateTableName(table);
   const blob = serializeEmbedding(embedding);
-  await db.run(`UPDATE ${table} SET embedding = ? WHERE id = ?`, [blob, id]);
+  await db.run(`UPDATE ${validTable} SET embedding = ? WHERE id = ?`, [blob, id]);
 }
 
 // ============================================================================
@@ -334,6 +336,7 @@ interface BackfillRecord {
  * Get records that need embeddings for a table
  */
 export async function getRecordsNeedingEmbeddings(db: DatabaseAdapter, table: string, projectId: number): Promise<BackfillRecord[]> {
+  validateTableName(table);
   const { titleCol, contentCol } = getTableMapping(table);
 
   // Build text representation matching the *ToText() functions (trimmed, no trailing spaces)

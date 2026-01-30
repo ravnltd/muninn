@@ -11,6 +11,7 @@ import { handleExtractionCommand } from "./extraction";
 import { handleAnalysisCommand } from "./conversation-analysis";
 import { handleReflectionCommand } from "./reflection";
 import { handleProfileSynthesisCommand } from "./profile-synthesis";
+import { escapeFtsQuery } from "../database/queries/search";
 
 // ============================================================================
 // Types
@@ -420,6 +421,13 @@ export async function searchConversations(
   options: { limit?: number }
 ): Promise<void> {
   const limit = options.limit ?? 10;
+  const safeQuery = escapeFtsQuery(query);
+
+  if (!safeQuery || safeQuery === '""') {
+    outputError("Invalid search query");
+    outputJson([]);
+    return;
+  }
 
   const results = await db.all<{
     id: number;
@@ -434,7 +442,7 @@ export async function searchConversations(
     WHERE fts_conversation_messages MATCH ?
     LIMIT ?
   `,
-    [query, limit]
+    [safeQuery, limit]
   );
 
   console.error(`\n🔍 Search results for "${query}" (${results.length}):\n`);
