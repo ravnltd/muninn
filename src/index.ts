@@ -612,7 +612,17 @@ async function main(): Promise<void> {
 
       case "dashboard": {
         const portIdx = subArgs.indexOf("--port");
-        const port = portIdx !== -1 ? parseInt(subArgs[portIdx + 1], 10) : 3333;
+        let port = 3333;
+        if (portIdx !== -1) {
+          const portArg = subArgs[portIdx + 1];
+          const { SafePort } = await import("./mcp-validation");
+          const portResult = SafePort.safeParse(portArg);
+          if (!portResult.success) {
+            console.error(`Invalid port: ${portArg}. Must be 1-65535.`);
+            process.exit(1);
+          }
+          port = portResult.data;
+        }
         const shouldOpen = subArgs.includes("--open");
 
         const { createApp } = await import("./web-server");

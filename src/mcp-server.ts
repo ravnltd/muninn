@@ -29,6 +29,7 @@ import {
   EnrichInput,
   ApproveInput,
   PassthroughInput,
+  SafePassthroughArg,
   validateInput,
 } from "./mcp-validation.js";
 
@@ -540,6 +541,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(
             `Command "${subcommand}" not allowed via passthrough. Use dedicated tools for: query, check, file, decision, learn, issue, session, predict, suggest, enrich, approve. Allowed passthrough commands: ${[...ALLOWED_PASSTHROUGH_COMMANDS].sort().join(", ")}`
           );
+        }
+
+        // Validate each argument for shell metacharacters (H1: Passthrough arg validation)
+        for (let i = 1; i < args.length; i++) {
+          const argResult = SafePassthroughArg.safeParse(args[i]);
+          if (!argResult.success) {
+            throw new Error(
+              `Invalid argument at position ${i}: ${argResult.error.errors[0]?.message || "validation failed"}`
+            );
+          }
         }
 
         result = runContext(args, validation.data.cwd || cwd);

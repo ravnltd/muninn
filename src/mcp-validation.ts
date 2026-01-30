@@ -27,6 +27,26 @@ const PATH_TRAVERSAL = /\.\./;
 // ============================================================================
 
 /**
+ * Safe port number (1-65535).
+ */
+export const SafePort = z.coerce
+  .number()
+  .int()
+  .min(1, "Port must be >= 1")
+  .max(65535, "Port must be <= 65535");
+
+/**
+ * Safe passthrough argument that rejects shell metacharacters.
+ * Used to validate individual arguments in passthrough commands.
+ */
+export const SafePassthroughArg = z
+  .string()
+  .max(500, "Argument too long (max 500 chars)")
+  .refine((s) => !SHELL_DANGEROUS.test(s), {
+    message: "Argument contains potentially dangerous characters: ` $ ( ) { } | ; & < > \\",
+  });
+
+/**
  * Safe text that rejects shell metacharacters.
  * Use for titles, descriptions, queries, etc.
  */
@@ -40,11 +60,20 @@ export const SafeText = z
 
 /**
  * Safe file path that rejects path traversal and shell metacharacters.
+ * Decodes URL-encoded strings before checking to prevent bypass attempts.
  */
 export const SafePath = z
   .string()
   .min(1, "Path cannot be empty")
   .max(500, "Path too long (max 500 chars)")
+  .transform((s) => {
+    // Decode URL-encoded characters to prevent bypass via %2e%2e
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  })
   .refine((s) => !PATH_TRAVERSAL.test(s), {
     message: "Path traversal (..) not allowed",
   })

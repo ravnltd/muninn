@@ -6,11 +6,13 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { Context, Next } from "hono";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
 import { rateLimiter } from "hono-rate-limiter";
 import { z } from "zod";
+import { SafePort } from "./mcp-validation.js";
 
 // ============================================================================
 // Static File Serving Helper
@@ -152,6 +154,62 @@ function safeQueryGet<T>(db: Database, query: string, fallbackQuery: string, par
 }
 
 // ============================================================================
+// Security Helpers
+// ============================================================================
+
+/**
+ * Get client IP address with configurable proxy trust.
+ * Only trusts x-forwarded-for when MUNINN_TRUSTED_PROXY=true.
+ */
+function getClientIp(c: Context): string {
+  if (process.env.MUNINN_TRUSTED_PROXY === "true") {
+    const forwarded = c.req.header("x-forwarded-for");
+    if (forwarded) {
+      return forwarded.split(",")[0].trim();
+    }
+  }
+  // Fall back to host header (without port) or localhost
+  return c.req.header("host")?.split(":")[0] || "localhost";
+}
+
+/**
+ * Create token-based authentication middleware.
+ * Requires MUNINN_API_TOKEN env var to be set to enable auth.
+ * Localhost bypass is enabled by default (MUNINN_LOCALHOST_BYPASS != "false").
+ */
+function createAuthMiddleware() {
+  const apiToken = process.env.MUNINN_API_TOKEN;
+
+  return async (c: Context, next: Next) => {
+    // If no token configured, auth is disabled
+    if (!apiToken) {
+      return next();
+    }
+
+    // GET/OPTIONS requests don't require auth (read-only)
+    if (c.req.method === "GET" || c.req.method === "OPTIONS") {
+      return next();
+    }
+
+    // Localhost bypass (enabled by default)
+    if (process.env.MUNINN_LOCALHOST_BYPASS !== "false") {
+      const host = c.req.header("host") || "";
+      if (host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
+        return next();
+      }
+    }
+
+    // Check Bearer token
+    const authHeader = c.req.header("Authorization");
+    if (authHeader === `Bearer ${apiToken}`) {
+      return next();
+    }
+
+    return c.json({ error: "Unauthorized" }, 401);
+  };
+}
+
+// ============================================================================
 // App Setup
 // ============================================================================
 
@@ -194,12 +252,11 @@ export function createApp(dbPath?: string): Hono {
   );
 
   // Rate limiting for write endpoints (30 requests per minute)
-  // NOTE: x-forwarded-for can be spoofed. In production, use a trusted proxy that sets
-  // this header. For local development, "localhost" fallback is acceptable.
+  // Uses getClientIp which only trusts x-forwarded-for when MUNINN_TRUSTED_PROXY=true
   const writeRateLimiter = rateLimiter({
     windowMs: 60 * 1000,
     limit: 30,
-    keyGenerator: (c) => c.req.header("x-forwarded-for") ?? "localhost",
+    keyGenerator: getClientIp,
     message: { error: "Too many write requests, please slow down" },
     standardHeaders: "draft-7",
   });
@@ -208,10 +265,14 @@ export function createApp(dbPath?: string): Hono {
   const readRateLimiter = rateLimiter({
     windowMs: 60 * 1000,
     limit: 200,
-    keyGenerator: (c) => c.req.header("x-forwarded-for") ?? "localhost",
+    keyGenerator: getClientIp,
     message: { error: "Too many requests" },
     standardHeaders: "draft-7",
   });
+
+  // Token-based authentication for write operations (H2: Token auth)
+  // Set MUNINN_API_TOKEN env var to enable. Localhost bypassed by default.
+  app.use("/api/*", createAuthMiddleware());
 
   // Apply rate limiting to API routes
   app.use("/api/*", readRateLimiter);
@@ -836,7 +897,11 @@ export function createApp(dbPath?: string): Hono {
   });
 
   // SPA fallback — serve index.html for all unmatched routes
+  // L2: Log unmatched routes in DEBUG mode for troubleshooting
   app.get("*", async (c) => {
+    if (process.env.DEBUG) {
+      console.log(`[SPA fallback] Unmatched route: ${c.req.path}`);
+    }
     const indexPath = join(dashboardDist, "index.html");
     const response = await serveStaticFile(indexPath, { contentType: "text/html; charset=utf-8", cache: "no-cache" });
     return response ?? c.text("Dashboard not built. Run: cd src/dashboard && bun run build", 404);
@@ -875,7 +940,13 @@ async function verifyStaticServing(port: number): Promise<void> {
 // ============================================================================
 
 if (import.meta.main) {
-  const port = parseInt(process.argv[2] || "3334", 10);
+  const portArg = process.argv[2] || "3334";
+  const portResult = SafePort.safeParse(portArg);
+  if (!portResult.success) {
+    console.error(`Invalid port: ${portArg}. Must be 1-65535.`);
+    process.exit(1);
+  }
+  const port = portResult.data;
   const app = createApp();
 
   Bun.serve({
