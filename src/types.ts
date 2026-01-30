@@ -344,6 +344,59 @@ export interface Learning {
   last_applied: string | null;
   created_at: string;
   updated_at: string;
+  // Continuous learning fields (added in migration 23)
+  last_reinforced_at?: string | null;
+  decay_rate?: number;
+  temperature?: Temperature;
+}
+
+// ============================================================================
+// Continuous Learning Types (Migration 23)
+// ============================================================================
+
+export type ConflictResolution =
+  | "a_supersedes"
+  | "b_supersedes"
+  | "both_valid_conditionally"
+  | "merged"
+  | "dismissed";
+
+export type ConflictType = "direct" | "conditional" | "scope" | "potential";
+
+export type ContributionType = "influenced" | "contradicted" | "ignored";
+
+export interface LearningConflict {
+  id: number;
+  learning_a: number;
+  learning_b: number;
+  conflict_type: ConflictType;
+  similarity_score: number | null;
+  detected_at: string;
+  resolved_at: string | null;
+  resolution: ConflictResolution | null;
+  resolution_notes: string | null;
+}
+
+export interface DecisionLearningLink {
+  decision_id: number;
+  learning_id: number;
+  contribution: ContributionType;
+  linked_at: string;
+}
+
+export interface LearningVersion {
+  id: number;
+  learning_id: number;
+  version: number;
+  content: string;
+  confidence: number | null;
+  changed_at: string;
+  change_reason: string | null;
+}
+
+export interface LearningWithEffectiveConfidence extends Learning {
+  effectiveConfidence: number;
+  daysSinceReinforcement: number;
 }
 
 export interface GlobalLearning {

@@ -129,6 +129,7 @@ export const DecisionAddInput = z.object({
   decision: NonEmptyString,
   reasoning: OptionalString,
   affects: OptionalString,
+  influencedBy: OptionalString, // Comma-separated learning IDs (e.g., "L12,L45" or "12,45")
 });
 
 export type DecisionAddInput = z.infer<typeof DecisionAddInput>;
@@ -368,6 +369,7 @@ export function parseDecisionArgs(args: string[]): ParsedArgs<Partial<DecisionAd
       decision: { type: "string", short: "d" },
       reasoning: { type: "string", short: "r" },
       affects: { type: "string", short: "a" },
+      "influenced-by": { type: "string", short: "i" },
     },
     allowPositionals: true,
   });
@@ -378,6 +380,7 @@ export function parseDecisionArgs(args: string[]): ParsedArgs<Partial<DecisionAd
       decision: values.decision,
       reasoning: values.reasoning,
       affects: values.affects,
+      influencedBy: values["influenced-by"],
     },
     positionals,
   };

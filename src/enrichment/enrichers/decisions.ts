@@ -2,6 +2,8 @@
  * Decisions Enricher
  *
  * Injects active decisions that affect the files being touched.
+ * Prioritizes showing decisions with known outcomes, especially failed ones
+ * as warnings to avoid repeating mistakes.
  */
 
 import { BaseEnricher } from "../registry";
@@ -15,7 +17,26 @@ interface DecisionInfo {
   decision: string;
   reasoning: string | null;
   outcomeStatus: string;
+  outcomeNotes: string | null;
+  temperature?: string;
   native?: string;
+}
+
+/**
+ * Get outcome sort priority (failed=0, revised=1, succeeded=2, pending=3)
+ * Failed decisions should surface first as warnings
+ */
+function getOutcomePriority(status: string): number {
+  switch (status) {
+    case "failed":
+      return 0; // Show first - these are warnings!
+    case "revised":
+      return 1;
+    case "succeeded":
+      return 2;
+    default:
+      return 3;
+  }
 }
 
 export class DecisionsEnricher extends BaseEnricher {
@@ -54,17 +75,34 @@ export class DecisionsEnricher extends BaseEnricher {
 
     if (decisions.length === 0) return null;
 
+    // Sort by outcome priority (failed first) then by recency
+    decisions.sort((a, b) => {
+      const outcomeDiff = getOutcomePriority(a.outcomeStatus) - getOutcomePriority(b.outcomeStatus);
+      if (outcomeDiff !== 0) return outcomeDiff;
+      return 0; // Maintain existing order for same outcome
+    });
+
     // Take top 3 decisions
     const topDecisions = decisions.slice(0, 3);
 
     const lines = topDecisions.map((d) => {
+      // Add warning prefix for failed decisions
+      const prefix = d.outcomeStatus === "failed" ? "⚠️ FAILED: " : "";
+
       if (d.native) {
-        return d.native;
+        return prefix + d.native;
       }
+
+      // Include outcome notes for failed decisions
+      const why =
+        d.outcomeStatus === "failed" && d.outcomeNotes
+          ? `FAILED: ${d.outcomeNotes.slice(0, 30)}`
+          : d.reasoning?.slice(0, 40) || undefined;
+
       return formatDecisionNative({
-        title: d.title,
+        title: prefix + d.title,
         choice: d.decision.slice(0, 40),
-        why: d.reasoning?.slice(0, 40) || undefined,
+        why,
         outcome: d.outcomeStatus,
       });
     });
@@ -85,16 +123,22 @@ async function getDecisionsForFile(
       decision: string;
       reasoning: string | null;
       outcome_status: string;
+      outcome_notes: string | null;
+      temperature: string | null;
       native_format: string | null;
     }>(
-      `SELECT d.id, d.title, d.decision, d.reasoning, d.outcome_status, nk.native_format
+      `SELECT d.id, d.title, d.decision, d.reasoning, d.outcome_status,
+              d.outcome_notes, d.temperature, nk.native_format
        FROM decisions d
        LEFT JOIN native_knowledge nk ON nk.source_table = 'decisions' AND nk.source_id = d.id
        WHERE d.project_id = ?
          AND d.status = 'active'
          AND d.affects LIKE '%' || ? || '%'
-       ORDER BY d.decided_at DESC
-       LIMIT 3`,
+       ORDER BY
+         CASE d.outcome_status WHEN 'failed' THEN 0 WHEN 'revised' THEN 1 ELSE 2 END,
+         CASE d.temperature WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 ELSE 2 END,
+         d.decided_at DESC
+       LIMIT 5`,
       [projectId, filePath]
     );
 
@@ -103,7 +147,9 @@ async function getDecisionsForFile(
       title: r.title,
       decision: r.decision,
       reasoning: r.reasoning,
-      outcomeStatus: r.outcome_status,
+      outcomeStatus: r.outcome_status || "pending",
+      outcomeNotes: r.outcome_notes,
+      temperature: r.temperature ?? undefined,
       native: r.native_format ?? undefined,
     }));
   } catch {

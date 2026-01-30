@@ -2,6 +2,11 @@
  * Outcome Tracking
  * Track whether architectural decisions worked out over time.
  * Decisions are reviewed after N sessions to determine success/failure.
+ *
+ * Also handles the learning-decision feedback loop:
+ * - Successful decisions reinforce their contributing learnings
+ * - Failed decisions reduce confidence of contributing learnings
+ * - Revised decisions flag learnings for review
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
@@ -38,6 +43,184 @@ export async function recordOutcome(
   `,
     [status, notes ?? null, decisionId]
   );
+
+  // Handle the learning-decision feedback loop
+  await processLearningFeedback(db, decisionId, status);
+}
+
+// ============================================================================
+// Learning-Decision Feedback Loop
+// ============================================================================
+
+interface LinkedLearning {
+  learning_id: number;
+  contribution: string;
+  title: string;
+  confidence: number;
+}
+
+/**
+ * Process feedback to learnings based on decision outcome.
+ * - succeeded: Reinforce linked learnings (boost confidence, reset decay)
+ * - failed: Reduce confidence of linked learnings
+ * - revised: Flag linked learnings for review
+ */
+async function processLearningFeedback(
+  db: DatabaseAdapter,
+  decisionId: number,
+  outcome: OutcomeStatus
+): Promise<void> {
+  try {
+    // Get learnings linked to this decision
+    const linkedLearnings = await db.all<LinkedLearning>(
+      `SELECT dl.learning_id, dl.contribution, l.title, l.confidence
+       FROM decision_learnings dl
+       JOIN learnings l ON dl.learning_id = l.id
+       WHERE dl.decision_id = ?`,
+      [decisionId]
+    );
+
+    if (linkedLearnings.length === 0) return;
+
+    for (const link of linkedLearnings) {
+      switch (outcome) {
+        case "succeeded":
+          // Reinforce: boost confidence and reset decay timer
+          if (link.contribution === "influenced") {
+            await reinforceLearning(db, link.learning_id);
+            console.error(`  ✅ Reinforced learning L${link.learning_id}: ${link.title}`);
+          }
+          break;
+
+        case "failed":
+          // Reduce confidence for learnings that influenced the failed decision
+          if (link.contribution === "influenced") {
+            await reduceLearningConfidence(db, link.learning_id);
+            console.error(`  ⚠️ Reduced confidence for L${link.learning_id}: ${link.title}`);
+          }
+          break;
+
+        case "revised":
+          // Flag learnings for review - they may need updating
+          if (link.contribution === "influenced") {
+            await flagLearningForReview(db, link.learning_id);
+            console.error(`  📝 Flagged L${link.learning_id} for review: ${link.title}`);
+          }
+          break;
+      }
+    }
+  } catch {
+    // Table might not exist yet, silently ignore
+  }
+}
+
+/**
+ * Reinforce a learning: boost confidence and reset decay timer
+ */
+export async function reinforceLearning(db: DatabaseAdapter, learningId: number): Promise<void> {
+  try {
+    // First, save current state as a version
+    await saveLearningVersion(db, learningId, "reinforcement");
+
+    // Update the learning
+    await db.run(
+      `UPDATE learnings SET
+        confidence = MIN(10, confidence + 0.5),
+        last_reinforced_at = CURRENT_TIMESTAMP,
+        times_applied = times_applied + 1,
+        last_applied = CURRENT_TIMESTAMP,
+        temperature = 'warm'
+       WHERE id = ?`,
+      [learningId]
+    );
+  } catch {
+    // Columns might not exist, try simpler update
+    await db.run(
+      `UPDATE learnings SET
+        confidence = MIN(10, confidence + 0.5),
+        times_applied = times_applied + 1,
+        last_applied = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [learningId]
+    );
+  }
+}
+
+/**
+ * Reduce confidence for a learning that contributed to a failed decision
+ */
+async function reduceLearningConfidence(db: DatabaseAdapter, learningId: number): Promise<void> {
+  try {
+    // Save current state as a version
+    await saveLearningVersion(db, learningId, "failed_decision");
+
+    // Reduce confidence but don't go below 1
+    await db.run(
+      `UPDATE learnings SET
+        confidence = MAX(1, confidence - 1),
+        temperature = 'cold'
+       WHERE id = ?`,
+      [learningId]
+    );
+  } catch {
+    await db.run(
+      `UPDATE learnings SET confidence = MAX(1, confidence - 1) WHERE id = ?`,
+      [learningId]
+    );
+  }
+}
+
+/**
+ * Flag a learning for review (after a decision was revised)
+ */
+async function flagLearningForReview(db: DatabaseAdapter, learningId: number): Promise<void> {
+  try {
+    await db.run(
+      `UPDATE learnings SET
+        review_status = 'pending',
+        sessions_since_review = COALESCE(review_after_sessions, 0)
+       WHERE id = ?`,
+      [learningId]
+    );
+  } catch {
+    // Review columns might not exist, silently ignore
+  }
+}
+
+/**
+ * Save a version of a learning before modifying it
+ */
+async function saveLearningVersion(
+  db: DatabaseAdapter,
+  learningId: number,
+  reason: string
+): Promise<void> {
+  try {
+    // Get current learning state
+    const learning = await db.get<{ content: string; confidence: number }>(
+      "SELECT content, confidence FROM learnings WHERE id = ?",
+      [learningId]
+    );
+
+    if (!learning) return;
+
+    // Get next version number
+    const lastVersion = await db.get<{ version: number }>(
+      "SELECT MAX(version) as version FROM learning_versions WHERE learning_id = ?",
+      [learningId]
+    );
+
+    const nextVersion = (lastVersion?.version ?? 0) + 1;
+
+    // Insert version
+    await db.run(
+      `INSERT INTO learning_versions (learning_id, version, content, confidence, change_reason)
+       VALUES (?, ?, ?, ?, ?)`,
+      [learningId, nextVersion, learning.content, learning.confidence, reason]
+    );
+  } catch {
+    // Version table might not exist, silently ignore
+  }
 }
 
 // ============================================================================

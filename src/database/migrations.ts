@@ -1146,6 +1146,118 @@ export const MIGRATIONS: Migration[] = [
       return !!approvals && !!metrics;
     },
   },
+
+  // Version 23: Continuous Learning System
+  {
+    version: 23,
+    name: "continuous_learning",
+    description: "Confidence decay, decision-learning feedback loop, contradiction detection, and learning versioning",
+    up: `
+      -- ========================================================================
+      -- CONFIDENCE DECAY & REINFORCEMENT
+      -- Knowledge fades unless reinforced, like human memory
+      -- ========================================================================
+
+      -- Add decay columns to learnings
+      ALTER TABLE learnings ADD COLUMN last_reinforced_at TEXT;
+      ALTER TABLE learnings ADD COLUMN decay_rate REAL DEFAULT 0.05;
+
+      -- Initialize last_reinforced_at to last_applied or created_at
+      UPDATE learnings SET last_reinforced_at = COALESCE(last_applied, created_at);
+
+      -- Index for efficient decay queries
+      CREATE INDEX IF NOT EXISTS idx_learnings_reinforcement
+      ON learnings(project_id, last_reinforced_at, confidence);
+
+      -- ========================================================================
+      -- DECISION-LEARNING FEEDBACK LOOP
+      -- Track which learnings influenced which decisions
+      -- ========================================================================
+
+      CREATE TABLE IF NOT EXISTS decision_learnings (
+        decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+        learning_id INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+        contribution TEXT NOT NULL DEFAULT 'influenced', -- 'influenced', 'contradicted', 'ignored'
+        linked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (decision_id, learning_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_decision_learnings_decision ON decision_learnings(decision_id);
+      CREATE INDEX IF NOT EXISTS idx_decision_learnings_learning ON decision_learnings(learning_id);
+      CREATE INDEX IF NOT EXISTS idx_decision_learnings_contribution ON decision_learnings(contribution);
+
+      -- ========================================================================
+      -- CONTRADICTION DETECTION
+      -- Flag when learnings conflict with each other
+      -- ========================================================================
+
+      CREATE TABLE IF NOT EXISTS learning_conflicts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        learning_a INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+        learning_b INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+        conflict_type TEXT NOT NULL DEFAULT 'potential', -- 'direct', 'conditional', 'scope', 'potential'
+        similarity_score REAL,                  -- Embedding similarity if available
+        detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TEXT,
+        resolution TEXT,                        -- 'a_supersedes', 'b_supersedes', 'both_valid_conditionally', 'merged', 'dismissed'
+        resolution_notes TEXT,
+        UNIQUE(learning_a, learning_b)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_conflicts_unresolved ON learning_conflicts(resolved_at) WHERE resolved_at IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_conflicts_learning_a ON learning_conflicts(learning_a);
+      CREATE INDEX IF NOT EXISTS idx_conflicts_learning_b ON learning_conflicts(learning_b);
+
+      -- ========================================================================
+      -- LEARNING VERSIONING
+      -- Track how understanding evolves over time
+      -- ========================================================================
+
+      CREATE TABLE IF NOT EXISTS learning_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        learning_id INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        confidence INTEGER,
+        changed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        change_reason TEXT                      -- 'revision', 'confirmation', 'decay_reset'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_versions_learning ON learning_versions(learning_id, version DESC);
+
+      -- Record migration
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('continuous_learning_enabled', 'true'),
+        ('confidence_decay_enabled', 'true'),
+        ('decision_learning_links_enabled', 'true'),
+        ('contradiction_detection_enabled', 'true'),
+        ('learning_versioning_enabled', 'true');
+    `,
+    validate: (db) => {
+      // Check decay columns exist
+      const decayCol = db
+        .query<{ name: string }, []>(`SELECT name FROM pragma_table_info('learnings') WHERE name='decay_rate'`)
+        .get();
+
+      // Check decision_learnings table exists
+      const linksExist = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='decision_learnings'`)
+        .get();
+
+      // Check learning_conflicts table exists
+      const conflictsExist = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='learning_conflicts'`)
+        .get();
+
+      // Check learning_versions table exists
+      const versionsExist = db
+        .query<{ name: string }, []>(`SELECT name FROM sqlite_master WHERE type='table' AND name='learning_versions'`)
+        .get();
+
+      return !!decayCol && !!linksExist && !!conflictsExist && !!versionsExist;
+    },
+  },
 ];
 
 // ============================================================================

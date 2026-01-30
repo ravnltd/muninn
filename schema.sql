@@ -762,3 +762,111 @@ FROM blast_radius br
 JOIN projects p ON br.project_id = p.id
 WHERE br.is_test = 1
 ORDER BY br.distance ASC;
+
+-- ============================================================================
+-- CONTINUOUS LEARNING SYSTEM
+-- Confidence decay, decision-learning feedback, contradiction detection
+-- ============================================================================
+
+-- Decision-Learning Links: Track which learnings influenced which decisions
+CREATE TABLE IF NOT EXISTS decision_learnings (
+    decision_id INTEGER NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    learning_id INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+    contribution TEXT NOT NULL DEFAULT 'influenced', -- 'influenced', 'contradicted', 'ignored'
+    linked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (decision_id, learning_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_learnings_decision ON decision_learnings(decision_id);
+CREATE INDEX IF NOT EXISTS idx_decision_learnings_learning ON decision_learnings(learning_id);
+CREATE INDEX IF NOT EXISTS idx_decision_learnings_contribution ON decision_learnings(contribution);
+
+-- Learning Conflicts: Track contradictions between learnings
+CREATE TABLE IF NOT EXISTS learning_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    learning_a INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+    learning_b INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+    conflict_type TEXT NOT NULL DEFAULT 'potential', -- 'direct', 'conditional', 'scope', 'potential'
+    similarity_score REAL,                  -- Embedding similarity if available
+    detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT,
+    resolution TEXT,                        -- 'a_supersedes', 'b_supersedes', 'both_valid_conditionally', 'merged', 'dismissed'
+    resolution_notes TEXT,
+    UNIQUE(learning_a, learning_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conflicts_unresolved ON learning_conflicts(resolved_at) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_conflicts_learning_a ON learning_conflicts(learning_a);
+CREATE INDEX IF NOT EXISTS idx_conflicts_learning_b ON learning_conflicts(learning_b);
+
+-- Learning Versions: Track evolution of understanding
+CREATE TABLE IF NOT EXISTS learning_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    learning_id INTEGER NOT NULL REFERENCES learnings(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    confidence INTEGER,
+    changed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    change_reason TEXT                      -- 'revision', 'confirmation', 'decay_reset'
+);
+
+CREATE INDEX IF NOT EXISTS idx_versions_learning ON learning_versions(learning_id, version DESC);
+
+-- Note: learnings table has additional columns added via migration:
+-- - last_reinforced_at TEXT (when knowledge was last reinforced)
+-- - decay_rate REAL DEFAULT 0.05 (exponential decay rate per day)
+-- Index for decay queries:
+CREATE INDEX IF NOT EXISTS idx_learnings_reinforcement
+ON learnings(project_id, last_reinforced_at, confidence);
+
+-- View: Learnings with effective confidence (accounting for decay)
+-- effective_confidence = confidence * exp(-decay_rate * days_since_reinforcement)
+CREATE VIEW IF NOT EXISTS v_learning_effective_confidence AS
+SELECT
+    l.*,
+    ROUND(
+        l.confidence * EXP(
+            -COALESCE(l.decay_rate, 0.05) *
+            (julianday('now') - julianday(COALESCE(l.last_reinforced_at, l.created_at)))
+        ),
+        2
+    ) as effective_confidence,
+    ROUND(julianday('now') - julianday(COALESCE(l.last_reinforced_at, l.created_at)), 1) as days_since_reinforcement
+FROM learnings l
+WHERE l.archived_at IS NULL;
+
+-- View: Unresolved learning conflicts
+CREATE VIEW IF NOT EXISTS v_unresolved_conflicts AS
+SELECT
+    lc.id as conflict_id,
+    lc.conflict_type,
+    lc.similarity_score,
+    lc.detected_at,
+    la.id as learning_a_id,
+    la.title as learning_a_title,
+    la.content as learning_a_content,
+    lb.id as learning_b_id,
+    lb.title as learning_b_title,
+    lb.content as learning_b_content
+FROM learning_conflicts lc
+JOIN learnings la ON lc.learning_a = la.id
+JOIN learnings lb ON lc.learning_b = lb.id
+WHERE lc.resolved_at IS NULL
+ORDER BY lc.detected_at DESC;
+
+-- View: Learnings that contributed to failed decisions
+CREATE VIEW IF NOT EXISTS v_learnings_from_failed_decisions AS
+SELECT
+    l.id,
+    l.title,
+    l.content,
+    l.confidence,
+    d.id as decision_id,
+    d.title as decision_title,
+    d.outcome_status,
+    d.outcome_notes,
+    dl.contribution
+FROM decision_learnings dl
+JOIN learnings l ON dl.learning_id = l.id
+JOIN decisions d ON dl.decision_id = d.id
+WHERE d.outcome_status = 'failed';

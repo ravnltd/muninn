@@ -46,6 +46,11 @@ import {
 } from "./commands/memory";
 import { handleObserveCommand } from "./commands/observe";
 import { handleFoundationalCommand, handleOutcomeCommand, incrementSessionsSince } from "./commands/outcomes";
+import {
+  handleConflictsCommand,
+  handleHistoryCommand,
+  handleReinforceCommand,
+} from "./commands/continuous-learning";
 import { handlePromotionCommand } from "./commands/promotion";
 import { handlePredictCommand } from "./commands/predict";
 import { handleProfileCommand } from "./commands/profile";
@@ -307,11 +312,27 @@ async function main(): Promise<void> {
           case "list":
             await learnList(db, projectId);
             break;
+          case "reinforce":
+            await handleReinforceCommand(db, projectId, subArgs.slice(1));
+            break;
+          case "history":
+            await handleHistoryCommand(db, projectId, subArgs.slice(1));
+            break;
           default:
-            console.error("Usage: muninn learn <add|list> [args]");
+            console.error("Usage: muninn learn <add|list|reinforce|history> [args]");
+            console.error("");
+            console.error("Commands:");
+            console.error("  add <title> --content <content>  Add a new learning");
+            console.error("  list                             List all learnings");
+            console.error("  reinforce <id>                   Boost confidence and reset decay timer");
+            console.error("  history <id>                     Show version history of a learning");
         }
         break;
       }
+
+      case "conflicts":
+        await handleConflictsCommand(db, projectId, subArgs);
+        break;
 
       // Continuity commands
       case "observe":

@@ -251,7 +251,7 @@ export async function decisionAdd(db: DatabaseAdapter, projectId: number, args: 
 
   if (!values.title || !values.decision) {
     exitWithUsage(
-      "Usage: muninn decision add --title <title> --decision <decision> [--reasoning <why>] [--affects <files>]"
+      "Usage: muninn decision add --title <title> --decision <decision> [--reasoning <why>] [--affects <files>] [--influenced-by <learning_ids>]"
     );
   }
 
@@ -328,15 +328,60 @@ export async function decisionAdd(db: DatabaseAdapter, projectId: number, args: 
     // Don't block decision creation on conversion failure
   }
 
+  // Link influenced-by learnings if specified
+  let linkedLearnings: number[] = [];
+  if (values.influencedBy) {
+    linkedLearnings = parseLearningIds(values.influencedBy);
+    if (linkedLearnings.length > 0) {
+      await linkDecisionToLearnings(db, insertedId, linkedLearnings);
+    }
+  }
+
   console.error(`✅ Decision D${insertedId} recorded`);
   if (nativeFormat) {
     console.error(`   Native: ${nativeFormat}`);
+  }
+  if (linkedLearnings.length > 0) {
+    console.error(`   Linked to learnings: ${linkedLearnings.map((id) => `L${id}`).join(", ")}`);
   }
   outputSuccess({
     id: insertedId,
     title: values.title,
     native_format: nativeFormat,
+    linked_learnings: linkedLearnings,
   });
+}
+
+/**
+ * Parse learning IDs from a comma-separated string (e.g., "L12,L45" or "12,45")
+ */
+function parseLearningIds(input: string): number[] {
+  return input
+    .split(",")
+    .map((s) => s.trim().replace(/^L/i, ""))
+    .map((s) => parseInt(s, 10))
+    .filter((id) => !Number.isNaN(id) && id > 0);
+}
+
+/**
+ * Link learnings to a decision (for feedback loop)
+ */
+async function linkDecisionToLearnings(
+  db: DatabaseAdapter,
+  decisionId: number,
+  learningIds: number[]
+): Promise<void> {
+  for (const learningId of learningIds) {
+    try {
+      await db.run(
+        `INSERT OR REPLACE INTO decision_learnings (decision_id, learning_id, contribution)
+         VALUES (?, ?, 'influenced')`,
+        [decisionId, learningId]
+      );
+    } catch {
+      // Table might not exist yet, silently ignore
+    }
+  }
 }
 
 export async function decisionList(db: DatabaseAdapter, projectId: number): Promise<void> {
