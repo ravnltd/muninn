@@ -17,7 +17,8 @@ import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import { isGlobalProject, loadConfig } from "../config";
 import type { DatabaseAdapter } from "./adapter";
 import { LocalAdapter } from "./adapters/local";
-import { NetworkAdapter } from "./adapters/network";
+// NetworkAdapter is dynamically imported only when network mode is used
+// to avoid loading @libsql native modules unnecessarily
 import {
   applyReliabilityPragmas,
   checkIntegrity,
@@ -89,6 +90,8 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
     if (!config.primaryUrl) {
       throw new Error("Network mode requires MUNINN_PRIMARY_URL");
     }
+    // Dynamic import to avoid loading @libsql native modules when not needed
+    const { NetworkAdapter } = await import("./adapters/network");
     globalAdapterInstance = new NetworkAdapter({
       localPath: GLOBAL_DB_PATH,
       primaryUrl: config.primaryUrl,
@@ -1171,6 +1174,8 @@ export async function getProjectDb(): Promise<DatabaseAdapter> {
     if (!config.primaryUrl) {
       throw new Error("Network mode requires MUNINN_PRIMARY_URL");
     }
+    // Dynamic import to avoid loading @libsql native modules when not needed
+    const { NetworkAdapter } = await import("./adapters/network");
     projectAdapterInstance = new NetworkAdapter({
       localPath: dbPath,
       primaryUrl: config.primaryUrl,
@@ -1238,6 +1243,8 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
       throw new Error("Network mode requires MUNINN_PRIMARY_URL");
     }
 
+    // Dynamic import to avoid loading @libsql native modules when not needed
+    const { NetworkAdapter } = await import("./adapters/network");
     // For network mode, create adapter and load schema
     projectAdapterInstance = new NetworkAdapter({
       localPath: dbPath,
