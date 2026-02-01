@@ -7,9 +7,11 @@
  * - Auto-sync on interval, manual sync() method available
  */
 
-import { createClient, type Client } from "@libsql/client";
 import type { DatabaseAdapter, QueryResult } from "../adapter";
 import type { NetworkHealth } from "../health";
+
+// Dynamic import to avoid loading native module when not using network mode
+type LibSQLClient = Awaited<ReturnType<typeof import("@libsql/client").createClient>>;
 
 export interface NetworkAdapterConfig {
   localPath: string;
@@ -19,7 +21,7 @@ export interface NetworkAdapterConfig {
 }
 
 export class NetworkAdapter implements DatabaseAdapter {
-  private client: Client;
+  private client!: LibSQLClient;
   private syncTimer: Timer | null = null;
   private config: NetworkAdapterConfig;
 
@@ -29,19 +31,10 @@ export class NetworkAdapter implements DatabaseAdapter {
   private _lastSyncLatencyMs: number | null = null;
   private _connected: boolean = false;
 
+  private initialized = false;
+
   constructor(config: NetworkAdapterConfig) {
     this.config = config;
-
-    // Create embedded replica client
-    this.client = createClient({
-      url: `file:${config.localPath}`,
-      syncUrl: config.primaryUrl,
-      authToken: config.authToken,
-      syncInterval: config.syncInterval || 60000, // Default: 60s
-    });
-
-    // Start auto-sync
-    this.startAutoSync(config.syncInterval || 60000);
   }
 
   private startAutoSync(interval: number): void {
@@ -56,10 +49,26 @@ export class NetworkAdapter implements DatabaseAdapter {
   }
 
   /**
-   * Initialize the adapter by performing initial sync.
+   * Initialize the adapter - creates client and performs initial sync.
    * Must be called after construction before any queries.
    */
   async init(): Promise<void> {
+    if (this.initialized) return;
+
+    // Dynamic import to avoid loading native module at startup
+    const { createClient } = await import("@libsql/client");
+
+    this.client = createClient({
+      url: `file:${this.config.localPath}`,
+      syncUrl: this.config.primaryUrl,
+      authToken: this.config.authToken,
+      syncInterval: this.config.syncInterval || 60000,
+    });
+
+    // Start auto-sync
+    this.startAutoSync(this.config.syncInterval || 60000);
+    this.initialized = true;
+
     try {
       await this.sync();
     } catch (error) {
@@ -68,20 +77,29 @@ export class NetworkAdapter implements DatabaseAdapter {
     }
   }
 
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      throw new Error("NetworkAdapter.init() must be called before queries");
+    }
+  }
+
   // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async get<T = any>(sql: string, params?: any[]): Promise<T | null> {
+    this.ensureInitialized();
     const result = await this.client.execute({ sql, args: params || [] });
     return (result.rows[0] as T) || null;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async all<T = any>(sql: string, params?: any[]): Promise<T[]> {
+    this.ensureInitialized();
     const result = await this.client.execute({ sql, args: params || [] });
     return result.rows as T[];
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async run(sql: string, params?: any[]): Promise<QueryResult> {
+    this.ensureInitialized();
     const result = await this.client.execute({ sql, args: params || [] });
     return {
       lastInsertRowid: result.lastInsertRowid ?? 0,
@@ -90,6 +108,7 @@ export class NetworkAdapter implements DatabaseAdapter {
   }
 
   async exec(sql: string): Promise<void> {
+    this.ensureInitialized();
     // Parse SQL into statements, handling comments and string literals
     const statements = this.parseStatements(sql);
 
@@ -218,6 +237,7 @@ export class NetworkAdapter implements DatabaseAdapter {
 
   // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void> {
+    this.ensureInitialized();
     await this.client.batch(
       statements.map((stmt) => ({
         sql: stmt.sql,
@@ -228,6 +248,7 @@ export class NetworkAdapter implements DatabaseAdapter {
   }
 
   async sync(): Promise<void> {
+    this.ensureInitialized();
     const start = performance.now();
 
     try {
@@ -272,10 +293,13 @@ export class NetworkAdapter implements DatabaseAdapter {
       clearInterval(this.syncTimer);
       this.syncTimer = null;
     }
-    this.client.close();
+    if (this.initialized) {
+      this.client.close();
+    }
   }
 
-  raw(): Client {
+  raw(): LibSQLClient {
+    this.ensureInitialized();
     return this.client;
   }
 }
