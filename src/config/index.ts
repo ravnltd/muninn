@@ -14,7 +14,6 @@ const ConfigSchema = z.object({
   authToken: z.string().optional(),
   syncInterval: z.number().int().positive().default(60000),
   outputFormat: z.enum(["native", "human"]).default("native"),
-  globalProjects: z.array(z.string()).default([]),
 });
 
 export type MuninnConfig = z.infer<typeof ConfigSchema>;
@@ -27,15 +26,8 @@ export type MuninnConfig = z.infer<typeof ConfigSchema>;
  * - MUNINN_PRIMARY_URL: sqld server URL (required for network mode)
  * - MUNINN_AUTH_TOKEN: Optional auth token for network mode
  * - MUNINN_SYNC_INTERVAL: Sync interval in ms (default: 60000)
- * - MUNINN_GLOBAL_PROJECTS: Comma-separated project paths that use global DB
  */
 export function loadConfig(): MuninnConfig {
-  const globalProjectsEnv = process.env.MUNINN_GLOBAL_PROJECTS || "";
-  const globalProjects = globalProjectsEnv
-    .split(",")
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
-
   const raw = {
     mode: process.env.MUNINN_MODE || "local",
     primaryUrl: process.env.MUNINN_PRIMARY_URL,
@@ -44,7 +36,6 @@ export function loadConfig(): MuninnConfig {
       ? parseInt(process.env.MUNINN_SYNC_INTERVAL, 10)
       : 60000,
     outputFormat: process.env.MUNINN_OUTPUT_FORMAT || "native",
-    globalProjects,
   };
 
   // Validate with Zod
@@ -84,19 +75,6 @@ export function getConfig(): MuninnConfig {
  */
 export function isNativeFormat(): boolean {
   return getConfig().outputFormat === "native";
-}
-
-/**
- * Check if a project path should use the global database
- */
-export function isGlobalProject(projectPath: string): boolean {
-  const config = getConfig();
-  // Normalize paths for comparison
-  const normalizedPath = projectPath.replace(/\/+$/, "");
-  return config.globalProjects.some((gp) => {
-    const normalizedGp = gp.replace(/\/+$/, "");
-    return normalizedPath === normalizedGp || normalizedPath.startsWith(normalizedGp + "/");
-  });
 }
 
 /**
