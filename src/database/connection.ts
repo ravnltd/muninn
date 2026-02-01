@@ -110,6 +110,8 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
   } else {
     // For network mode, use exec through adapter
     await initGlobalTablesAsync(globalAdapterInstance);
+    // Sync again to pull newly created tables from remote to local replica
+    await globalAdapterInstance.sync();
   }
 
   return globalAdapterInstance;
@@ -700,6 +702,8 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
     if (existsSync(SCHEMA_PATH)) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
       await projectAdapterInstance.exec(schema);
+      // Sync again to pull newly created tables from remote to local replica
+      await projectAdapterInstance.sync();
     }
   } else {
     // For local mode, use sync operations
