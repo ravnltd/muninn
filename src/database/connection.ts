@@ -14,7 +14,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
-import { isGlobalProject, loadConfig } from "../config";
+import { loadConfig } from "../config";
 import type { DatabaseAdapter } from "./adapter";
 import { LocalAdapter } from "./adapters/local";
 // NetworkAdapter is dynamically imported only when network mode is used
@@ -1151,57 +1151,9 @@ export function getProjectDbPath(): string {
 }
 
 export async function getProjectDb(): Promise<DatabaseAdapter> {
-  // Check if current project should use global database
-  const cwd = process.cwd();
-  if (isGlobalProject(cwd)) {
-    return getGlobalDb();
-  }
-
-  const dbPath = getProjectDbPath();
-
-  // Return cached instance if same path
-  if (projectAdapterInstance && currentProjectDbPath === dbPath) {
-    return projectAdapterInstance;
-  }
-
-  // Close existing connection if switching projects
-  if (projectAdapterInstance) {
-    projectAdapterInstance.close();
-  }
-
-  // Create adapter based on config
-  if (config.mode === "network") {
-    if (!config.primaryUrl) {
-      throw new Error("Network mode requires MUNINN_PRIMARY_URL");
-    }
-    // Dynamic import to avoid loading @libsql native modules when not needed
-    const { NetworkAdapter } = await import("./adapters/network");
-    projectAdapterInstance = new NetworkAdapter({
-      localPath: dbPath,
-      primaryUrl: config.primaryUrl,
-      authToken: config.authToken,
-      syncInterval: config.syncInterval,
-    });
-    // Perform initial sync to pull schema/data from remote
-    await projectAdapterInstance.init();
-  } else {
-    const db = new Database(dbPath);
-    applyReliabilityPragmas(db);
-
-    // Run any pending migrations (sync for local mode)
-    const migrationResult = runMigrations(db, dbPath);
-    if (!migrationResult.ok) {
-      console.error(`⚠️  Migration warning: ${migrationResult.error.message}`);
-    }
-
-    // Also run legacy migrations for backwards compatibility
-    migrateProjectDb(db);
-
-    projectAdapterInstance = new LocalAdapter(db);
-  }
-
-  currentProjectDbPath = dbPath;
-  return projectAdapterInstance;
+  // All projects now use the global database
+  // Projects are distinguished by project_id in each table
+  return getGlobalDb();
 }
 
 /**
@@ -1284,25 +1236,6 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
 
   currentProjectDbPath = dbPath;
   return projectAdapterInstance;
-}
-
-function migrateProjectDb(db: Database): void {
-  const migrations = [
-    "ALTER TABLE files ADD COLUMN content_hash TEXT",
-    "ALTER TABLE files ADD COLUMN fs_modified_at TEXT",
-    "ALTER TABLE files ADD COLUMN last_queried_at TEXT",
-    "ALTER TABLE sessions ADD COLUMN files_read TEXT",
-    "ALTER TABLE sessions ADD COLUMN patterns_used TEXT",
-    "ALTER TABLE sessions ADD COLUMN queries_made TEXT",
-  ];
-
-  for (const sql of migrations) {
-    try {
-      db.exec(sql);
-    } catch {
-      // Column already exists, ignore
-    }
-  }
 }
 
 // ============================================================================
