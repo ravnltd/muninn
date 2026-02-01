@@ -55,6 +55,19 @@ export class NetworkAdapter implements DatabaseAdapter {
     }, interval);
   }
 
+  /**
+   * Initialize the adapter by performing initial sync.
+   * Must be called after construction before any queries.
+   */
+  async init(): Promise<void> {
+    try {
+      await this.sync();
+    } catch (error) {
+      // Log but continue - local file may still work with cached data
+      console.error(`⚠️  Initial sync failed: ${error}`);
+    }
+  }
+
   // biome-ignore lint/suspicious/noExplicitAny: libSQL requires flexible param types
   async get<T = any>(sql: string, params?: any[]): Promise<T | null> {
     const result = await this.client.execute({ sql, args: params || [] });

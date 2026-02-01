@@ -51,6 +51,10 @@ export class LocalAdapter implements DatabaseAdapter {
     }
   }
 
+  async init(): Promise<void> {
+    // No-op in local mode - database is ready immediately
+  }
+
   async sync(): Promise<void> {
     // No-op in local mode
   }

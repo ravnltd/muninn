@@ -95,6 +95,8 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
       authToken: config.authToken,
       syncInterval: config.syncInterval,
     });
+    // Perform initial sync to pull schema/data from remote
+    await globalAdapterInstance.init();
   } else {
     const db = new Database(GLOBAL_DB_PATH);
     applyReliabilityPragmas(db);
@@ -623,6 +625,8 @@ export async function getProjectDb(): Promise<DatabaseAdapter> {
       authToken: config.authToken,
       syncInterval: config.syncInterval,
     });
+    // Perform initial sync to pull schema/data from remote
+    await projectAdapterInstance.init();
   } else {
     const db = new Database(dbPath);
     applyReliabilityPragmas(db);
@@ -689,6 +693,8 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
       authToken: config.authToken,
       syncInterval: config.syncInterval,
     });
+    // Perform initial sync to pull any existing data from remote
+    await projectAdapterInstance.init();
 
     // Load and execute schema asynchronously
     if (existsSync(SCHEMA_PATH)) {

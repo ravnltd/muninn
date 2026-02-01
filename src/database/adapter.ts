@@ -47,6 +47,12 @@ export interface DatabaseAdapter {
   batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void>;
 
   /**
+   * Initialize the adapter (network mode: initial sync)
+   * Must be called after construction before any queries
+   */
+  init(): Promise<void>;
+
+  /**
    * Sync local changes to remote (network mode only)
    * No-op in local mode
    */
