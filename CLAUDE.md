@@ -4,7 +4,34 @@ You have **native MCP tools** for project memory. Query, don't preload.
 
 ---
 
-## Multi-Machine Setup
+## Multi-Machine Setup (Hub-and-Spoke)
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────┐
+│                    HUB (sqld server)                    │
+│  Docker: ghcr.io/tursodatabase/libsql-server:latest     │
+│  Port: 8080 (HTTP API)                                  │
+│  Data: /var/lib/docker/volumes/muninn-sqld-data         │
+└─────────────────────────────────────────────────────────┘
+                           │
+              HTTP API (YOUR_SQLD_HOST:8080)
+                           │
+     ┌─────────────────────┼─────────────────────┐
+     ▼                     ▼                     ▼
+┌─────────┐          ┌─────────┐          ┌─────────┐
+│ Spoke 1 │          │ Spoke 2 │          │  Hub    │
+│ http    │          │ http    │          │ http    │
+│ mode    │          │ mode    │          │ mode    │
+└─────────┘          └─────────┘          └─────────┘
+```
+
+**Mode selection:**
+| Mode | Local State | Use Case |
+|------|-------------|----------|
+| `http` | **None** | All machines (safest) |
+| `network` | Replica DB | Offline support (corruption risk) |
+| `local` | Full DB | Single machine only |
 
 **sqld server:** `http://YOUR_SQLD_HOST:8080` (Tailscale)
 
@@ -32,6 +59,31 @@ EOF
 source ~/.bashrc && \
 claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SQLD_HOST:8080 muninn-mcp
 ```
+
+### Database Backups (Hub only)
+
+Daily backups run via cron at 3:00 AM:
+```bash
+# View backup status
+ls -la ~/.claude/backups/
+
+# Restore from backup (if needed)
+docker stop muninn-sqld
+cp ~/.claude/backups/sqld-YYYYMMDD.db /path/to/sqld/data/iku.db
+docker start muninn-sqld
+```
+
+### Corruption Prevention
+
+**Why `http` mode is recommended:**
+- `network` mode creates a local embedded replica that can corrupt
+- Corruption triggers: unclean shutdown, multiple writers, WAL issues
+- `http` mode has NO local state - queries go directly to sqld
+
+**If corruption occurs:**
+1. Remove local replica: `rm ~/.claude/memory.db*`
+2. Restart Claude Code
+3. `http` mode will reconnect automatically (no data loss)
 
 ---
 
@@ -114,6 +166,30 @@ muninn_learn_add         → Save insights for future sessions
 | `muninn_session` | Start or end sessions (action: start/end) |
 | `muninn_predict` | Bundle context for a task (FTS/keyword matching) |
 | `muninn_suggest` | Suggest files for a task (semantic/embedding search) |
+
+### Text Validation Rules
+
+All text inputs are validated to prevent shell injection. **Blocked characters:**
+```
+`  $  (  )  {  }  |  ;  &  <  >  \
+```
+
+When using `muninn_decision_add`, `muninn_learn_add`, or `muninn_issue`:
+- **No backticks** - describe code in plain words
+- **No variable syntax** - avoid $HOME, ${var}, $(cmd)
+- **No shell operators** - no pipes, semicolons, ampersands
+- **No redirects** - no < or >
+
+**Examples:**
+```
+BAD:  "Use `http` mode"           # backticks
+BAD:  "Check $HOME/.config"       # dollar sign
+BAD:  "Run cmd1 | cmd2"           # pipe
+BAD:  "If (condition) { do }"     # parens and braces
+GOOD: "Use http mode"
+GOOD: "Check the home config dir"
+GOOD: "Pipe the output to cmd2"
+```
 
 ### Passthrough Tool
 For everything else, use the `muninn` passthrough:

@@ -25,16 +25,21 @@ if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
     bun install
 fi
 
-# Compile CLI
-echo "Compiling CLI..."
-cd "$SCRIPT_DIR"
-bun build ./src/index.ts --compile --outfile "$INSTALL_DIR/muninn"
+# Create CLI wrapper script (runs from source to support native modules)
+echo "Creating CLI wrapper..."
+cat > "$INSTALL_DIR/muninn" << EOF
+#!/bin/bash
+exec bun run "$SCRIPT_DIR/src/index.ts" "\$@"
+EOF
 chmod +x "$INSTALL_DIR/muninn"
 echo "✓ CLI installed to $INSTALL_DIR/muninn"
 
-# Compile MCP server
-echo "Compiling MCP server..."
-bun build ./src/mcp-server.ts --compile --outfile "$INSTALL_DIR/muninn-mcp"
+# Create MCP server wrapper script
+echo "Creating MCP server wrapper..."
+cat > "$INSTALL_DIR/muninn-mcp" << EOF
+#!/bin/bash
+exec bun run "$SCRIPT_DIR/src/mcp-server.ts" "\$@"
+EOF
 chmod +x "$INSTALL_DIR/muninn-mcp"
 echo "✓ MCP server installed to $INSTALL_DIR/muninn-mcp"
 
