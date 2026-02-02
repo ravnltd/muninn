@@ -1,6 +1,6 @@
 # Muninn
 
-[![CI](https://github.com/ravnltd/muninn/actions/workflows/ci.yml/badge.svg)](https://github.com/ravnltd/muninn/actions/workflows/ci.yml)
+[![CI](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml/badge.svg)](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml)
 
 A semantic memory system for AI-assisted development. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
 
@@ -33,7 +33,7 @@ curl -fsSL https://bun.sh/install | bash
 
 ```bash
 # Clone to a permanent location
-git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn
+git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn
 cd ~/.local/share/muninn
 
 # Install (compiles binaries to ~/.local/bin/)
@@ -141,7 +141,7 @@ docker run -d --name sqld \
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn
+git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn
 cd ~/.local/share/muninn
 ./install.sh
 
