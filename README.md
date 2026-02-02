@@ -108,6 +108,87 @@ claude
 # You should see "Session Resume" output if hooks are working
 ```
 
+## Multi-Machine Setup (Network/HTTP Mode)
+
+Muninn can sync across multiple machines using a central sqld database server. This is useful for:
+- Shared memory across workstations
+- Remote development servers
+- Keeping context in sync across your fleet
+
+### Prerequisites
+
+You need a [sqld](https://github.com/tursodatabase/libsql/tree/main/libsql-server) server running. Example with Docker:
+
+```bash
+# On your central server (e.g., YOUR_SQLD_HOST)
+docker run -d --name sqld \
+  -p 8080:8080 \
+  -v sqld-data:/var/lib/sqld \
+  ghcr.io/tursodatabase/libsql-server:latest
+```
+
+### Mode Options
+
+| Mode | Native Modules | Local Replica | Offline | Best For |
+|------|---------------|---------------|---------|----------|
+| `local` | No | N/A (single file) | Yes | Single machine |
+| `http` | No | No | No | **Compiled binaries, remote servers** |
+| `network` | Yes (@libsql) | Yes | Yes | Dev machines with full toolchain |
+
+**Use `http` mode for remote servers** — it uses pure HTTP fetch with no native C++ modules, so compiled binaries work anywhere.
+
+### Quick Setup (Remote Server)
+
+```bash
+# 1. Clone and install
+git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn
+cd ~/.local/share/muninn
+./install.sh
+
+# 2. Add to PATH and set HTTP mode
+cat >> ~/.bashrc << 'EOF'
+export PATH="$HOME/.local/bin:$PATH"
+export MUNINN_MODE=http
+export MUNINN_PRIMARY_URL=http://YOUR_SQLD_SERVER:8080
+EOF
+source ~/.bashrc
+
+# 3. Verify CLI works
+muninn status
+
+# 4. Register MCP with env vars
+claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SQLD_SERVER:8080 muninn-mcp
+
+# 5. Test MCP
+claude mcp list  # Should show muninn as "Connected"
+```
+
+### Troubleshooting Network Mode
+
+**"Cannot find module '@libsql/linux-x64-gnu'"**
+
+You're using `network` mode on a compiled binary. Switch to `http` mode:
+```bash
+export MUNINN_MODE=http
+```
+
+**MCP shows connected but commands fail**
+
+The MCP server needs env vars passed at registration:
+```bash
+claude mcp remove muninn
+claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://SERVER:8080 muninn-mcp
+```
+
+**CLI works but Claude hangs**
+
+Hooks call `muninn` directly. Export env vars in your shell profile:
+```bash
+echo 'export MUNINN_MODE=http' >> ~/.bashrc
+echo 'export MUNINN_PRIMARY_URL=http://SERVER:8080' >> ~/.bashrc
+source ~/.bashrc
+```
+
 ## External API Connections (Optional)
 
 Muninn works fully offline, but optional API integrations enhance capabilities:
