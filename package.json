@@ -1,6 +1,6 @@
 {
   "name": "muninn",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Semantic memory system for AI-assisted development - persistent context across sessions",
   "type": "module",
   "bin": {
