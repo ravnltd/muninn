@@ -13,6 +13,7 @@
  * - Input validation via Zod schemas
  */
 
+import { existsSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -38,12 +39,49 @@ function log(msg: string): void {
 }
 
 /**
+ * Find muninn CLI binary. Checks:
+ * 1. Bun.which() - PATH lookup
+ * 2. Same directory as this executable (compiled installation)
+ * 3. Common installation locations
+ */
+function resolveMuninnBin(): string {
+  // Try PATH first (works when PATH includes ~/.local/bin)
+  const fromPath = Bun.which("muninn");
+  if (fromPath) return fromPath;
+
+  // Check sibling (when both compiled to same dir)
+  const execPath = process.execPath;
+  if (execPath && !execPath.includes("bun")) {
+    // Running as compiled binary
+    const execDir = execPath.replace(/\/[^/]+$/, "");
+    const sibling = `${execDir}/muninn`;
+    if (existsSync(sibling)) return sibling;
+  }
+
+  // Common locations
+  const home = process.env.HOME || "";
+  const locations = [
+    `${home}/.local/bin/muninn`,
+    "/usr/local/bin/muninn",
+  ];
+  for (const loc of locations) {
+    if (existsSync(loc)) return loc;
+  }
+
+  // Fallback - let spawn fail with clear error
+  log("Warning: Could not find muninn binary, falling back to PATH");
+  return "muninn";
+}
+
+const MUNINN_BIN = resolveMuninnBin();
+
+/**
  * Execute muninn CLI with safe argument array (no shell interpolation).
  * Uses Bun.spawnSync to avoid shell injection vulnerabilities.
  */
 function runContext(args: string[], cwd?: string): string {
   try {
-    const result = Bun.spawnSync(["muninn", ...args], {
+    const result = Bun.spawnSync([MUNINN_BIN, ...args], {
       cwd: cwd || process.cwd(),
       stdout: "pipe",
       stderr: "pipe",
@@ -577,6 +615,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function main(): Promise<void> {
   log("Starting Muninn MCP Server v2 (optimized)...");
+  log(`Using muninn binary: ${MUNINN_BIN}`);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("Server connected via stdio");

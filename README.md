@@ -29,30 +29,32 @@ Projects are auto-initialized on first session — no manual setup required.
 curl -fsSL https://bun.sh/install | bash
 ```
 
-### Step 2: Clone and Build
+### Step 2: Clone and Install
 
 ```bash
-git clone https://github.com/ravnltd/muninn.git
-cd muninn
-bun install
-bun run build
-bun run build:mcp
-```
+# Clone to a permanent location
+git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn
+cd ~/.local/share/muninn
 
-### Step 3: Install Globally
-
-**Option A: Using the install script (recommended)**
-```bash
+# Install (compiles binaries to ~/.local/bin/)
 ./install.sh
 ```
 
-**Option B: Manual install**
-```bash
-mkdir -p ~/.local/bin
-cp muninn muninn-mcp ~/.local/bin/
+The install script:
+- Compiles `muninn` and `muninn-mcp` binaries to `~/.local/bin/`
+- Checks if `~/.local/bin` is in your PATH
+- Shows MCP registration instructions
 
-# Add to PATH if not already (add to ~/.bashrc or ~/.zshrc)
-export PATH="$HOME/.local/bin:$PATH"
+### Step 3: Add to PATH (if needed)
+
+If the installer shows a PATH warning:
+
+```bash
+# Add to your shell profile (~/.bashrc or ~/.zshrc)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+
+# Reload shell
+source ~/.bashrc  # or restart your terminal
 ```
 
 ### Step 4: Register MCP Server
@@ -64,6 +66,8 @@ claude mcp add --scope user muninn -- muninn-mcp
 # Verify registration
 claude mcp list
 ```
+
+**Note:** The MCP server uses compiled binaries, not source files. This ensures it works regardless of which directory Claude Code is started from.
 
 ### Step 5: Set Up Hooks (Recommended)
 
