@@ -6,7 +6,7 @@ set -e
 
 BACKUP_DIR="${HOME}/.claude/backups"
 DATE=$(date +%Y%m%d)
-KEEP_DAYS=7
+KEEP_DAYS=14
 
 mkdir -p "$BACKUP_DIR"
 
