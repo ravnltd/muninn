@@ -86,7 +86,18 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
   }
 
   // Create adapter based on config
-  if (config.mode === "network") {
+  if (config.mode === "http") {
+    if (!config.primaryUrl) {
+      throw new Error("HTTP mode requires MUNINN_PRIMARY_URL");
+    }
+    // HTTP adapter - pure fetch, no native modules
+    const { HttpAdapter } = await import("./adapters/http");
+    globalAdapterInstance = new HttpAdapter({
+      primaryUrl: config.primaryUrl,
+      authToken: config.authToken,
+    });
+    await globalAdapterInstance.init();
+  } else if (config.mode === "network") {
     if (!config.primaryUrl) {
       throw new Error("Network mode requires MUNINN_PRIMARY_URL");
     }
@@ -110,6 +121,9 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
   if (config.mode === "local") {
     const rawDb = globalAdapterInstance.raw() as Database;
     await initGlobalTables(rawDb);
+  } else if (config.mode === "http") {
+    // For HTTP mode, use exec through adapter (no local sync needed)
+    await initGlobalTablesAsync(globalAdapterInstance);
   } else {
     // For network mode, use exec through adapter
     await initGlobalTablesAsync(globalAdapterInstance);
@@ -131,7 +145,7 @@ export async function getGlobalDrizzle(): Promise<DrizzleDb> {
   }
 
   if (config.mode !== "local") {
-    throw new Error("Drizzle ORM only supported in local mode");
+    throw new Error("Drizzle ORM only supported in local mode (not available in network/http modes)");
   }
 
   const adapter = await getGlobalDb();
@@ -1167,7 +1181,7 @@ export async function getProjectDrizzle(): Promise<DrizzleDb> {
   }
 
   if (config.mode !== "local") {
-    throw new Error("Drizzle ORM only supported in local mode");
+    throw new Error("Drizzle ORM only supported in local mode (not available in network/http modes)");
   }
 
   const adapter = await getProjectDb();
@@ -1190,7 +1204,25 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
   }
 
   // Create adapter based on config
-  if (config.mode === "network") {
+  if (config.mode === "http") {
+    if (!config.primaryUrl) {
+      throw new Error("HTTP mode requires MUNINN_PRIMARY_URL");
+    }
+
+    // HTTP adapter - pure fetch, no native modules
+    const { HttpAdapter } = await import("./adapters/http");
+    projectAdapterInstance = new HttpAdapter({
+      primaryUrl: config.primaryUrl,
+      authToken: config.authToken,
+    });
+    await projectAdapterInstance.init();
+
+    // Load and execute schema asynchronously
+    if (existsSync(SCHEMA_PATH)) {
+      const schema = readFileSync(SCHEMA_PATH, "utf-8");
+      await projectAdapterInstance.exec(schema);
+    }
+  } else if (config.mode === "network") {
     if (!config.primaryUrl) {
       throw new Error("Network mode requires MUNINN_PRIMARY_URL");
     }

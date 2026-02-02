@@ -9,7 +9,7 @@ import { z } from "zod";
 
 // Configuration schema
 const ConfigSchema = z.object({
-  mode: z.enum(["local", "network"]).default("local"),
+  mode: z.enum(["local", "network", "http"]).default("local"),
   primaryUrl: z.string().url().optional(),
   authToken: z.string().optional(),
   syncInterval: z.number().int().positive().default(60000),
@@ -47,10 +47,10 @@ export function loadConfig(): MuninnConfig {
 
   const config = result.data;
 
-  // Additional validation: network mode requires primaryUrl
-  if (config.mode === "network" && !config.primaryUrl) {
+  // Additional validation: network/http modes require primaryUrl
+  if ((config.mode === "network" || config.mode === "http") && !config.primaryUrl) {
     throw new Error(
-      "Network mode requires MUNINN_PRIMARY_URL environment variable"
+      `${config.mode} mode requires MUNINN_PRIMARY_URL environment variable`
     );
   }
 
@@ -83,6 +83,14 @@ export function isNativeFormat(): boolean {
 export function getConfigStatus(config: MuninnConfig): string {
   if (config.mode === "local") {
     return "Mode: Local (bun:sqlite)";
+  }
+
+  if (config.mode === "http") {
+    return [
+      "Mode: HTTP (pure fetch, no native modules)",
+      `Primary: ${config.primaryUrl}`,
+      config.authToken ? "Auth: Enabled" : "Auth: None",
+    ].join("\n");
   }
 
   return [

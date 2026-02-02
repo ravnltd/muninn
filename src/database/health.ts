@@ -11,8 +11,8 @@ import type { MuninnConfig } from "../config";
  * Network health state
  */
 export interface NetworkHealth {
-  /** Current mode: local or network */
-  mode: "local" | "network";
+  /** Current mode: local, network, or http */
+  mode: "local" | "network" | "http";
   /** Whether connected to primary (last sync succeeded) */
   connected: boolean;
   /** Timestamp of last successful sync */
@@ -23,7 +23,7 @@ export interface NetworkHealth {
   lastSyncLatencyMs: number | null;
   /** Primary server URL (null in local mode) */
   primaryUrl: string | null;
-  /** Sync interval in milliseconds */
+  /** Sync interval in milliseconds (0 for http mode) */
   syncInterval: number;
 }
 
@@ -135,6 +135,28 @@ export function formatHealthStatus(health: NetworkHealth): string {
   if (health.mode === "local") {
     lines.push("Mode: Local (bun:sqlite)");
     lines.push("Status: Local database, no sync");
+    return lines.join("\n");
+  }
+
+  // HTTP mode
+  if (health.mode === "http") {
+    lines.push("Mode: HTTP (pure fetch, no native modules)");
+    lines.push(`Primary: ${health.primaryUrl || "not configured"}`);
+    lines.push(`Connected: ${health.connected ? "Yes" : "No"}`);
+
+    if (health.lastSyncAt) {
+      const ago = formatTimeAgo(health.lastSyncAt);
+      lines.push(`Last Query: ${ago}`);
+    }
+
+    if (health.lastSyncLatencyMs !== null) {
+      lines.push(`Latency: ${health.lastSyncLatencyMs}ms`);
+    }
+
+    if (health.lastSyncError) {
+      lines.push(`Last Error: ${health.lastSyncError}`);
+    }
+
     return lines.join("\n");
   }
 
