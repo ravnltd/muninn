@@ -4,6 +4,27 @@ You have **native MCP tools** for project memory. Query, don't preload.
 
 ---
 
+## Multi-Machine Setup
+
+**sqld server:** `http://YOUR_SQLD_HOST:8080` (Tailscale)
+
+To install muninn on a new server with HTTP mode:
+
+```bash
+git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn && \
+cd ~/.local/share/muninn && \
+./install.sh && \
+cat >> ~/.bashrc << 'EOF'
+export PATH="$HOME/.local/bin:$PATH"
+export MUNINN_MODE=http
+export MUNINN_PRIMARY_URL=http://YOUR_SQLD_HOST:8080
+EOF
+source ~/.bashrc && \
+claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SQLD_HOST:8080 muninn-mcp
+```
+
+---
+
 ## Core Principle: Lazy Loading
 
 Treat context like RAM, not disk. Load what's needed, when needed.
