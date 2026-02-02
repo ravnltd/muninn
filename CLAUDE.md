@@ -8,7 +8,17 @@ You have **native MCP tools** for project memory. Query, don't preload.
 
 **sqld server:** `http://YOUR_SQLD_HOST:8080` (Tailscale)
 
-To install muninn on a new server with HTTP mode:
+### Install Claude Code first
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+**Gotchas:**
+- Never use `sudo` with claude install - installs to root's home
+- Must use `bash`, not `sh` - script uses bash syntax
+
+### Install muninn with HTTP mode
 
 ```bash
 git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn && \
