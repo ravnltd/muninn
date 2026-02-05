@@ -13,7 +13,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { loadConfig } from "../config";
 import type { DatabaseAdapter } from "./adapter";
 import { LocalAdapter } from "./adapters/local";
@@ -27,7 +27,10 @@ import {
   type MigrationState,
   runMigrations,
 } from "./migrations";
-import * as schema from "./schema";
+
+// Schema is lazy-loaded to avoid pulling in drizzle-orm at startup
+// This prevents native module loading in HTTP mode
+type SchemaType = typeof import("./schema");
 
 // ============================================================================
 // Configuration
@@ -42,14 +45,14 @@ export const SCHEMA_PATH = join(process.env.HOME || "~", ".claude", "schema.sql"
 export { getSchemaVersion, getLatestVersion, checkIntegrity, logDbError };
 export type { MigrationState, IntegrityCheck };
 
-// Re-export schema for direct imports
+// Re-export schema for direct imports (lazy - only loads when accessed)
 export * from "./schema";
 
 // ============================================================================
 // Type Exports
 // ============================================================================
 
-export type DrizzleDb = BunSQLiteDatabase<typeof schema>;
+export type DrizzleDb = BunSQLiteDatabase<SchemaType>;
 
 // ============================================================================
 // Connection State
@@ -126,6 +129,12 @@ export async function getGlobalDrizzle(): Promise<DrizzleDb> {
   if (config.mode !== "local") {
     throw new Error("Drizzle ORM only supported in local mode (not available in http mode)");
   }
+
+  // Dynamic imports to avoid loading native modules at startup
+  const [{ drizzle }, schema] = await Promise.all([
+    import("drizzle-orm/bun-sqlite"),
+    import("./schema"),
+  ]);
 
   const adapter = await getGlobalDb();
   const db = adapter.raw() as Database;
@@ -1163,9 +1172,16 @@ export async function getProjectDrizzle(): Promise<DrizzleDb> {
     throw new Error("Drizzle ORM only supported in local mode (not available in http mode)");
   }
 
+  // Dynamic imports to avoid loading native modules at startup
+  const [{ drizzle }, schema] = await Promise.all([
+    import("drizzle-orm/bun-sqlite"),
+    import("./schema"),
+  ]);
+
   const adapter = await getProjectDb();
   const db = adapter.raw() as Database;
   projectDrizzleInstance = drizzle(db, { schema });
+  currentProjectDbPath = getProjectDbPath();
   return projectDrizzleInstance;
 }
 
