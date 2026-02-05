@@ -29,8 +29,7 @@ You have **native MCP tools** for project memory. Query, don't preload.
 **Mode selection:**
 | Mode | Local State | Use Case |
 |------|-------------|----------|
-| `http` | **None** | All machines (safest) |
-| `network` | Replica DB | Offline support (corruption risk) |
+| `http` | **None** | Multi-machine (recommended) |
 | `local` | Full DB | Single machine only |
 
 **sqld server:** `http://YOUR_SQLD_HOST:8080` (Tailscale)
@@ -73,17 +72,12 @@ cp ~/.claude/backups/sqld-YYYYMMDD.db /path/to/sqld/data/iku.db
 docker start muninn-sqld
 ```
 
-### Corruption Prevention
+### Why HTTP Mode
 
-**Why `http` mode is recommended:**
-- `network` mode creates a local embedded replica that can corrupt
-- Corruption triggers: unclean shutdown, multiple writers, WAL issues
-- `http` mode has NO local state - queries go directly to sqld
-
-**If corruption occurs:**
-1. Remove local replica: `rm ~/.claude/memory.db*`
-2. Restart Claude Code
-3. `http` mode will reconnect automatically (no data loss)
+HTTP mode is recommended for multi-machine setups:
+- **Stateless**: No local database files - all queries go directly to sqld
+- **No corruption risk**: No local WAL or replica to corrupt
+- **Simple recovery**: Just reconnect - no data loss possible
 
 ---
 

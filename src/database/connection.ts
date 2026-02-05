@@ -17,8 +17,6 @@ import { type BunSQLiteDatabase, drizzle } from "drizzle-orm/bun-sqlite";
 import { loadConfig } from "../config";
 import type { DatabaseAdapter } from "./adapter";
 import { LocalAdapter } from "./adapters/local";
-// NetworkAdapter is dynamically imported only when network mode is used
-// to avoid loading @libsql native modules unnecessarily
 import {
   applyReliabilityPragmas,
   checkIntegrity,
@@ -97,20 +95,6 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
       authToken: config.authToken,
     });
     await globalAdapterInstance.init();
-  } else if (config.mode === "network") {
-    if (!config.primaryUrl) {
-      throw new Error("Network mode requires MUNINN_PRIMARY_URL");
-    }
-    // Dynamic import to avoid loading @libsql native modules when not needed
-    const { NetworkAdapter } = await import("./adapters/network");
-    globalAdapterInstance = new NetworkAdapter({
-      localPath: GLOBAL_DB_PATH,
-      primaryUrl: config.primaryUrl,
-      authToken: config.authToken,
-      syncInterval: config.syncInterval,
-    });
-    // Perform initial sync to pull schema/data from remote
-    await globalAdapterInstance.init();
   } else {
     const db = new Database(GLOBAL_DB_PATH);
     applyReliabilityPragmas(db);
@@ -121,14 +105,9 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
   if (config.mode === "local") {
     const rawDb = globalAdapterInstance.raw() as Database;
     await initGlobalTables(rawDb);
-  } else if (config.mode === "http") {
+  } else {
     // For HTTP mode, use exec through adapter (no local sync needed)
     await initGlobalTablesAsync(globalAdapterInstance);
-  } else {
-    // For network mode, use exec through adapter
-    await initGlobalTablesAsync(globalAdapterInstance);
-    // Sync again to pull newly created tables from remote to local replica
-    await globalAdapterInstance.sync();
   }
 
   return globalAdapterInstance;
@@ -145,7 +124,7 @@ export async function getGlobalDrizzle(): Promise<DrizzleDb> {
   }
 
   if (config.mode !== "local") {
-    throw new Error("Drizzle ORM only supported in local mode (not available in network/http modes)");
+    throw new Error("Drizzle ORM only supported in local mode (not available in http mode)");
   }
 
   const adapter = await getGlobalDb();
@@ -1181,7 +1160,7 @@ export async function getProjectDrizzle(): Promise<DrizzleDb> {
   }
 
   if (config.mode !== "local") {
-    throw new Error("Drizzle ORM only supported in local mode (not available in network/http modes)");
+    throw new Error("Drizzle ORM only supported in local mode (not available in http mode)");
   }
 
   const adapter = await getProjectDb();
@@ -1221,30 +1200,6 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
     if (existsSync(SCHEMA_PATH)) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
       await projectAdapterInstance.exec(schema);
-    }
-  } else if (config.mode === "network") {
-    if (!config.primaryUrl) {
-      throw new Error("Network mode requires MUNINN_PRIMARY_URL");
-    }
-
-    // Dynamic import to avoid loading @libsql native modules when not needed
-    const { NetworkAdapter } = await import("./adapters/network");
-    // For network mode, create adapter and load schema
-    projectAdapterInstance = new NetworkAdapter({
-      localPath: dbPath,
-      primaryUrl: config.primaryUrl,
-      authToken: config.authToken,
-      syncInterval: config.syncInterval,
-    });
-    // Perform initial sync to pull any existing data from remote
-    await projectAdapterInstance.init();
-
-    // Load and execute schema asynchronously
-    if (existsSync(SCHEMA_PATH)) {
-      const schema = readFileSync(SCHEMA_PATH, "utf-8");
-      await projectAdapterInstance.exec(schema);
-      // Sync again to pull newly created tables from remote to local replica
-      await projectAdapterInstance.sync();
     }
   } else {
     // For local mode, use sync operations

@@ -9,7 +9,7 @@ import { z } from "zod";
 
 // Configuration schema
 const ConfigSchema = z.object({
-  mode: z.enum(["local", "network", "http"]).default("local"),
+  mode: z.enum(["local", "http"]).default("local"),
   primaryUrl: z.string().url().optional(),
   authToken: z.string().optional(),
   syncInterval: z.number().int().positive().default(60000),
@@ -22,9 +22,9 @@ export type MuninnConfig = z.infer<typeof ConfigSchema>;
  * Load configuration from environment variables
  *
  * Environment variables:
- * - MUNINN_MODE: 'local' (default) or 'network'
- * - MUNINN_PRIMARY_URL: sqld server URL (required for network mode)
- * - MUNINN_AUTH_TOKEN: Optional auth token for network mode
+ * - MUNINN_MODE: 'local' (default) or 'http'
+ * - MUNINN_PRIMARY_URL: sqld server URL (required for http mode)
+ * - MUNINN_AUTH_TOKEN: Optional auth token for http mode
  * - MUNINN_SYNC_INTERVAL: Sync interval in ms (default: 60000)
  */
 export function loadConfig(): MuninnConfig {
@@ -47,10 +47,10 @@ export function loadConfig(): MuninnConfig {
 
   const config = result.data;
 
-  // Additional validation: network/http modes require primaryUrl
-  if ((config.mode === "network" || config.mode === "http") && !config.primaryUrl) {
+  // Additional validation: http mode requires primaryUrl
+  if (config.mode === "http" && !config.primaryUrl) {
     throw new Error(
-      `${config.mode} mode requires MUNINN_PRIMARY_URL environment variable`
+      "HTTP mode requires MUNINN_PRIMARY_URL environment variable"
     );
   }
 
@@ -85,18 +85,9 @@ export function getConfigStatus(config: MuninnConfig): string {
     return "Mode: Local (bun:sqlite)";
   }
 
-  if (config.mode === "http") {
-    return [
-      "Mode: HTTP (pure fetch, no native modules)",
-      `Primary: ${config.primaryUrl}`,
-      config.authToken ? "Auth: Enabled" : "Auth: None",
-    ].join("\n");
-  }
-
   return [
-    "Mode: Network (libSQL embedded replica)",
+    "Mode: HTTP (pure fetch, no native modules)",
     `Primary: ${config.primaryUrl}`,
-    `Sync interval: ${config.syncInterval}ms`,
     config.authToken ? "Auth: Enabled" : "Auth: None",
   ].join("\n");
 }

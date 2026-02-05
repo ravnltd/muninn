@@ -527,27 +527,27 @@ export async function showStatus(db: DatabaseAdapter, projectId: number): Promis
     console.error(`  Active Decisions: ${project.active_decisions || 0}`);
   }
 
-  // Display network status if in network mode
+  // Display HTTP status if in http mode
   const config = getConfig();
   let networkHealth = null;
-  if (config.mode === "network") {
+  if (config.mode === "http") {
     // Get health from adapter if available
     if (db.getHealth) {
       networkHealth = db.getHealth();
-      console.error("\n🌐 Network:");
-      console.error(`  Mode: Network (libSQL)`);
+      console.error("\n🌐 HTTP:");
+      console.error(`  Mode: HTTP (stateless)`);
       console.error(`  Primary: ${networkHealth.primaryUrl || "not set"}`);
       console.error(`  Connected: ${networkHealth.connected ? "Yes" : "No"}`);
       if (networkHealth.lastSyncAt) {
         const ago = formatTimeAgo(networkHealth.lastSyncAt);
-        console.error(`  Last Sync: ${ago}`);
+        console.error(`  Last Query: ${ago}`);
       }
       if (networkHealth.lastSyncError) {
         console.error(`  ⚠️  Last Error: ${networkHealth.lastSyncError}`);
       }
     } else {
-      console.error("\n🌐 Network:");
-      console.error(`  Mode: Network (configured but adapter not ready)`);
+      console.error("\n🌐 HTTP:");
+      console.error(`  Mode: HTTP (configured but adapter not ready)`);
     }
   }
 

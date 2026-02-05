@@ -11,8 +11,8 @@ import type { MuninnConfig } from "../config";
  * Network health state
  */
 export interface NetworkHealth {
-  /** Current mode: local, network, or http */
-  mode: "local" | "network" | "http";
+  /** Current mode: local or http */
+  mode: "local" | "http";
   /** Whether connected to primary (last sync succeeded) */
   connected: boolean;
   /** Timestamp of last successful sync */
@@ -139,37 +139,13 @@ export function formatHealthStatus(health: NetworkHealth): string {
   }
 
   // HTTP mode
-  if (health.mode === "http") {
-    lines.push("Mode: HTTP (pure fetch, no native modules)");
-    lines.push(`Primary: ${health.primaryUrl || "not configured"}`);
-    lines.push(`Connected: ${health.connected ? "Yes" : "No"}`);
-
-    if (health.lastSyncAt) {
-      const ago = formatTimeAgo(health.lastSyncAt);
-      lines.push(`Last Query: ${ago}`);
-    }
-
-    if (health.lastSyncLatencyMs !== null) {
-      lines.push(`Latency: ${health.lastSyncLatencyMs}ms`);
-    }
-
-    if (health.lastSyncError) {
-      lines.push(`Last Error: ${health.lastSyncError}`);
-    }
-
-    return lines.join("\n");
-  }
-
-  // Network mode
-  lines.push("Mode: Network (libSQL embedded replica)");
+  lines.push("Mode: HTTP (pure fetch, no native modules)");
   lines.push(`Primary: ${health.primaryUrl || "not configured"}`);
   lines.push(`Connected: ${health.connected ? "Yes" : "No"}`);
 
   if (health.lastSyncAt) {
     const ago = formatTimeAgo(health.lastSyncAt);
-    lines.push(`Last Sync: ${ago}`);
-  } else {
-    lines.push("Last Sync: Never");
+    lines.push(`Last Query: ${ago}`);
   }
 
   if (health.lastSyncLatencyMs !== null) {
@@ -179,8 +155,6 @@ export function formatHealthStatus(health: NetworkHealth): string {
   if (health.lastSyncError) {
     lines.push(`Last Error: ${health.lastSyncError}`);
   }
-
-  lines.push(`Sync Interval: ${health.syncInterval / 1000}s`);
 
   return lines.join("\n");
 }

@@ -1,8 +1,8 @@
 /**
  * Database Adapter Interface
  *
- * Provides a unified async interface for both local and network database modes.
- * This allows the codebase to switch between bun:sqlite (local) and libSQL (network)
+ * Provides a unified async interface for both local and HTTP database modes.
+ * This allows the codebase to switch between bun:sqlite (local) and HTTP (sqld)
  * without changing query code.
  */
 
@@ -47,14 +47,14 @@ export interface DatabaseAdapter {
   batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void>;
 
   /**
-   * Initialize the adapter (network mode: initial sync)
+   * Initialize the adapter
    * Must be called after construction before any queries
    */
   init(): Promise<void>;
 
   /**
-   * Sync local changes to remote (network mode only)
-   * No-op in local mode
+   * Sync operation (no-op in local and HTTP modes)
+   * Kept for interface compatibility
    */
   sync(): Promise<void>;
 
@@ -66,13 +66,13 @@ export interface DatabaseAdapter {
   /**
    * Get the underlying database instance (for compatibility)
    * Local: returns bun:sqlite Database
-   * Network: returns libSQL Client
+   * HTTP: returns undefined (no local instance)
    */
-  // biome-ignore lint/suspicious/noExplicitAny: Returns underlying DB instance (bun:sqlite or libSQL)
+  // biome-ignore lint/suspicious/noExplicitAny: Returns underlying DB instance (bun:sqlite)
   raw(): any;
 
   /**
-   * Get network health status (network mode only)
+   * Get health status (HTTP mode only)
    * Returns undefined in local mode
    */
   getHealth?(): NetworkHealth;
