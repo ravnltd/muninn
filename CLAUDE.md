@@ -44,7 +44,23 @@ curl -fsSL https://claude.ai/install.sh | bash
 - Never use `sudo` with claude install - installs to root's home
 - Must use `bash`, not `sh` - script uses bash syntax
 
-### Install muninn with HTTP mode
+### Update existing muninn installation
+
+If muninn is already installed, pull latest and rebuild:
+
+```bash
+cd ~/.local/share/muninn && git pull && bun install && ./install.sh
+```
+
+To also refresh the MCP server registration:
+
+```bash
+cd ~/.local/share/muninn && git pull && bun install && ./install.sh && \
+claude mcp remove muninn 2>/dev/null; \
+claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SQLD_HOST:8080 muninn-mcp
+```
+
+### Fresh install with HTTP mode
 
 ```bash
 git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn && \
