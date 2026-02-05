@@ -1,19 +1,20 @@
 #!/usr/bin/env bun
 
 /**
- * Muninn — MCP Server (Optimized + Hardened)
+ * Muninn — MCP Server v3 (In-Process)
+ *
+ * Calls core functions directly instead of spawning CLI processes.
+ * Eliminates ~55 HTTP round-trips of overhead per tool call.
  *
  * Hybrid tool approach:
- * - 9 core tools with full schemas (frequently used, benefit from validation)
+ * - 11 core tools with full schemas (frequently used, benefit from validation)
  * - 1 passthrough tool for whitelisted commands (saves ~8k tokens)
  *
  * Security:
- * - Uses Bun.spawnSync with argument arrays (no shell interpolation)
- * - Command whitelist for passthrough tool
  * - Input validation via Zod schemas
+ * - Command whitelist for passthrough tool
  */
 
-import { existsSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -33,72 +34,58 @@ import {
   SafePassthroughArg,
   validateInput,
 } from "./mcp-validation.js";
+import type { DatabaseAdapter } from "./database/adapter";
+import {
+  handleQuery,
+  handleCheck,
+  handleFileAdd,
+  handleDecisionAdd,
+  handleLearnAdd,
+  handleIssueAdd,
+  handleIssueResolve,
+  handleSessionStart,
+  handleSessionEnd,
+  handlePredict,
+  handleSuggest,
+  handleEnrich,
+  handleApprove,
+  handlePassthrough,
+} from "./mcp-handlers.js";
 
 function log(msg: string): void {
   process.stderr.write(`[muninn-mcp] ${msg}\n`);
 }
 
+// ============================================================================
+// Shared State (initialized once at server startup)
+// ============================================================================
+
+let dbAdapter: DatabaseAdapter | null = null;
+const projectIdCache = new Map<string, number>();
+
 /**
- * Find muninn CLI binary. Checks:
- * 1. Bun.which() - PATH lookup
- * 2. Same directory as this executable (compiled installation)
- * 3. Common installation locations
+ * Get or initialize the shared database adapter.
+ * Only creates one connection for the lifetime of the MCP server process.
  */
-function resolveMuninnBin(): string {
-  // Try PATH first (works when PATH includes ~/.local/bin)
-  const fromPath = Bun.which("muninn");
-  if (fromPath) return fromPath;
+async function getDb(): Promise<DatabaseAdapter> {
+  if (dbAdapter) return dbAdapter;
 
-  // Check sibling (when both compiled to same dir)
-  const execPath = process.execPath;
-  if (execPath && !execPath.includes("bun")) {
-    // Running as compiled binary
-    const execDir = execPath.replace(/\/[^/]+$/, "");
-    const sibling = `${execDir}/muninn`;
-    if (existsSync(sibling)) return sibling;
-  }
-
-  // Common locations
-  const home = process.env.HOME || "";
-  const locations = [
-    `${home}/.local/bin/muninn`,
-    "/usr/local/bin/muninn",
-  ];
-  for (const loc of locations) {
-    if (existsSync(loc)) return loc;
-  }
-
-  // Fallback - let spawn fail with clear error
-  log("Warning: Could not find muninn binary, falling back to PATH");
-  return "muninn";
+  const { getGlobalDb } = await import("./database/connection");
+  dbAdapter = await getGlobalDb();
+  return dbAdapter;
 }
 
-const MUNINN_BIN = resolveMuninnBin();
-
 /**
- * Execute muninn CLI with safe argument array (no shell interpolation).
- * Uses Bun.spawnSync to avoid shell injection vulnerabilities.
+ * Get or cache the project ID for a given working directory.
  */
-function runContext(args: string[], cwd?: string): string {
-  try {
-    const result = Bun.spawnSync([MUNINN_BIN, ...args], {
-      cwd: cwd || process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 30000,
-    });
+async function getProjectId(db: DatabaseAdapter, cwd: string): Promise<number> {
+  const cached = projectIdCache.get(cwd);
+  if (cached !== undefined) return cached;
 
-    const stdout = result.stdout.toString();
-    const stderr = result.stderr.toString();
-
-    if (result.exitCode !== 0) {
-      return stderr || stdout || `Command failed with exit code ${result.exitCode}`;
-    }
-
-    return stdout || stderr;
-  } catch (error) {
-    return `Error: ${error instanceof Error ? error.message : String(error)}`;
-  }
+  const { ensureProject } = await import("./database/connection");
+  const projectId = await ensureProject(db, cwd);
+  projectIdCache.set(cwd, projectId);
+  return projectId;
 }
 
 // ============================================================================
@@ -170,10 +157,10 @@ function parseCommandArgs(command: string): string[] {
   return args;
 }
 
-const server = new Server({ name: "muninn", version: "2.0.0" }, { capabilities: { tools: {} } });
+const server = new Server({ name: "muninn", version: "3.0.0" }, { capabilities: { tools: {} } });
 
 // ============================================================================
-// Tool Definitions - 8 Core + 1 Passthrough
+// Tool Definitions - 11 Core + 1 Passthrough
 // ============================================================================
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -397,7 +384,7 @@ See CLAUDE.md for full command reference.`,
 });
 
 // ============================================================================
-// Tool Handlers
+// Tool Handlers — In-Process
 // ============================================================================
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -408,6 +395,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   log(`Tool: ${name} args: ${JSON.stringify(args)}`);
 
   try {
+    // Initialize shared DB adapter (cached after first call)
+    const db = await getDb();
+    const projectId = await getProjectId(db, cwd);
+
     let result: string;
 
     switch (name) {
@@ -416,57 +407,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_query": {
         const validation = validateInput(QueryInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { query, smart, vector, fts } = validation.data;
-        const args = ["query", query];
-        if (smart) args.push("--smart");
-        if (vector) args.push("--vector");
-        if (fts) args.push("--fts");
-        result = runContext(args, validation.data.cwd || cwd);
+        result = await handleQuery(db, projectId, validation.data);
         break;
       }
 
       case "muninn_check": {
         const validation = validateInput(CheckInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { files } = validation.data;
-        result = runContext(["check", ...files], validation.data.cwd || cwd);
+        result = await handleCheck(db, projectId, validation.data.cwd || cwd, validation.data);
         break;
       }
 
       case "muninn_file_add": {
         const validation = validateInput(FileAddInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { path, purpose, fragility, fragility_reason, type } = validation.data;
-        const args = ["file", "add", path, "--purpose", purpose, "--fragility", String(fragility)];
-        if (fragility_reason) args.push("--fragility-reason", fragility_reason);
-        if (type) args.push("--type", type);
-        result = runContext(args, validation.data.cwd || cwd);
+        result = await handleFileAdd(db, projectId, validation.data);
         break;
       }
 
       case "muninn_decision_add": {
         const validation = validateInput(DecisionAddInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { title, decision, reasoning, affects } = validation.data;
-        const args = ["decision", "add", "--title", title, "--decision", decision, "--reasoning", reasoning];
-        if (affects) args.push("--affects", affects);
-        result = runContext(args, validation.data.cwd || cwd);
+        result = await handleDecisionAdd(db, projectId, validation.data);
         break;
       }
 
       case "muninn_learn_add": {
         const validation = validateInput(LearnAddInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { title, content, category, context, global: isGlobal, files, foundational, reviewAfter } =
-          validation.data;
-        const args = ["learn", "add", "--title", title, "--content", content];
-        if (category) args.push("--category", category);
-        if (context) args.push("--context", context);
-        if (isGlobal) args.push("--global");
-        if (files) args.push("--files", files);
-        if (foundational) args.push("--foundational");
-        if (reviewAfter) args.push("--review-after", String(reviewAfter));
-        result = runContext(args, validation.data.cwd || cwd);
+        result = await handleLearnAdd(db, projectId, validation.data);
         break;
       }
 
@@ -475,12 +444,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!validation.success) throw new Error(validation.error);
         const data = validation.data;
         if (data.action === "add") {
-          const args = ["issue", "add", "--title", data.title, "--severity", String(data.severity ?? 5)];
-          if (data.description) args.push("--description", data.description);
-          if (data.type) args.push("--type", data.type);
-          result = runContext(args, data.cwd || cwd);
+          result = await handleIssueAdd(db, projectId, data);
         } else {
-          result = runContext(["issue", "resolve", String(data.id), data.resolution], data.cwd || cwd);
+          result = await handleIssueResolve(db, data);
         }
         break;
       }
@@ -491,36 +457,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const data = validation.data;
         const workingCwd = data.cwd || cwd;
         if (data.action === "start") {
-          // Auto-end any active session
-          const prevSession = runContext(["session", "last", "--json"], workingCwd);
-          try {
-            const prev = JSON.parse(prevSession);
-            if (prev && !prev.ended_at) {
-              runContext(["session", "end", String(prev.id), "--outcome", "Replaced by new session"], workingCwd);
-            }
-          } catch {
-            /* no previous session */
-          }
-          result = runContext(["session", "start", data.goal], workingCwd);
+          result = await handleSessionStart(db, projectId, data, workingCwd);
         } else {
-          const lastSession = runContext(["session", "last", "--json"], workingCwd);
-          let sessionId: number | null = null;
-          try {
-            const parsed = JSON.parse(lastSession);
-            if (parsed && !parsed.ended_at) sessionId = parsed.id;
-          } catch {
-            /* no active session */
-          }
-
-          if (!sessionId) {
-            return { content: [{ type: "text", text: JSON.stringify({ error: "No active session" }) }] };
-          }
-
-          const args = ["session", "end", String(sessionId)];
-          if (data.outcome) args.push("--outcome", data.outcome);
-          if (data.next_steps) args.push("--next", data.next_steps);
-          if (data.success !== undefined) args.push("--success", String(data.success));
-          result = runContext(args, workingCwd);
+          result = await handleSessionEnd(db, projectId, data);
         }
         break;
       }
@@ -528,39 +467,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_predict": {
         const validation = validateInput(PredictInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { task, files, advise } = validation.data;
-        const args = ["predict"];
-        if (task) args.push(task);
-        if (files && files.length > 0) args.push("--files", ...files);
-        if (advise) args.push("--advise");
-        result = runContext(args, validation.data.cwd || cwd);
+        result = await handlePredict(db, projectId, validation.data);
         break;
       }
 
       case "muninn_suggest": {
         const validation = validateInput(SuggestInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { task, limit, includeSymbols } = validation.data;
-        const args = ["suggest", task];
-        if (limit) args.push("--limit", String(limit));
-        if (includeSymbols) args.push("--symbols");
-        result = runContext(args, validation.data.cwd || cwd);
+        result = await handleSuggest(db, projectId, validation.data);
         break;
       }
 
       case "muninn_enrich": {
         const validation = validateInput(EnrichInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { tool, input } = validation.data;
-        result = runContext(["enrich", tool, input], validation.data.cwd || cwd);
+        result = await handleEnrich(db, projectId, validation.data.cwd || cwd, validation.data);
         break;
       }
 
       case "muninn_approve": {
         const validation = validateInput(ApproveInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
-        const { operationId } = validation.data;
-        result = runContext(["approve", operationId], validation.data.cwd || cwd);
+        result = await handleApprove(db, validation.data);
         break;
       }
 
@@ -571,19 +499,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!validation.success) throw new Error(validation.error);
         const { command } = validation.data;
 
-        const args = parseCommandArgs(command);
-        if (args.length === 0) throw new Error("Empty command");
+        const parsedArgs = parseCommandArgs(command);
+        if (parsedArgs.length === 0) throw new Error("Empty command");
 
-        const subcommand = args[0].toLowerCase();
+        const subcommand = parsedArgs[0].toLowerCase();
         if (!ALLOWED_PASSTHROUGH_COMMANDS.has(subcommand)) {
           throw new Error(
             `Command "${subcommand}" not allowed via passthrough. Use dedicated tools for: query, check, file, decision, learn, issue, session, predict, suggest, enrich, approve. Allowed passthrough commands: ${[...ALLOWED_PASSTHROUGH_COMMANDS].sort().join(", ")}`
           );
         }
 
-        // Validate each argument for shell metacharacters (H1: Passthrough arg validation)
-        for (let i = 1; i < args.length; i++) {
-          const argResult = SafePassthroughArg.safeParse(args[i]);
+        // Validate each argument for shell metacharacters
+        for (let i = 1; i < parsedArgs.length; i++) {
+          const argResult = SafePassthroughArg.safeParse(parsedArgs[i]);
           if (!argResult.success) {
             throw new Error(
               `Invalid argument at position ${i}: ${argResult.error.errors[0]?.message || "validation failed"}`
@@ -591,7 +519,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
 
-        result = runContext(args, validation.data.cwd || cwd);
+        const passthroughCwd = validation.data.cwd || cwd;
+        result = await handlePassthrough(db, projectId, passthroughCwd, subcommand, parsedArgs.slice(1));
         break;
       }
 
@@ -614,8 +543,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ============================================================================
 
 async function main(): Promise<void> {
-  log("Starting Muninn MCP Server v2 (optimized)...");
-  log(`Using muninn binary: ${MUNINN_BIN}`);
+  log("Starting Muninn MCP Server v3 (in-process)...");
+
+  // Pre-warm the DB connection at startup
+  try {
+    const db = await getDb();
+    log("Database adapter initialized");
+
+    // Pre-warm a default project ID if we have a cwd
+    const defaultCwd = process.cwd();
+    await getProjectId(db, defaultCwd);
+    log(`Project ID cached for ${defaultCwd}`);
+  } catch (error) {
+    log(`Warning: DB pre-warm failed (will retry on first tool call): ${error}`);
+  }
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("Server connected via stdio");

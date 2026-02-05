@@ -417,18 +417,21 @@ export class HttpAdapter implements DatabaseAdapter {
     // Parse SQL into individual statements
     const statements = this.parseStatements(sql);
 
-    // Execute each statement
+    // Filter out PRAGMAs and build batch request
+    const requests: HranaRequest[] = [];
     for (const stmt of statements) {
-      // Skip PRAGMA statements - sqld handles these automatically
       if (stmt.toLowerCase().startsWith("pragma ")) {
         continue;
       }
-      await this.executeRequest([
-        {
-          type: "execute",
-          stmt: { sql: stmt, want_rows: false },
-        },
-      ]);
+      requests.push({
+        type: "execute",
+        stmt: { sql: stmt, want_rows: false },
+      });
+    }
+
+    // Send all statements in a single HTTP request
+    if (requests.length > 0) {
+      await this.executeRequest(requests);
     }
   }
 

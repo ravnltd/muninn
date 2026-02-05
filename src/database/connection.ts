@@ -109,8 +109,11 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
     const rawDb = globalAdapterInstance.raw() as Database;
     await initGlobalTables(rawDb);
   } else {
-    // For HTTP mode, use exec through adapter (no local sync needed)
-    await initGlobalTablesAsync(globalAdapterInstance);
+    // For HTTP mode, skip init if schema already exists (fast path)
+    const schemaExists = await checkSchemaExists(globalAdapterInstance);
+    if (!schemaExists) {
+      await initGlobalTablesAsync(globalAdapterInstance);
+    }
   }
 
   return globalAdapterInstance;
@@ -140,6 +143,19 @@ export async function getGlobalDrizzle(): Promise<DrizzleDb> {
   const db = adapter.raw() as Database;
   globalDrizzleInstance = drizzle(db, { schema });
   return globalDrizzleInstance;
+}
+
+/**
+ * Fast check if schema is already initialized.
+ * Tries to query the projects table — if it exists, schema is ready.
+ */
+async function checkSchemaExists(adapter: DatabaseAdapter): Promise<boolean> {
+  try {
+    await adapter.get("SELECT 1 FROM projects LIMIT 1");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function initGlobalTablesAsync(adapter: DatabaseAdapter): Promise<void> {
