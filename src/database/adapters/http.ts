@@ -93,8 +93,74 @@ export class HttpAdapter implements DatabaseAdapter {
   private _lastSyncLatencyMs: number | null = null;
   private _connected = false;
 
+  // In-memory LRU cache for read queries
+  private cache = new Map<string, { data: unknown; expiry: number; lastAccess: number }>();
+  private readonly CACHE_TTL = 30_000; // 30 seconds
+  private readonly CACHE_MAX_SIZE = 1000;
+
   constructor(config: HttpAdapterConfig) {
     this.config = config;
+  }
+
+  /**
+   * Generate cache key from SQL and params
+   */
+  private getCacheKey(sql: string, params?: unknown[]): string {
+    return `${sql}:${JSON.stringify(params || [])}`;
+  }
+
+  /**
+   * Get from cache if valid. Returns { hit: true, data } or { hit: false }
+   */
+  private getFromCache<T>(key: string): { hit: true; data: T } | { hit: false } {
+    const cached = this.cache.get(key);
+    if (!cached) return { hit: false };
+
+    const now = Date.now();
+    if (now >= cached.expiry) {
+      this.cache.delete(key);
+      return { hit: false };
+    }
+
+    // Update last access for LRU
+    cached.lastAccess = now;
+    return { hit: true, data: cached.data as T };
+  }
+
+  /**
+   * Store in cache with LRU eviction
+   */
+  private setCache(key: string, data: unknown): void {
+    // Evict oldest entries if at capacity
+    if (this.cache.size >= this.CACHE_MAX_SIZE) {
+      let oldestKey: string | null = null;
+      let oldestAccess = Infinity;
+
+      for (const [k, v] of this.cache) {
+        if (v.lastAccess < oldestAccess) {
+          oldestAccess = v.lastAccess;
+          oldestKey = k;
+        }
+      }
+
+      if (oldestKey) {
+        this.cache.delete(oldestKey);
+      }
+    }
+
+    const now = Date.now();
+    this.cache.set(key, {
+      data,
+      expiry: now + this.CACHE_TTL,
+      lastAccess: now,
+    });
+  }
+
+  /**
+   * Clear all cached data (called on writes)
+   */
+  private clearCache(): void {
+    this.cache.clear();
   }
 
   /**
@@ -263,6 +329,13 @@ export class HttpAdapter implements DatabaseAdapter {
   async get<T = any>(sql: string, params?: any[]): Promise<T | null> {
     this.ensureInitialized();
 
+    // Check cache first
+    const cacheKey = this.getCacheKey(sql, params);
+    const cached = this.getFromCache<T | null>(cacheKey);
+    if (cached.hit) {
+      return cached.data;
+    }
+
     const args = params?.map((p) => this.toHranaValue(p));
     const response = await this.executeRequest([
       {
@@ -273,15 +346,26 @@ export class HttpAdapter implements DatabaseAdapter {
 
     const result = response.results[0]?.response?.result;
     if (!result || result.rows.length === 0) {
+      // Cache null results too (query returned no rows)
+      this.setCache(cacheKey, null);
       return null;
     }
 
-    return this.rowToObject(result.cols, result.rows[0]) as T;
+    const data = this.rowToObject(result.cols, result.rows[0]) as T;
+    this.setCache(cacheKey, data);
+    return data;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   async all<T = any>(sql: string, params?: any[]): Promise<T[]> {
     this.ensureInitialized();
+
+    // Check cache first
+    const cacheKey = this.getCacheKey(sql, params);
+    const cached = this.getFromCache<T[]>(cacheKey);
+    if (cached.hit) {
+      return cached.data;
+    }
 
     const args = params?.map((p) => this.toHranaValue(p));
     const response = await this.executeRequest([
@@ -293,15 +377,21 @@ export class HttpAdapter implements DatabaseAdapter {
 
     const result = response.results[0]?.response?.result;
     if (!result) {
+      this.setCache(cacheKey, []);
       return [];
     }
 
-    return result.rows.map((row) => this.rowToObject(result.cols, row) as T);
+    const data = result.rows.map((row) => this.rowToObject(result.cols, row) as T);
+    this.setCache(cacheKey, data);
+    return data;
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   async run(sql: string, params?: any[]): Promise<QueryResult> {
     this.ensureInitialized();
+
+    // Clear cache on any write operation
+    this.clearCache();
 
     const args = params?.map((p) => this.toHranaValue(p));
     const response = await this.executeRequest([
@@ -320,6 +410,9 @@ export class HttpAdapter implements DatabaseAdapter {
 
   async exec(sql: string): Promise<void> {
     this.ensureInitialized();
+
+    // Clear cache on any write operation
+    this.clearCache();
 
     // Parse SQL into individual statements
     const statements = this.parseStatements(sql);
@@ -456,6 +549,9 @@ export class HttpAdapter implements DatabaseAdapter {
   // biome-ignore lint/suspicious/noExplicitAny: Database params are inherently dynamic
   async batch(statements: Array<{ sql: string; params?: any[] }>): Promise<void> {
     this.ensureInitialized();
+
+    // Clear cache on any write operation
+    this.clearCache();
 
     // Wrap in BEGIN/COMMIT for transaction semantics
     const steps = [

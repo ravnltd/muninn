@@ -141,9 +141,21 @@ Session startup is handled by the SessionStart hook. It automatically:
 They are already provided in your initial context.
 
 ### Before Editing Files (MANDATORY)
+
+**Call `muninn_check` BEFORE editing ANY file.** This is faster than external hooks
+and gives you essential context in one call.
+
 ```
-muninn_check [files...]  → Pre-edit warnings (fragility, issues, staleness)
+muninn_check [files...]
 ```
+
+**Returns:**
+- Fragility warnings (prevents breaking critical code)
+- Related decisions (prevents contradicting past choices)
+- Open issues (prevents duplicate work)
+- Co-changed files (prevents incomplete changes)
+- Staleness warnings (file changed since last analysis)
+
 If fragility >= 7, explain your approach and wait for approval.
 
 ### During Work
@@ -234,7 +246,7 @@ muninn "debt add --title X --severity 5 --effort medium"
 |----------|------|
 | Session start | Automatic (hook provides everything) |
 | REQUIRED ACTIONS shown | Address decisions/insights FIRST |
-| About to edit a file | `muninn_check` (MANDATORY) |
+| **About to edit a file** | **`muninn_check` (MANDATORY - do this first!)** |
 | Need specific context | `muninn_query` |
 | Find files for a task | `muninn_suggest` (semantic) or `muninn_predict` (FTS) |
 | Made a decision | `muninn_decision_add` |
@@ -266,7 +278,7 @@ When triggered:
 
 ---
 
-*Query, don't preload. Address REQUIRED ACTIONS first. The tools are in your tool list.*
+*Query, don't preload. Always `muninn_check` before editing. Address REQUIRED ACTIONS first.*
 
 <!-- MUNINN:START -->
 ## Muninn Memory Tools
