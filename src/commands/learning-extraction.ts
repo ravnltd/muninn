@@ -131,28 +131,42 @@ Return ONLY a JSON array (no markdown, no explanation):
 If no meaningful learnings, return empty array: []`;
 }
 
-export async function callLLMForExtraction(apiKey: string, prompt: string): Promise<string> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-3-haiku-20240307",
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+export async function callLLMForExtraction(apiKey: string, prompt: string, timeoutMs = 15000): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-3-haiku-20240307",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error ${response.status}: ${redactApiKeys(errorText)}`);
+    }
+
+    const data = (await response.json()) as { content: Array<{ type: string; text: string }> };
+    return data.content[0]?.text || "[]";
+  } catch (error) {
+    clearTimeout(timeout);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Learning extraction timed out after ${timeoutMs}ms`);
+    }
+    throw error;
   }
-
-  const data = (await response.json()) as { content: Array<{ type: string; text: string }> };
-  return data.content[0]?.text || "[]";
 }
 
 export function parseExtractedLearnings(response: string): ExtractedLearning[] {
