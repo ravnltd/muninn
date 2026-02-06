@@ -5,22 +5,32 @@
  */
 
 import { Hono } from "hono";
-import { logger } from "hono/logger";
+import { structuredLogger, logError } from "./lib/logger";
 import { getManagementDb } from "./db/management";
 import { setManagementDb } from "./tenants/pool";
 import { verifyAccessToken, AuthError } from "./auth/verifier";
 import { handleMcpRequest } from "./mcp-endpoint";
 import { api } from "./api/routes";
+import { authRoutes } from "./auth/routes";
 import { corsMiddleware } from "./api/middleware";
+import { rateLimiter } from "./api/rate-limit";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
-const app = new Hono();
+type AppEnv = {
+  Variables: {
+    authInfo: AuthInfo;
+    tenantId: string;
+    plan?: string;
+  };
+};
+
+const app = new Hono<AppEnv>();
 
 // ============================================================================
 // Global Middleware
 // ============================================================================
 
-app.use("*", logger());
+app.use("*", structuredLogger());
 app.use("*", corsMiddleware());
 
 // ============================================================================
@@ -30,44 +40,52 @@ app.use("*", corsMiddleware());
 app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
 
 // ============================================================================
-// MCP Endpoint (Bearer auth + plan limits)
+// MCP Endpoint (auth → rate limit → plan limits → handler)
 // ============================================================================
 
-app.all("/mcp", async (c) => {
-  // Extract bearer token
+// Auth middleware for /mcp — sets tenantId + plan on context
+app.use("/mcp", async (c, next) => {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
-    return Response.json(
+    return c.json(
       { error: "Missing Authorization header. Use: --header 'Authorization: Bearer mk_xxx'" },
-      { status: 401 }
+      401
     );
   }
 
   const token = authHeader.slice(7);
-  let authInfo: AuthInfo;
-
   try {
     const mgmtDb = await getManagementDb();
-    authInfo = await verifyAccessToken(mgmtDb, token);
+    const authInfo = await verifyAccessToken(mgmtDb, token);
+    c.set("authInfo", authInfo);
+    c.set("tenantId", authInfo.clientId);
   } catch (error) {
     if (error instanceof AuthError) {
-      return Response.json({ error: error.message }, { status: error.statusCode });
+      return c.json({ error: error.message }, error.statusCode as 401);
     }
-    return Response.json({ error: "Authentication failed" }, { status: 401 });
+    return c.json({ error: "Authentication failed" }, 401);
   }
+
+  return next();
+});
+
+// Rate limit by tenantId (set by auth middleware above)
+app.use("/mcp", rateLimiter());
+
+app.all("/mcp", async (c) => {
+  const authInfo = c.get("authInfo") as AuthInfo;
 
   // Check plan limits before processing
   const { isOverLimit } = await import("./billing/metering");
   if (await isOverLimit(authInfo.clientId)) {
-    return Response.json(
+    return c.json(
       { error: "Plan limit exceeded. Upgrade at https://muninn.pro/pricing" },
-      { status: 429 }
+      429
     );
   }
 
   // Handle DELETE for session termination
   if (c.req.method === "DELETE") {
-    // Session cleanup is handled by the transport
     return new Response(null, { status: 204 });
   }
 
@@ -109,6 +127,33 @@ app.get("/.well-known/oauth-protected-resource/*", (c) => {
 });
 
 // ============================================================================
+// Stripe Webhook (raw body — must be before JSON parsing)
+// ============================================================================
+
+app.post("/webhooks/stripe", async (c) => {
+  const signature = c.req.header("Stripe-Signature");
+  if (!signature) return c.json({ error: "Missing Stripe-Signature" }, 400);
+
+  try {
+    const rawBody = await c.req.text();
+    const { handleStripeWebhook } = await import("./billing/stripe");
+    const mgmtDb = await getManagementDb();
+    await handleStripeWebhook(mgmtDb, rawBody, signature);
+    return c.json({ received: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Webhook failed";
+    logError("stripe-webhook", error);
+    return c.json({ error: message }, 400);
+  }
+});
+
+// ============================================================================
+// OAuth Routes
+// ============================================================================
+
+app.route("/auth", authRoutes);
+
+// ============================================================================
 // API Routes
 // ============================================================================
 
@@ -140,6 +185,6 @@ async function start(): Promise<void> {
 }
 
 start().catch((error) => {
-  console.error("[muninn-cloud] Fatal error:", error);
+  logError("startup", error);
   process.exit(1);
 });

@@ -95,9 +95,9 @@ describe("getCodeChallenge", () => {
 });
 
 describe("exchangeAuthorizationCode", () => {
-  test("returns token pair", async () => {
+  test("returns token pair (no PKCE)", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", ["mcp:tools"]
+      db, "client-1", tenantId, "https://example.com/callback", "", ["mcp:tools"]
     );
 
     const tokens = await exchangeAuthorizationCode(db, "client-1", code);
@@ -109,7 +109,7 @@ describe("exchangeAuthorizationCode", () => {
 
   test("marks code as used", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
     await exchangeAuthorizationCode(db, "client-1", code);
 
@@ -121,7 +121,7 @@ describe("exchangeAuthorizationCode", () => {
 
   test("cannot reuse code", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
     await exchangeAuthorizationCode(db, "client-1", code);
 
@@ -135,7 +135,7 @@ describe("exchangeAuthorizationCode", () => {
 
   test("rejects wrong client_id", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
 
     try {
@@ -148,7 +148,7 @@ describe("exchangeAuthorizationCode", () => {
 
   test("stores access and refresh tokens in DB", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
     await exchangeAuthorizationCode(db, "client-1", code);
 
@@ -161,17 +161,43 @@ describe("exchangeAuthorizationCode", () => {
 
   test("access and refresh tokens are different", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
     const tokens = await exchangeAuthorizationCode(db, "client-1", code);
     expect(tokens.access_token).not.toBe(tokens.refresh_token);
+  });
+
+  test("PKCE: rejects missing code_verifier when challenge is set", async () => {
+    const code = await createAuthorizationCode(
+      db, "client-1", tenantId, "https://example.com/callback", "some-challenge", null
+    );
+
+    try {
+      await exchangeAuthorizationCode(db, "client-1", code);
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe("code_verifier required for PKCE");
+    }
+  });
+
+  test("PKCE: rejects invalid code_verifier", async () => {
+    const code = await createAuthorizationCode(
+      db, "client-1", tenantId, "https://example.com/callback", "valid-challenge", null
+    );
+
+    try {
+      await exchangeAuthorizationCode(db, "client-1", code, "wrong-verifier");
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe("Invalid code_verifier");
+    }
   });
 });
 
 describe("exchangeRefreshToken", () => {
   async function getTokenPair() {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
     return exchangeAuthorizationCode(db, "client-1", code);
   }
@@ -230,7 +256,7 @@ describe("exchangeRefreshToken", () => {
 describe("revokeToken", () => {
   test("revokes an access token", async () => {
     const code = await createAuthorizationCode(
-      db, "client-1", tenantId, "https://example.com/callback", "challenge", null
+      db, "client-1", tenantId, "https://example.com/callback", "", null
     );
     const tokens = await exchangeAuthorizationCode(db, "client-1", code);
 

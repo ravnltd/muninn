@@ -10,6 +10,7 @@ import { getManagementDb } from "../db/management";
 import { createTenant, authenticateTenant, getTenant, configureBYOD, deleteTenant } from "../tenants/manager";
 import { generateApiKey, revokeApiKey, listApiKeys } from "../auth/keys";
 import { getUsage } from "../billing/metering";
+import { createCheckoutSession, createBillingPortalSession } from "../billing/stripe";
 import { bearerAuth, type AuthedEnv } from "./middleware";
 
 const api = new Hono<AuthedEnv>();
@@ -177,6 +178,42 @@ authed.get("/usage", async (c) => {
   const tenantId = c.get("tenantId");
   const usage = await getUsage(tenantId);
   return c.json(usage);
+});
+
+// Billing: Checkout
+const CheckoutInput = z.object({
+  plan: z.enum(["pro"]),
+});
+
+authed.post("/billing/checkout", async (c) => {
+  const tenantId = c.get("tenantId");
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = CheckoutInput.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "Invalid plan" }, 400);
+  }
+
+  try {
+    const mgmtDb = await getManagementDb();
+    const { url } = await createCheckoutSession(mgmtDb, tenantId, parsed.data.plan);
+    return c.json({ url });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Checkout failed";
+    return c.json({ error: message }, 500);
+  }
+});
+
+// Billing: Portal
+authed.post("/billing/portal", async (c) => {
+  const tenantId = c.get("tenantId");
+  try {
+    const mgmtDb = await getManagementDb();
+    const { url } = await createBillingPortalSession(mgmtDb, tenantId);
+    return c.json({ url });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Portal unavailable";
+    return c.json({ error: message }, 400);
+  }
 });
 
 // Export token (for data portability)

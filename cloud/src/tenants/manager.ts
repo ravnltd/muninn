@@ -154,7 +154,13 @@ export async function deleteTenant(db: DatabaseAdapter, tenantId: string): Promi
     await deleteDatabase(dbConfig.turso_db_name).catch(() => {});
   }
 
-  // Cascade delete (FK constraints handle api_keys, oauth_*, etc.)
+  // Explicit cleanup for tables without ON DELETE CASCADE
+  await db.run("UPDATE oauth_tokens SET revoked_at = datetime('now') WHERE tenant_id = ?", [tenantId]);
+  await db.run("DELETE FROM oauth_codes WHERE tenant_id = ?", [tenantId]);
+  await db.run("DELETE FROM oauth_clients WHERE tenant_id = ?", [tenantId]);
+  await db.run("DELETE FROM usage WHERE tenant_id = ?", [tenantId]);
+
+  // Cascade delete (FK constraints handle api_keys, tenant_databases)
   await db.run("DELETE FROM tenant_databases WHERE tenant_id = ?", [tenantId]);
   await db.run("DELETE FROM tenants WHERE id = ?", [tenantId]);
 }

@@ -48,17 +48,33 @@ export interface TokenPair {
 
 /**
  * Exchange an authorization code for tokens.
+ * Verifies PKCE code_verifier against stored code_challenge (S256).
  */
 export async function exchangeAuthorizationCode(
   db: DatabaseAdapter,
   clientId: string,
-  authorizationCode: string
+  authorizationCode: string,
+  codeVerifier?: string
 ): Promise<TokenPair> {
-  const codeRecord = await db.get<{ tenant_id: string; scopes: string | null }>(
-    "SELECT tenant_id, scopes FROM oauth_codes WHERE code = ? AND client_id = ? AND used_at IS NULL AND expires_at > ?",
+  const codeRecord = await db.get<{
+    tenant_id: string;
+    scopes: string | null;
+    code_challenge: string | null;
+    redirect_uri: string;
+  }>(
+    "SELECT tenant_id, scopes, code_challenge, redirect_uri FROM oauth_codes WHERE code = ? AND client_id = ? AND used_at IS NULL AND expires_at > ?",
     [authorizationCode, clientId, Date.now()]
   );
   if (!codeRecord) throw new Error("Invalid or expired authorization code");
+
+  // PKCE verification
+  if (codeRecord.code_challenge) {
+    if (!codeVerifier) throw new Error("code_verifier required for PKCE");
+    const computed = await computeS256Challenge(codeVerifier);
+    if (computed !== codeRecord.code_challenge) {
+      throw new Error("Invalid code_verifier");
+    }
+  }
 
   await db.run("UPDATE oauth_codes SET used_at = datetime('now') WHERE code = ?", [authorizationCode]);
 
@@ -157,4 +173,17 @@ async function hashToken(token: string): Promise<string> {
   const data = new TextEncoder().encode(token);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Compute S256 code challenge from a code verifier (RFC 7636).
+ * Returns base64url-encoded SHA-256 digest.
+ */
+async function computeS256Challenge(codeVerifier: string): Promise<string> {
+  const data = new TextEncoder().encode(codeVerifier);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
