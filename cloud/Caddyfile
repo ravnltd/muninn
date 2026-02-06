@@ -1,0 +1,8 @@
+api.muninn.pro {
+  reverse_proxy api:3000
+}
+
+muninn.pro {
+  root * /srv/pages
+  file_server
+}

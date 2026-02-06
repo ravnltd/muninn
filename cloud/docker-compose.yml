@@ -1,0 +1,33 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - BASE_URL=https://api.muninn.pro
+      - MGMT_DB_URL=${MGMT_DB_URL}
+      - MGMT_DB_TOKEN=${MGMT_DB_TOKEN}
+      - TURSO_ORG=${TURSO_ORG}
+      - TURSO_API_TOKEN=${TURSO_API_TOKEN}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+    restart: always
+
+  caddy:
+    image: caddy:latest
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    restart: always
+
+volumes:
+  caddy_data:
+  caddy_config:
