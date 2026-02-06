@@ -94,7 +94,27 @@ async function getTestFilesForSource(
       }
     }
 
-    // Method 2: Via blast_radius table
+    // Method 2: Via test_source_map table (Phase 4 code intelligence)
+    try {
+      const testMaps = await ctx.db.all<{ test_file: string }>(
+        `SELECT test_file FROM test_source_map
+         WHERE project_id = ? AND source_file = ?
+         ORDER BY confidence DESC
+         LIMIT 3`,
+        [projectId, sourcePath]
+      );
+
+      if (testMaps.length > 0) {
+        return testMaps.map((t) => ({
+          testPath: t.test_file,
+          sourcePath,
+        }));
+      }
+    } catch {
+      // Table might not exist yet
+    }
+
+    // Method 3: Via blast_radius table
     const blastTests = await ctx.db.all<{ affected_file: string }>(
       `SELECT affected_file FROM blast_radius
        WHERE project_id = ? AND source_file = ? AND is_test = 1
@@ -110,7 +130,7 @@ async function getTestFilesForSource(
       }));
     }
 
-    // Method 3: Heuristic - look for common test patterns
+    // Method 4: Heuristic - look for common test patterns
     const testPatterns = [
       sourcePath.replace(/\.ts$/, ".test.ts"),
       sourcePath.replace(/\.ts$/, ".spec.ts"),

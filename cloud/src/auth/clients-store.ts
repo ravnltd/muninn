@@ -5,6 +5,7 @@
  * Standalone implementation (not tied to MCP SDK's Express-dependent interface).
  */
 
+import { timingSafeEqual as nodeTimingSafeEqual } from "crypto";
 import type { DatabaseAdapter } from "../types";
 
 export interface OAuthClient {
@@ -72,6 +73,25 @@ export class ClientsStore {
     };
   }
 
+  async verifyClientSecret(clientId: string, clientSecret: string): Promise<boolean> {
+    const record = await this.db.get<{ client_secret_hash: string | null }>(
+      "SELECT client_secret_hash FROM oauth_clients WHERE client_id = ?",
+      [clientId]
+    );
+    // Always compute hash to prevent timing oracle on client existence
+    const hash = await hashSecret(clientSecret);
+    if (!record || !record.client_secret_hash) return false;
+    return timingSafeEqual(hash, record.client_secret_hash);
+  }
+
+  async hasClientSecret(clientId: string): Promise<boolean> {
+    const record = await this.db.get<{ client_secret_hash: string | null }>(
+      "SELECT client_secret_hash FROM oauth_clients WHERE client_id = ?",
+      [clientId]
+    );
+    return record !== null && record.client_secret_hash !== null;
+  }
+
   async bindClientToTenant(clientId: string, tenantId: string): Promise<void> {
     await this.db.run(
       "UPDATE oauth_clients SET tenant_id = ? WHERE client_id = ?",
@@ -89,4 +109,11 @@ async function hashSecret(secret: string): Promise<string> {
   const data = new TextEncoder().encode(secret);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return nodeTimingSafeEqual(bufA, bufB);
 }

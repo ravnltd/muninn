@@ -674,6 +674,77 @@ async function main(): Promise<void> {
         break;
       }
 
+      // v4: Install git hook
+      case "install-hook": {
+        const gitDir = await (async () => {
+          try {
+            const proc = Bun.spawn(["git", "rev-parse", "--git-dir"], { stdout: "pipe", stderr: "pipe" });
+            const out = await new Response(proc.stdout).text();
+            await proc.exited;
+            return out.trim() || null;
+          } catch {
+            return null;
+          }
+        })();
+        if (!gitDir) {
+          console.error("Not in a git repository");
+          process.exit(1);
+        }
+        const hooksDir = join(gitDir, "hooks");
+        const hookFile = join(hooksDir, "post-commit");
+        const { mkdirSync, existsSync: fsExists, readFileSync: fsRead, appendFileSync, writeFileSync: fsWrite } = await import("node:fs");
+        mkdirSync(hooksDir, { recursive: true });
+        const hookSnippet = `\n# Muninn: auto-ingest git commits (background, non-blocking)\nif command -v muninn &> /dev/null; then\n    muninn ingest commit &>/dev/null &\nfi\n`;
+        if (fsExists(hookFile)) {
+          const existing = fsRead(hookFile, "utf-8");
+          if (existing.includes("muninn ingest commit")) {
+            console.error("Git hook already installed");
+          } else {
+            appendFileSync(hookFile, hookSnippet);
+            const { chmodSync } = await import("node:fs");
+            chmodSync(hookFile, 0o755);
+            console.error("Git post-commit hook updated with muninn ingestion");
+          }
+        } else {
+          fsWrite(hookFile, `#!/bin/bash${hookSnippet}`);
+          const { chmodSync } = await import("node:fs");
+          chmodSync(hookFile, 0o755);
+          console.error("Git post-commit hook installed");
+        }
+        break;
+      }
+
+      // v4: Ingestion commands
+      case "ingest": {
+        const ingestCmd = subArgs[0];
+        switch (ingestCmd) {
+          case "commit": {
+            const { processCommit } = await import("./ingestion/git-hook");
+            const result = await processCommit(db, projectId);
+            console.error(result);
+            break;
+          }
+          case "worker": {
+            // Run background worker inline (for manual triggering)
+            const { spawn } = await import("node:child_process");
+            const workerArgs = subArgs.slice(1);
+            const scriptDir = import.meta.dir;
+            const workerPath = join(scriptDir, "worker.ts");
+            const child = spawn("bun", ["run", workerPath, ...workerArgs], {
+              detached: true,
+              stdio: "ignore",
+              env: { ...process.env },
+            });
+            child.unref();
+            console.error("Worker spawned in background");
+            break;
+          }
+          default:
+            console.error("Usage: muninn ingest <commit|worker>");
+        }
+        break;
+      }
+
       default:
         console.log(HELP_TEXT);
     }

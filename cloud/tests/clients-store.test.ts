@@ -95,6 +95,25 @@ describe("getClient", () => {
   });
 });
 
+describe("verifyClientSecret", () => {
+  test("returns true for correct secret", async () => {
+    const client = await store.registerClient(["https://example.com/cb"]);
+    const result = await store.verifyClientSecret(client.client_id, client.client_secret);
+    expect(result).toBe(true);
+  });
+
+  test("returns false for wrong secret", async () => {
+    const client = await store.registerClient(["https://example.com/cb"]);
+    const result = await store.verifyClientSecret(client.client_id, "cs_wrong_secret");
+    expect(result).toBe(false);
+  });
+
+  test("returns false for non-existent client", async () => {
+    const result = await store.verifyClientSecret("nonexistent", "cs_any");
+    expect(result).toBe(false);
+  });
+});
+
 describe("bindClientToTenant", () => {
   test("associates client with tenant", async () => {
     const tenant = await seedTenant(db);

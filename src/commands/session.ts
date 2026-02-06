@@ -11,10 +11,8 @@ import { getTimeAgo, outputJson, outputSuccess } from "../utils/format";
 import { parseSessionEndArgs } from "../utils/validation";
 import {
   formatSession,
-  formatProfile,
   formatDecision,
   formatInsight,
-  formatHotContext,
 } from "../output/formatter.js";
 import { generateInsights, listInsights } from "./insights";
 import {
@@ -23,9 +21,6 @@ import {
   getFoundationalLearningsDue,
   incrementFoundationalSessionsSince,
 } from "./outcomes";
-import { getPromotionCandidates } from "./promotion";
-import { getTopProfileEntries } from "./profile";
-import { getOpenQuestionsForResume } from "./questions";
 import {
   autoRelateFileCorrelations,
   autoRelateSessionDecisions,
@@ -34,10 +29,10 @@ import {
   autoRelateSessionLearnings,
   autoRelateTestFiles,
 } from "./relationships";
-import { assignSessionNumber, detectAnomalies } from "./temporal";
+import { assignSessionNumber } from "./temporal";
 
 // Import from extracted modules
-import { decayTemperatures, getHotEntities, getRecentObservations } from "./temperature";
+import { decayTemperatures, getRecentObservations } from "./temperature";
 import { updateFileCorrelations } from "./correlations";
 import {
   extractSessionLearnings,
@@ -290,12 +285,7 @@ export async function sessionList(db: DatabaseAdapter, projectId: number, limit:
 
 export async function generateResume(db: DatabaseAdapter, projectId: number): Promise<string> {
   const lastSession = await db.get<Record<string, unknown>>(
-    `
-    SELECT * FROM sessions
-    WHERE project_id = ?
-    ORDER BY started_at DESC
-    LIMIT 1
-  `,
+    `SELECT * FROM sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 1`,
     [projectId]
   );
 
@@ -303,15 +293,16 @@ export async function generateResume(db: DatabaseAdapter, projectId: number): Pr
     return 'No previous sessions found. Start fresh with `muninn session start "Your goal"`';
   }
 
-  // Build system primer section
-  let md = await buildSystemPrimer(db, projectId);
+  // v4 Phase 3: Minimal session start — ~20 lines instead of ~400
+  // Everything else loads on-demand via task analyzer + enrichment pipeline
+  let md = await buildMinimalPrimer(db, projectId);
 
   const timeAgo = getTimeAgo((lastSession.ended_at || lastSession.started_at) as string);
   const isOngoing = !lastSession.ended_at;
 
+  // Session status (1-2 lines)
+  md += `# Resume Point\n\n`;
   if (isNativeFormat()) {
-    // Native format: dense session info
-    md += `# Resume Point\n\n`;
     md += formatSession({
       id: lastSession.id as number,
       goal: lastSession.goal as string | null,
@@ -322,176 +313,50 @@ export async function generateResume(db: DatabaseAdapter, projectId: number): Pr
     });
     md += "\n\n";
   } else {
-    // Human format: prose
-    md += `# Resume Point\n\n`;
-    md += `**Last session:** ${timeAgo}${isOngoing ? " (still ongoing)" : ""}\n`;
-    md += `**Goal:** ${lastSession.goal || "Not specified"}\n`;
-
-    if (lastSession.outcome) {
-      md += `**Outcome:** ${lastSession.outcome}\n`;
-    }
-
+    md += `**Session #${lastSession.id}** ${timeAgo}${isOngoing ? " (ongoing)" : ""}\n`;
+    md += `Goal: ${lastSession.goal || "Not specified"}\n`;
+    if (lastSession.outcome) md += `Outcome: ${lastSession.outcome}\n`;
     md += "\n";
   }
 
+  // Files modified (compact, max 5)
   if (lastSession.files_touched) {
     try {
-      const files = JSON.parse(lastSession.files_touched as string);
+      const files = JSON.parse(lastSession.files_touched as string) as string[];
       if (files.length > 0) {
         md += `## Files Modified\n`;
-        for (const f of files) {
-          md += `- ${f}\n`;
-        }
+        for (const f of files.slice(0, 5)) md += `- ${f}\n`;
+        if (files.length > 5) md += `- ...and ${files.length - 5} more\n`;
         md += "\n";
       }
-    } catch {
-      // Invalid JSON, skip
-    }
+    } catch { /* skip */ }
   }
 
-  if (lastSession.files_read) {
-    try {
-      const files = JSON.parse(lastSession.files_read as string);
-      if (files.length > 0) {
-        md += `## Files Read\n`;
-        for (const f of files.slice(0, 10)) {
-          md += `- ${f}\n`;
-        }
-        if (files.length > 10) {
-          md += `- ...and ${files.length - 10} more\n`;
-        }
-        md += "\n";
-      }
-    } catch {
-      // Invalid JSON, skip
-    }
-  }
-
-  if (lastSession.queries_made) {
-    try {
-      const queries = JSON.parse(lastSession.queries_made as string);
-      if (queries.length > 0) {
-        md += `## Queries Made\n`;
-        for (const q of queries.slice(0, 5)) {
-          md += `- "${q}"\n`;
-        }
-        if (queries.length > 5) {
-          md += `- ...and ${queries.length - 5} more\n`;
-        }
-        md += "\n";
-      }
-    } catch {
-      // Invalid JSON, skip
-    }
-  }
-
-  if (lastSession.next_steps) {
-    md += `## Next Steps\n`;
-    // Parse next_steps as a checklist if it contains bullet points
-    const nextSteps = lastSession.next_steps as string;
-    if (nextSteps.includes("\n") || nextSteps.includes("-")) {
-      const steps = nextSteps
-        .split(/[\n•-]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const step of steps) {
-        md += `- [ ] ${step}\n`;
-      }
-    } else {
-      md += `- [ ] ${nextSteps}\n`;
-    }
-    md += "\n";
-  }
-
-  if (lastSession.learnings) {
-    md += `## Learnings from Session\n`;
-    md += `${lastSession.learnings}\n\n`;
-  }
-
-  // Add context about issues found/resolved
-  if (lastSession.issues_found || lastSession.issues_resolved) {
-    const found = safeJsonParse<number[]>(lastSession.issues_found as string, []);
-    const resolved = safeJsonParse<number[]>(lastSession.issues_resolved as string, []);
-
-    if (found.length > 0 || resolved.length > 0) {
-      md += `## Issues\n`;
-      if (found.length > 0) {
-        md += `- Found: ${found.map((id) => `#${id}`).join(", ")}\n`;
-      }
-      if (resolved.length > 0) {
-        md += `- Resolved: ${resolved.map((id) => `#${id}`).join(", ")}\n`;
-      }
-      md += "\n";
-    }
-  }
-
-  // Session accomplishments from relationship graph (more reliable than JSON fields)
-  const sessionRelationships = await getSessionRelationships(db, Number(lastSession.id));
-  if (sessionRelationships.hasData) {
-    md += `## Session Accomplishments\n`;
-    if (sessionRelationships.decisionsMade.length > 0) {
-      md += `**Decisions:** ${sessionRelationships.decisionsMade.map((d) => `D${d.id} (${d.title})`).join(", ")}\n`;
-    }
-    if (sessionRelationships.issuesResolved.length > 0) {
-      md += `**Resolved:** ${sessionRelationships.issuesResolved.map((i) => `#${i.id}`).join(", ")}\n`;
-    }
-    if (sessionRelationships.learningsExtracted.length > 0) {
-      md += `**Learned:** ${sessionRelationships.learningsExtracted.map((l) => l.title.slice(0, 40)).join(", ")}\n`;
-    }
-    md += "\n";
-  }
-
-  // Hot entities (actively in-flight context)
-  const hotEntities = await getHotEntities(db, projectId);
-  const hasHot = hotEntities.files.length > 0 || hotEntities.decisions.length > 0 || hotEntities.learnings.length > 0;
-
-  if (hasHot) {
-    md += `## Hot Context\n`;
-    if (isNativeFormat()) {
-      md += formatHotContext(hotEntities);
-    } else {
-      if (hotEntities.files.length > 0) {
-        md += `**Files:** ${hotEntities.files.map((f) => f.path).join(", ")}\n`;
-      }
-      if (hotEntities.decisions.length > 0) {
-        md += `**Decisions:** ${hotEntities.decisions.map((d) => d.title).join(", ")}\n`;
-      }
-      if (hotEntities.learnings.length > 0) {
-        md += `**Learnings:** ${hotEntities.learnings.map((l) => l.title).join(", ")}\n`;
-      }
-    }
-    md += "\n";
-  }
-
-  // Open questions
-  const openQuestions = await getOpenQuestionsForResume(db, projectId);
-  if (openQuestions.length > 0) {
-    md += `## Open Questions\n`;
-    for (const q of openQuestions) {
-      const pri = ["", "P1", "P2", "P3", "P4", "P5"][q.priority];
-      md += `- [${pri}] ${q.question}\n`;
-    }
-    md += "\n";
-  }
-
-  // Recent observations
+  // Recent observations (compact, max 3)
   const recentObs = await getRecentObservations(db, projectId);
   if (recentObs.length > 0) {
     md += `## Recent Observations\n`;
-    for (const obs of recentObs) {
-      const freq = obs.frequency > 1 ? ` (${obs.frequency}x)` : "";
-      md += `- [${obs.type}] ${obs.content.slice(0, 60)}${freq}\n`;
+    for (const obs of recentObs.slice(0, 3)) {
+      md += `- [${obs.type}] ${obs.content.slice(0, 60)}\n`;
     }
     md += "\n";
   }
 
+  // Next steps (kept — these are actionable)
+  if (lastSession.next_steps) {
+    md += `## Next Steps\n`;
+    const nextSteps = lastSession.next_steps as string;
+    const steps = nextSteps.split(/[\n•-]/).map((s) => s.trim()).filter(Boolean);
+    for (const step of steps.slice(0, 3)) md += `- [ ] ${step}\n`;
+    md += "\n";
+  }
+
+  // Footer
   if (isOngoing) {
-    md += `---\n`;
-    md += `Session still in progress. Use \`muninn session end ${lastSession.id}\` to close it.\n`;
+    md += `---\nSession still in progress. Use \`muninn session end ${lastSession.id}\` to close it.\n`;
   } else {
     const goalPreview = ((lastSession.goal as string) || "previous work").substring(0, 40);
-    md += `---\n`;
-    md += `Continue with: \`muninn session start "Continue: ${goalPreview}"\`\n`;
+    md += `---\nContinue with: \`muninn session start "Continue: ${goalPreview}"\`\n`;
   }
 
   return md;
@@ -676,6 +541,26 @@ export async function sessionEndEnhanced(
     });
   }
 
+  // --- v4: Tool-log-based session analysis (runs in addition to above) ---
+  try {
+    const { analyzeSession, saveLearnings } = await import("../learning/session-analyzer");
+    const toolLogLearnings = await analyzeSession(db, projectId, sessionId, session.goal || "");
+    if (toolLogLearnings.length > 0) {
+      await saveLearnings(db, projectId, sessionId, toolLogLearnings);
+      learnings = [...learnings, ...toolLogLearnings];
+    }
+  } catch {
+    // v4 session analyzer is best-effort
+  }
+
+  // --- v4: Error-fix mapping (link errors to their fixes) ---
+  try {
+    const { processSessionErrors } = await import("../learning/error-mapper");
+    await processSessionErrors(db, projectId, sessionId);
+  } catch {
+    // v4 error-fix mapper is best-effort
+  }
+
   // ========================================================================
   // Auto-create relationships for session entities
   // ========================================================================
@@ -740,178 +625,68 @@ export async function sessionEndEnhanced(
 }
 
 // ============================================================================
-// System Primer (Phase 0)
+// Minimal Primer (v4 Phase 3)
 // ============================================================================
 
 /**
- * Build the system primer section that teaches the AI the available tools
- * and surfaces the developer profile + active state.
+ * v4 Phase 3: Minimal session primer — essential state only.
+ * Tools and profile available on-demand via CLAUDE.md and muninn_query.
+ * Context loads automatically via task analyzer on first tool call.
  */
-async function buildSystemPrimer(db: DatabaseAdapter, projectId: number): Promise<string> {
+async function buildMinimalPrimer(db: DatabaseAdapter, projectId: number): Promise<string> {
   const native = isNativeFormat();
-  let md = `# Context Intelligence System\n\n`;
+  let md = "";
 
-  // Tools section - always human readable for learnability
-  md += `## Your Tools (use proactively)\n`;
-  if (native) {
-    // Compact tool list
-    md += `- \`muninn_predict\` \`muninn_check\` \`muninn_query\` \`muninn_observe\` \`muninn_focus_set\`\n`;
-    md += `- \`muninn_profile\` \`muninn_insights\` \`muninn_decisions_due\` \`muninn_outcome\`\n`;
-  } else {
-    md += `- \`muninn_predict "task"\` — Bundle all relevant context for a task in one call\n`;
-    md += `- \`muninn_profile\` — Your developer preferences (coding style, patterns, anti-patterns)\n`;
-    md += `- \`muninn_check [files]\` — Pre-edit safety check (MANDATORY before editing)\n`;
-    md += `- \`muninn_query "topic"\` — Search all knowledge (decisions, learnings, issues, files)\n`;
-    md += `- \`muninn_insights\` — Cross-session pattern insights\n`;
-    md += `- \`muninn_decisions_due\` — Decisions needing outcome review\n`;
-    md += `- \`muninn_outcome <id> <status>\` — Record whether a decision worked out\n`;
-    md += `- \`muninn_observe "note"\` — Record a quick observation (auto-dedupes)\n`;
-    md += `- \`muninn_focus_set "area"\` — Boost queries toward your current work\n`;
-  }
-  md += `\n`;
-
-  // Developer profile top entries
-  const profileEntries = await getTopProfileEntries(db, projectId, 5);
-  if (profileEntries.length > 0) {
-    md += `## Developer Profile (top preferences)\n`;
-    for (const entry of profileEntries) {
-      if (native) {
-        md += formatProfile({
-          key: entry.key,
-          value: entry.value,
-          confidence: entry.confidence,
-          category: entry.category,
-        });
-      } else {
-        const pct = Math.round(entry.confidence * 100);
-        md += `- ${entry.key} (${pct}%): ${entry.value.slice(0, 60)}`;
-      }
-      md += `\n`;
-    }
-    md += `\n`;
-  }
-
-  // Active state
-  md += `## Active State\n`;
-
-  // Focus
-  try {
-    const focus = await db.get<{ area: string }>(
-      `
-      SELECT area FROM focus
-      WHERE project_id = ? AND cleared_at IS NULL
-      ORDER BY created_at DESC LIMIT 1
-    `,
-      [projectId]
-    );
-    md += `- Focus: ${focus?.area || "none"}\n`;
-  } catch {
-    md += `- Focus: none\n`;
-  }
-
-  // Hot files
-  try {
-    const hotFiles = await db.all<{ path: string; fragility?: number }>(
-      `
-      SELECT path, fragility FROM files
-      WHERE project_id = ? AND temperature = 'hot'
-      ORDER BY last_referenced_at DESC LIMIT 3
-    `,
-      [projectId]
-    );
-    if (hotFiles.length > 0) {
-      if (native) {
-        md += `- Hot: ${hotFiles.map((f) => `F[${f.path}${f.fragility ? `|frag:${f.fragility}` : ""}]`).join(" ")}\n`;
-      } else {
-        md += `- Hot files: ${hotFiles.map((f) => f.path).join(", ")}\n`;
-      }
-    }
-  } catch {
-    /* temperature column might not exist */
-  }
-
-  // Decisions due — show titles + age
+  // Decisions due — critical, keep count + top items
   const decisionsDue = await getDecisionsDue(db, projectId);
-  if (decisionsDue.length > 0) {
-    md += `- Decisions due for review:\n`;
-    for (const d of decisionsDue.slice(0, 3)) {
-      if (native) {
-        md += `  ${formatDecision({ id: d.id, title: d.title, sessionsSince: d.sessions_since })}\n`;
-      } else {
-        md += `  - "${d.title}" (${d.sessions_since} sessions)\n`;
-      }
-    }
-    if (decisionsDue.length > 3) {
-      md += `  - ...and ${decisionsDue.length - 3} more\n`;
-    }
-  }
-
-  // Foundational learnings due — show titles + age
-  const foundationalDue = await getFoundationalLearningsDue(db, projectId);
-  if (foundationalDue.length > 0) {
-    md += `- Foundational learnings for review:\n`;
-    for (const l of foundationalDue.slice(0, 3)) {
-      if (native) {
-        md += `  K[foundational|#${l.id}|${l.title.slice(0, 40)}|sessions:${l.sessions_since_review}]\n`;
-      } else {
-        md += `  - L${l.id}: "${l.title}" (${l.sessions_since_review} sessions)\n`;
-      }
-    }
-    if (foundationalDue.length > 3) {
-      md += `  - ...and ${foundationalDue.length - 3} more\n`;
-    }
-  }
-
-  // Pending insights — show type + content
   const newInsights = await listInsights(db, projectId, { status: "new" });
-  if (newInsights.length > 0) {
-    md += `- New insights:\n`;
-    for (const i of newInsights.slice(0, 3)) {
-      if (native) {
-        md += `  ${formatInsight({ id: i.id, type: i.type, title: i.title, content: i.content })}\n`;
-      } else {
-        md += `  - [${i.type}] ${i.title}: ${i.content.slice(0, 80)}\n`;
+  const foundationalDue = await getFoundationalLearningsDue(db, projectId);
+
+  const hasRequired = decisionsDue.length > 0 || newInsights.length > 0 || foundationalDue.length > 0;
+
+  if (hasRequired) {
+    md += `## Required Actions\n`;
+
+    if (decisionsDue.length > 0) {
+      md += `- ${decisionsDue.length} decision(s) due for review`;
+      if (native && decisionsDue.length <= 3) {
+        md += `: ${decisionsDue.map((d) => formatDecision({ id: d.id, title: d.title, sessionsSince: d.sessions_since })).join(", ")}`;
       }
+      md += "\n";
     }
-    if (newInsights.length > 3) {
-      md += `  - ...and ${newInsights.length - 3} more\n`;
-    }
-  }
 
-  // Velocity anomalies — hot-changing files
-  const anomalies = await detectAnomalies(db, projectId);
-  if (anomalies.length > 0) {
-    if (native) {
-      md += `- Velocity: ${anomalies.map((a) => `${a.path}(${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
-    } else {
-      md += `- Velocity anomalies: ${anomalies.map((a) => `${a.path} (${a.velocity_score.toFixed(1)}x)`).join(", ")}\n`;
-    }
-  }
-
-  // Open questions count
-  const openQuestions = await getOpenQuestionsForResume(db, projectId);
-  md += `- Open questions: ${openQuestions.length}\n`;
-
-  // Promotion candidates (learnings ready for CLAUDE.md)
-  const promotionCandidates = await getPromotionCandidates(db, projectId);
-  if (promotionCandidates.length > 0) {
-    md += `- Promotion candidates (ready for CLAUDE.md):\n`;
-    for (const c of promotionCandidates.slice(0, 3)) {
-      if (native) {
-        md += `  K[promo|#${c.id}|${c.title.slice(0, 40)}|conf:${c.confidence}]\n`;
-      } else {
-        md += `  - L${c.id}: "${c.title}" (conf ${c.confidence})\n`;
+    if (newInsights.length > 0) {
+      md += `- ${newInsights.length} new insight(s) pending`;
+      if (native && newInsights.length <= 3) {
+        md += `: ${newInsights.map((i) => formatInsight({ id: i.id, type: i.type, title: i.title, content: i.content })).join(", ")}`;
       }
+      md += "\n";
     }
-    if (promotionCandidates.length > 3) {
-      md += `  - ...and ${promotionCandidates.length - 3} more\n`;
+
+    if (foundationalDue.length > 0) {
+      md += `- ${foundationalDue.length} foundational learning(s) due for review\n`;
     }
+
+    md += "\n";
   }
 
-  md += `\n`;
+  // Critical warnings: fragile hot files
+  try {
+    const fragileHot = await db.all<{ path: string; fragility: number }>(
+      `SELECT path, fragility FROM files
+       WHERE project_id = ? AND temperature = 'hot' AND fragility >= 7
+       ORDER BY fragility DESC LIMIT 3`,
+      [projectId]
+    );
+    if (fragileHot.length > 0) {
+      md += `## Warnings\n`;
+      md += `- Fragile hot files: ${fragileHot.map((f) => `${f.path} (frag:${f.fragility})`).join(", ")}\n\n`;
+    }
+  } catch { /* column might not exist */ }
 
   return md;
 }
+
 
 // ============================================================================
 // Re-exports for API compatibility

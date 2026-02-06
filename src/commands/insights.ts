@@ -33,6 +33,27 @@ export async function generateInsights(db: DatabaseAdapter, projectId: number): 
   await detectWorkflowDeviations(db, projectId, insights);
   await detectScopeCreep(db, projectId, insights);
 
+  // --- v4: Pattern detector from tool call analysis ---
+  try {
+    const { detectPatterns, persistPatternInsights } = await import("../learning/pattern-detector");
+    const patterns = await detectPatterns(db, projectId);
+    if (patterns.length > 0) {
+      await persistPatternInsights(db, projectId, patterns);
+      // Convert to Insight format for return value
+      for (const p of patterns) {
+        insights.push({
+          type: p.type === "error_recurrence" ? "anomaly" : p.type === "exploration_waste" ? "recommendation" : "pattern",
+          title: p.title,
+          content: p.content,
+          evidence: p.evidence,
+          confidence: p.confidence,
+        });
+      }
+    }
+  } catch {
+    // v4 pattern detector is best-effort
+  }
+
   // Persist new insights
   for (const insight of insights) {
     try {

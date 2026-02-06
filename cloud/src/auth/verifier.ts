@@ -54,9 +54,9 @@ export async function verifyAccessToken(db: DatabaseAdapter, token: string): Pro
     [tokenHash]
   );
 
-  if (!oauthToken) throw new AuthError("Invalid access token");
-  if (oauthToken.revoked_at) throw new AuthError("Token has been revoked");
-  if (oauthToken.expires_at < Date.now()) throw new AuthError("Token has expired");
+  if (!oauthToken) throw new AuthError("Invalid or expired access token");
+  if (oauthToken.revoked_at) throw new AuthError("Invalid or expired access token");
+  if (oauthToken.expires_at < Date.now()) throw new AuthError("Invalid or expired access token");
 
   const scopes = oauthToken.scopes ? JSON.parse(oauthToken.scopes) : ["mcp:tools"];
   return {

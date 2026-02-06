@@ -54,7 +54,8 @@ export async function exchangeAuthorizationCode(
   db: DatabaseAdapter,
   clientId: string,
   authorizationCode: string,
-  codeVerifier?: string
+  codeVerifier?: string,
+  redirectUri?: string
 ): Promise<TokenPair> {
   const codeRecord = await db.get<{
     tenant_id: string;
@@ -66,6 +67,11 @@ export async function exchangeAuthorizationCode(
     [authorizationCode, clientId, Date.now()]
   );
   if (!codeRecord) throw new Error("Invalid or expired authorization code");
+
+  // Redirect URI verification (RFC 6749 §4.1.3)
+  if (redirectUri && codeRecord.redirect_uri !== redirectUri) {
+    throw new Error("redirect_uri mismatch");
+  }
 
   // PKCE verification
   if (codeRecord.code_challenge) {

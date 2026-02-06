@@ -43,6 +43,71 @@ EOF
 chmod +x "$INSTALL_DIR/muninn-mcp"
 echo "✓ MCP server installed to $INSTALL_DIR/muninn-mcp"
 
+# Create background worker wrapper script
+echo "Creating worker wrapper..."
+cat > "$INSTALL_DIR/muninn-worker" << EOF
+#!/bin/bash
+exec bun run "$SCRIPT_DIR/src/worker.ts" "\$@"
+EOF
+chmod +x "$INSTALL_DIR/muninn-worker"
+echo "✓ Worker installed to $INSTALL_DIR/muninn-worker"
+
+# Install git post-commit hook (if in a git repo)
+install_git_hook() {
+    local git_dir="$1"
+    local hooks_dir="$git_dir/hooks"
+    local hook_file="$hooks_dir/post-commit"
+
+    mkdir -p "$hooks_dir"
+
+    # Check if hook already has muninn
+    if [ -f "$hook_file" ] && grep -q "muninn ingest commit" "$hook_file"; then
+        echo "✓ Git hook already installed in $git_dir"
+        return
+    fi
+
+    # Append to existing hook or create new one
+    if [ -f "$hook_file" ]; then
+        # Append to existing hook
+        cat >> "$hook_file" << 'HOOKEOF'
+
+# Muninn: auto-ingest git commits (background, non-blocking)
+if command -v muninn &> /dev/null; then
+    muninn ingest commit &>/dev/null &
+fi
+HOOKEOF
+    else
+        # Create new hook
+        cat > "$hook_file" << 'HOOKEOF'
+#!/bin/bash
+# Muninn: auto-ingest git commits (background, non-blocking)
+if command -v muninn &> /dev/null; then
+    muninn ingest commit &>/dev/null &
+fi
+HOOKEOF
+    fi
+
+    chmod +x "$hook_file"
+    echo "✓ Git post-commit hook installed in $git_dir"
+}
+
+# Offer to install git hook if in a git repo
+if git rev-parse --git-dir &> /dev/null; then
+    GIT_DIR="$(git rev-parse --git-dir)"
+    echo ""
+    echo "Git repository detected."
+    if [ -t 0 ]; then
+        read -p "Install post-commit hook for automatic tracking? [Y/n] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+            install_git_hook "$GIT_DIR"
+        fi
+    else
+        echo "To install the git hook manually:"
+        echo "  muninn install-hook"
+    fi
+fi
+
 # Check if in PATH
 PATH_OK=false
 if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then

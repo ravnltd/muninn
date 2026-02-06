@@ -167,6 +167,27 @@ describe("exchangeAuthorizationCode", () => {
     expect(tokens.access_token).not.toBe(tokens.refresh_token);
   });
 
+  test("rejects mismatched redirect_uri", async () => {
+    const code = await createAuthorizationCode(
+      db, "client-1", tenantId, "https://example.com/callback", "", null
+    );
+
+    try {
+      await exchangeAuthorizationCode(db, "client-1", code, undefined, "https://evil.com/steal");
+      expect(true).toBe(false);
+    } catch (error) {
+      expect((error as Error).message).toBe("redirect_uri mismatch");
+    }
+  });
+
+  test("accepts matching redirect_uri", async () => {
+    const code = await createAuthorizationCode(
+      db, "client-1", tenantId, "https://example.com/callback", "", ["mcp:tools"]
+    );
+    const tokens = await exchangeAuthorizationCode(db, "client-1", code, undefined, "https://example.com/callback");
+    expect(tokens.access_token.length).toBeGreaterThan(0);
+  });
+
   test("PKCE: rejects missing code_verifier when challenge is set", async () => {
     const code = await createAuthorizationCode(
       db, "client-1", tenantId, "https://example.com/callback", "some-challenge", null

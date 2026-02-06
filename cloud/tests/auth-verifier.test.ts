@@ -118,7 +118,7 @@ describe("verifyAccessToken — OAuth token path", () => {
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(AuthError);
-      expect((error as AuthError).message).toBe("Invalid access token");
+      expect((error as AuthError).message).toBe("Invalid or expired access token");
     }
   });
 
@@ -131,7 +131,7 @@ describe("verifyAccessToken — OAuth token path", () => {
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(AuthError);
-      expect((error as AuthError).message).toBe("Token has been revoked");
+      expect((error as AuthError).message).toBe("Invalid or expired access token");
     }
   });
 
@@ -144,8 +144,24 @@ describe("verifyAccessToken — OAuth token path", () => {
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(AuthError);
-      expect((error as AuthError).message).toBe("Token has expired");
+      expect((error as AuthError).message).toBe("Invalid or expired access token");
     }
+  });
+
+  test("returns same error for all failure modes (prevents oracle)", async () => {
+    const nonExistent = verifyAccessToken(db, "nonexistent").catch((e: AuthError) => e.message);
+    const revoked = (async () => {
+      await insertOAuthToken(db, "rev-token", { tenantId, revoked: true });
+      return verifyAccessToken(db, "rev-token").catch((e: AuthError) => e.message);
+    })();
+    const expired = (async () => {
+      await insertOAuthToken(db, "exp-token", { tenantId, expiresAt: Date.now() - 1000 });
+      return verifyAccessToken(db, "exp-token").catch((e: AuthError) => e.message);
+    })();
+
+    const [msg1, msg2, msg3] = await Promise.all([nonExistent, revoked, expired]);
+    expect(msg1).toBe(msg2);
+    expect(msg2).toBe(msg3);
   });
 
   test("only matches access tokens, not refresh tokens", async () => {
@@ -157,7 +173,7 @@ describe("verifyAccessToken — OAuth token path", () => {
       expect(true).toBe(false);
     } catch (error) {
       expect(error).toBeInstanceOf(AuthError);
-      expect((error as AuthError).message).toBe("Invalid access token");
+      expect((error as AuthError).message).toBe("Invalid or expired access token");
     }
   });
 

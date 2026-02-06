@@ -21,6 +21,35 @@ import { renderAuthorizePage, renderAuthorizeError } from "./authorize-page";
 const auth = new Hono();
 
 // ============================================================================
+// In-memory security stores (CSRF, rate limiting)
+// ============================================================================
+
+const CSRF_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const csrfTokens = new Map<string, number>(); // token -> createdAt
+
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const loginAttempts = new Map<string, { count: number; windowStart: number }>();
+
+const REGISTER_MAX_PER_HOUR = 10;
+const REGISTER_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const registerAttempts = new Map<string, { count: number; windowStart: number }>();
+
+// Periodic cleanup every 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, createdAt] of csrfTokens) {
+    if (now - createdAt > CSRF_TTL_MS) csrfTokens.delete(token);
+  }
+  for (const [key, val] of loginAttempts) {
+    if (now - val.windowStart > LOGIN_WINDOW_MS) loginAttempts.delete(key);
+  }
+  for (const [key, val] of registerAttempts) {
+    if (now - val.windowStart > REGISTER_WINDOW_MS) registerAttempts.delete(key);
+  }
+}, 30 * 60 * 1000).unref();
+
+// ============================================================================
 // Dynamic Client Registration (RFC 7591)
 // ============================================================================
 
@@ -31,6 +60,19 @@ const RegisterInput = z.object({
 });
 
 auth.post("/register", async (c) => {
+  // Per-IP rate limiting on registration
+  const ip = c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ?? "unknown";
+  const now = Date.now();
+  const regAttempt = registerAttempts.get(ip);
+  if (regAttempt && regAttempt.count >= REGISTER_MAX_PER_HOUR && now - regAttempt.windowStart < REGISTER_WINDOW_MS) {
+    return c.json({ error: "rate_limit", error_description: "Too many registrations" }, 429);
+  }
+  if (regAttempt && now - regAttempt.windowStart < REGISTER_WINDOW_MS) {
+    registerAttempts.set(ip, { count: regAttempt.count + 1, windowStart: regAttempt.windowStart });
+  } else {
+    registerAttempts.set(ip, { count: 1, windowStart: now });
+  }
+
   const body = await c.req.json().catch(() => null);
   if (!body) return c.json({ error: "invalid_request" }, 400);
 
@@ -92,6 +134,9 @@ auth.get("/authorize", async (c) => {
     return c.html(renderAuthorizeError("redirect_uri not registered for this client"), 400);
   }
 
+  const csrfToken = crypto.randomUUID();
+  csrfTokens.set(csrfToken, Date.now());
+
   return c.html(renderAuthorizePage({
     clientId,
     clientName: client.client_name,
@@ -99,6 +144,7 @@ auth.get("/authorize", async (c) => {
     state: state ?? "",
     codeChallenge: codeChallenge ?? "",
     scope: scope ?? "mcp:tools",
+    csrfToken,
   }));
 });
 
@@ -111,25 +157,73 @@ auth.post("/authorize", async (c) => {
   const state = form["state"] as string;
   const codeChallenge = form["code_challenge"] as string;
   const scope = form["scope"] as string;
+  const csrf = form["_csrf"] as string;
 
   if (!email || !password || !clientId || !redirectUri) {
     return c.html(renderAuthorizeError("Missing required fields"), 400);
   }
 
+  // CSRF validation
+  if (!csrf || !csrfTokens.has(csrf)) {
+    return c.html(renderAuthorizeError("Invalid or expired form. Please try again."), 403);
+  }
+  const csrfCreated = csrfTokens.get(csrf)!;
+  csrfTokens.delete(csrf);
+  if (Date.now() - csrfCreated > CSRF_TTL_MS) {
+    return c.html(renderAuthorizeError("Form expired. Please try again."), 403);
+  }
+
   const mgmtDb = await getManagementDb();
 
-  // Authenticate
-  const tenant = await authenticateTenant(mgmtDb, email, password);
-  if (!tenant) {
+  // Re-validate client_id + redirect_uri from form body (prevents tampering with hidden fields)
+  const authorizeStore = new ClientsStore(mgmtDb);
+  const authorizeClient = await authorizeStore.getClient(clientId);
+  if (!authorizeClient || !authorizeClient.redirect_uris.includes(redirectUri)) {
+    return c.html(renderAuthorizeError("Invalid client or redirect URI"), 400);
+  }
+
+  // Login rate limiting (per email)
+  const attemptKey = email.toLowerCase();
+  const attempts = loginAttempts.get(attemptKey);
+  if (attempts && attempts.count >= LOGIN_MAX_ATTEMPTS && Date.now() - attempts.windowStart < LOGIN_WINDOW_MS) {
+    const retryCsrf = crypto.randomUUID();
+    csrfTokens.set(retryCsrf, Date.now());
     return c.html(renderAuthorizePage({
       clientId,
       redirectUri,
       state: state ?? "",
       codeChallenge: codeChallenge ?? "",
       scope: scope ?? "mcp:tools",
+      csrfToken: retryCsrf,
+      error: "Too many failed attempts. Please try again in 15 minutes.",
+    }));
+  }
+
+  // Authenticate
+  const tenant = await authenticateTenant(mgmtDb, email, password);
+  if (!tenant) {
+    const now = Date.now();
+    const current = loginAttempts.get(attemptKey);
+    if (current && now - current.windowStart < LOGIN_WINDOW_MS) {
+      loginAttempts.set(attemptKey, { count: current.count + 1, windowStart: current.windowStart });
+    } else {
+      loginAttempts.set(attemptKey, { count: 1, windowStart: now });
+    }
+    const failCsrf = crypto.randomUUID();
+    csrfTokens.set(failCsrf, Date.now());
+    return c.html(renderAuthorizePage({
+      clientId,
+      redirectUri,
+      state: state ?? "",
+      codeChallenge: codeChallenge ?? "",
+      scope: scope ?? "mcp:tools",
+      csrfToken: failCsrf,
       error: "Invalid email or password",
     }));
   }
+
+  // Clear login attempts on success
+  loginAttempts.delete(attemptKey);
 
   // Bind client to tenant
   const store = new ClientsStore(mgmtDb);
@@ -192,13 +286,29 @@ auth.post("/token", async (c) => {
 
   const mgmtDb = await getManagementDb();
 
+  // Client authentication
+  const clientStore = new ClientsStore(mgmtDb);
+  const client = await clientStore.getClient(parsed.data.client_id);
+  if (!client) return c.json({ error: "invalid_client" }, 401);
+
+  // Require client_secret for confidential clients (those that have a secret registered)
+  const clientHasSecret = await clientStore.hasClientSecret(parsed.data.client_id);
+  if (clientHasSecret) {
+    if (!parsed.data.client_secret) {
+      return c.json({ error: "invalid_client", error_description: "client_secret required" }, 401);
+    }
+    const valid = await clientStore.verifyClientSecret(parsed.data.client_id, parsed.data.client_secret);
+    if (!valid) return c.json({ error: "invalid_client" }, 401);
+  }
+
   try {
     if (parsed.data.grant_type === "authorization_code") {
       const tokens = await exchangeAuthorizationCode(
         mgmtDb,
         parsed.data.client_id,
         parsed.data.code,
-        parsed.data.code_verifier
+        parsed.data.code_verifier,
+        parsed.data.redirect_uri
       );
       return c.json(tokens);
     }

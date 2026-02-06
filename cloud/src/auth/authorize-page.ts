@@ -12,6 +12,7 @@ interface AuthorizePageParams {
   state: string;
   codeChallenge: string;
   scope: string;
+  csrfToken?: string;
   error?: string;
 }
 
@@ -36,6 +37,7 @@ export function renderAuthorizePage(params: AuthorizePageParams): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
   <title>Sign in — Muninn</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
@@ -59,6 +61,7 @@ export function renderAuthorizePage(params: AuthorizePageParams): string {
         <input type="hidden" name="state" value="${escapeHtml(params.state)}">
         <input type="hidden" name="code_challenge" value="${escapeHtml(params.codeChallenge)}">
         <input type="hidden" name="scope" value="${escapeHtml(params.scope)}">
+        ${params.csrfToken ? `<input type="hidden" name="_csrf" value="${escapeHtml(params.csrfToken)}">` : ""}
 
         <div>
           <label class="block text-sm font-medium text-zinc-300 mb-1" for="email">Email</label>

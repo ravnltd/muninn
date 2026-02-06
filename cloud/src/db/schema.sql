@@ -43,6 +43,9 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
 
 -- OAuth Clients (Dynamic Client Registration)
+-- Note: No ON DELETE CASCADE for tenant_id — intentional.
+-- Cleanup handled by deleteTenant() in tenants/manager.ts:157-161.
+-- SQLite cannot ALTER existing constraints, so migration is not worth the risk.
 CREATE TABLE IF NOT EXISTS oauth_clients (
   client_id TEXT PRIMARY KEY,
   client_secret_hash TEXT,

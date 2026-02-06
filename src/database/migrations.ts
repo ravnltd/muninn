@@ -1001,7 +1001,7 @@ export const MIGRATIONS: Migration[] = [
     },
   },
 
-  // Version 21: Pattern tracking and reflection questions
+  // Version 21: Pattern tracking and reflection questions (v3)
   {
     version: 21,
     name: "pattern_tracking",
@@ -1258,6 +1258,511 @@ export const MIGRATIONS: Migration[] = [
       return !!decayCol && !!linksExist && !!conflictsExist && !!versionsExist;
     },
   },
+
+  // Version 24: v4 Phase 1 — Zero-Effort Ingestion
+  {
+    version: 24,
+    name: "v4_ingestion",
+    description: "Tool call logging, error event detection, git commit tracking, and background work queue for automatic ingestion",
+    up: `
+      -- ========================================================================
+      -- TOOL CALLS — Every MCP tool call with timing and files involved
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS tool_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        tool_name TEXT NOT NULL,
+        input_summary TEXT,
+        files_involved TEXT,
+        success INTEGER NOT NULL DEFAULT 1,
+        duration_ms INTEGER,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_project ON tool_calls(project_id);
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_time ON tool_calls(created_at DESC);
+
+      -- Auto-cleanup: keep last 5000 tool calls per project
+      CREATE TRIGGER IF NOT EXISTS tool_calls_cleanup
+      AFTER INSERT ON tool_calls
+      BEGIN
+        DELETE FROM tool_calls
+        WHERE project_id = NEW.project_id
+        AND id NOT IN (
+          SELECT id FROM tool_calls
+          WHERE project_id = NEW.project_id
+          ORDER BY created_at DESC LIMIT 5000
+        );
+      END;
+
+      -- ========================================================================
+      -- ERROR EVENTS — Auto-detected errors from Bash output
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS error_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        error_type TEXT NOT NULL,
+        error_message TEXT NOT NULL,
+        error_signature TEXT,
+        source_file TEXT,
+        stack_trace TEXT,
+        tool_call_id INTEGER REFERENCES tool_calls(id) ON DELETE SET NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_error_events_project ON error_events(project_id);
+      CREATE INDEX IF NOT EXISTS idx_error_events_session ON error_events(session_id);
+      CREATE INDEX IF NOT EXISTS idx_error_events_type ON error_events(error_type);
+      CREATE INDEX IF NOT EXISTS idx_error_events_signature ON error_events(error_signature);
+      CREATE INDEX IF NOT EXISTS idx_error_events_time ON error_events(created_at DESC);
+
+      -- ========================================================================
+      -- GIT COMMITS — Processed commit metadata for Phase 2 analysis
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS git_commits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        commit_hash TEXT NOT NULL,
+        author TEXT,
+        message TEXT NOT NULL,
+        files_changed TEXT,
+        insertions INTEGER DEFAULT 0,
+        deletions INTEGER DEFAULT 0,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        analyzed INTEGER DEFAULT 0,
+        committed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, commit_hash)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_git_commits_project ON git_commits(project_id);
+      CREATE INDEX IF NOT EXISTS idx_git_commits_hash ON git_commits(commit_hash);
+      CREATE INDEX IF NOT EXISTS idx_git_commits_analyzed ON git_commits(analyzed);
+      CREATE INDEX IF NOT EXISTS idx_git_commits_time ON git_commits(committed_at DESC);
+
+      -- ========================================================================
+      -- WORK QUEUE — Background job queue for async processing
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS work_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER DEFAULT 0,
+        max_attempts INTEGER DEFAULT 3,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME,
+        completed_at DATETIME
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_work_queue_status ON work_queue(status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_work_queue_type ON work_queue(job_type);
+
+      -- Auto-cleanup: remove completed jobs older than 7 days
+      CREATE TRIGGER IF NOT EXISTS work_queue_cleanup
+      AFTER INSERT ON work_queue
+      BEGIN
+        DELETE FROM work_queue
+        WHERE status = 'completed'
+        AND completed_at < datetime('now', '-7 days');
+      END;
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('v4_ingestion_enabled', 'true'),
+        ('tool_call_logging', 'true'),
+        ('error_event_detection', 'true'),
+        ('git_commit_tracking', 'true'),
+        ('work_queue_enabled', 'true');
+    `,
+    validate: (db) => {
+      const toolCalls = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='tool_calls'")
+        .get();
+      const errorEvents = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='error_events'")
+        .get();
+      const gitCommits = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='git_commits'")
+        .get();
+      const workQueue = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='work_queue'")
+        .get();
+      return !!toolCalls && !!errorEvents && !!gitCommits && !!workQueue;
+    },
+  },
+
+  // Version 25: v4 Phase 2 — Automatic Learning Engine
+  {
+    version: 25,
+    name: "v4_learning_engine",
+    description: "Diff analysis with LLM intent categorization and error-fix pair mapping for automatic learning",
+    up: `
+      -- ========================================================================
+      -- DIFF ANALYSES — LLM-analyzed git diffs with intent categories
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS diff_analyses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        commit_id INTEGER NOT NULL REFERENCES git_commits(id) ON DELETE CASCADE,
+        intent_summary TEXT,
+        intent_category TEXT NOT NULL DEFAULT 'unknown',
+        changed_functions TEXT,
+        complexity_delta INTEGER DEFAULT 0,
+        analyzed_by TEXT DEFAULT 'heuristic',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(commit_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_diff_analyses_project ON diff_analyses(project_id);
+      CREATE INDEX IF NOT EXISTS idx_diff_analyses_commit ON diff_analyses(commit_id);
+      CREATE INDEX IF NOT EXISTS idx_diff_analyses_category ON diff_analyses(intent_category);
+
+      -- ========================================================================
+      -- ERROR FIX PAIRS — Normalized error signatures linked to known fixes
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS error_fix_pairs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        error_signature TEXT NOT NULL,
+        error_type TEXT NOT NULL,
+        error_example TEXT,
+        fix_commit_hash TEXT,
+        fix_description TEXT,
+        fix_files TEXT,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        times_seen INTEGER DEFAULT 1,
+        times_fixed INTEGER DEFAULT 1,
+        confidence REAL DEFAULT 0.5,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, error_signature)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_error_fix_project ON error_fix_pairs(project_id);
+      CREATE INDEX IF NOT EXISTS idx_error_fix_signature ON error_fix_pairs(error_signature);
+      CREATE INDEX IF NOT EXISTS idx_error_fix_type ON error_fix_pairs(error_type);
+      CREATE INDEX IF NOT EXISTS idx_error_fix_confidence ON error_fix_pairs(confidence DESC);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('v4_learning_engine_enabled', 'true'),
+        ('diff_analysis_enabled', 'true'),
+        ('error_fix_mapping_enabled', 'true');
+    `,
+    validate: (db) => {
+      const diffAnalyses = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='diff_analyses'")
+        .get();
+      const errorFixPairs = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='error_fix_pairs'")
+        .get();
+      return !!diffAnalyses && !!errorFixPairs;
+    },
+  },
+
+  // ============================================================================
+  // V26: Context Intelligence Engine (v4 Phase 3)
+  // ============================================================================
+
+  {
+    version: 26,
+    name: "v4_context_engine",
+    description: "Context injection tracking for intelligent on-demand context loading and feedback loops",
+    up: `
+      -- ========================================================================
+      -- CONTEXT INJECTIONS — tracks what context was injected per session
+      -- Used by Phase 5 feedback loop to learn what context was actually useful
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS context_injections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        context_type TEXT NOT NULL,
+        source_id INTEGER,
+        content_hash TEXT NOT NULL,
+        tokens INTEGER NOT NULL DEFAULT 0,
+        relevance_score REAL DEFAULT 0.0,
+        was_used INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ctx_inject_project ON context_injections(project_id);
+      CREATE INDEX IF NOT EXISTS idx_ctx_inject_session ON context_injections(session_id);
+      CREATE INDEX IF NOT EXISTS idx_ctx_inject_type ON context_injections(context_type);
+      CREATE INDEX IF NOT EXISTS idx_ctx_inject_used ON context_injections(was_used);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('v4_context_engine_enabled', 'true'),
+        ('context_injection_tracking_enabled', 'true');
+    `,
+    validate: (db) => {
+      const ctxInjections = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='context_injections'")
+        .get();
+      return !!ctxInjections;
+    },
+  },
+
+  // ============================================================================
+  // V27: Code Intelligence (v4 Phase 4)
+  // ============================================================================
+
+  {
+    version: 27,
+    name: "v4_code_intelligence",
+    description: "Call graph and test-source mapping for function-level impact analysis",
+    up: `
+      -- ========================================================================
+      -- CALL GRAPH — function-to-function call relationships
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS call_graph (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        caller_file TEXT NOT NULL,
+        caller_symbol TEXT NOT NULL,
+        callee_file TEXT NOT NULL,
+        callee_symbol TEXT NOT NULL,
+        call_type TEXT NOT NULL DEFAULT 'direct',
+        confidence REAL DEFAULT 0.8,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_call_graph_project ON call_graph(project_id);
+      CREATE INDEX IF NOT EXISTS idx_call_graph_caller ON call_graph(caller_file, caller_symbol);
+      CREATE INDEX IF NOT EXISTS idx_call_graph_callee ON call_graph(callee_file, callee_symbol);
+
+      -- ========================================================================
+      -- TEST SOURCE MAP — test file to source file/symbol mapping
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS test_source_map (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        test_file TEXT NOT NULL,
+        source_file TEXT NOT NULL,
+        source_symbol TEXT,
+        match_type TEXT NOT NULL DEFAULT 'naming',
+        confidence REAL DEFAULT 0.7,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, test_file, source_file, source_symbol)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_test_source_project ON test_source_map(project_id);
+      CREATE INDEX IF NOT EXISTS idx_test_source_test ON test_source_map(test_file);
+      CREATE INDEX IF NOT EXISTS idx_test_source_source ON test_source_map(source_file);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('v4_code_intelligence_enabled', 'true'),
+        ('call_graph_enabled', 'true'),
+        ('test_source_mapping_enabled', 'true');
+    `,
+    validate: (db) => {
+      const callGraph = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='call_graph'")
+        .get();
+      const testSourceMap = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='test_source_map'")
+        .get();
+      return !!callGraph && !!testSourceMap;
+    },
+  },
+
+  // ============================================================================
+  // V28: Outcome Intelligence (v4 Phase 5)
+  // ============================================================================
+
+  {
+    version: 28,
+    name: "v4_outcome_intelligence",
+    description: "Test results, revert detection, and retrieval feedback for outcome-driven learning",
+    up: `
+      -- ========================================================================
+      -- TEST RESULTS — test run outcomes per commit
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS test_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        commit_hash TEXT,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        test_command TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'unknown',
+        total_tests INTEGER DEFAULT 0,
+        passed INTEGER DEFAULT 0,
+        failed INTEGER DEFAULT 0,
+        skipped INTEGER DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        output_summary TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_test_results_project ON test_results(project_id);
+      CREATE INDEX IF NOT EXISTS idx_test_results_commit ON test_results(commit_hash);
+      CREATE INDEX IF NOT EXISTS idx_test_results_session ON test_results(session_id);
+
+      -- ========================================================================
+      -- REVERT EVENTS — detected reverts linked to sessions
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS revert_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        revert_commit_hash TEXT NOT NULL,
+        original_commit_hash TEXT,
+        original_session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        revert_type TEXT NOT NULL DEFAULT 'message',
+        files_affected TEXT,
+        detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        processed INTEGER DEFAULT 0
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_revert_events_project ON revert_events(project_id);
+      CREATE INDEX IF NOT EXISTS idx_revert_events_original ON revert_events(original_commit_hash);
+
+      -- ========================================================================
+      -- RETRIEVAL FEEDBACK — accuracy tracking for predictions/suggestions
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS retrieval_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        context_type TEXT NOT NULL,
+        item_id INTEGER,
+        item_path TEXT,
+        was_suggested INTEGER DEFAULT 0,
+        was_used INTEGER DEFAULT 0,
+        relevance_score REAL DEFAULT 0.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_retrieval_fb_project ON retrieval_feedback(project_id);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_fb_session ON retrieval_feedback(session_id);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_fb_type ON retrieval_feedback(context_type);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('v4_outcome_intelligence_enabled', 'true'),
+        ('test_tracking_enabled', 'true'),
+        ('revert_detection_enabled', 'true');
+    `,
+    validate: (db) => {
+      const testResults = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='test_results'")
+        .get();
+      const revertEvents = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='revert_events'")
+        .get();
+      const retrievalFb = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='retrieval_feedback'")
+        .get();
+      return !!testResults && !!revertEvents && !!retrievalFb;
+    },
+  },
+
+  // ============================================================================
+  // V29: Team & Cross-Project Intelligence (v4 Phase 6)
+  // ============================================================================
+
+  {
+    version: 29,
+    name: "v4_team_intelligence",
+    description: "Code ownership, team learnings, PR reviews, and onboarding context",
+    up: `
+      -- ========================================================================
+      -- CODE OWNERSHIP — file ownership from git blame
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS code_ownership (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        file_path TEXT NOT NULL,
+        primary_author TEXT NOT NULL,
+        commit_count INTEGER DEFAULT 0,
+        line_count INTEGER DEFAULT 0,
+        last_commit_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, file_path)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ownership_project ON code_ownership(project_id);
+      CREATE INDEX IF NOT EXISTS idx_ownership_author ON code_ownership(primary_author);
+
+      -- ========================================================================
+      -- TEAM LEARNINGS — aggregated cross-developer knowledge
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS team_learnings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        source_learning_id INTEGER,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        category TEXT,
+        contributor TEXT,
+        confidence REAL DEFAULT 0.7,
+        times_confirmed INTEGER DEFAULT 0,
+        is_global INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, title)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_team_learnings_project ON team_learnings(project_id);
+
+      -- ========================================================================
+      -- PR REVIEW EXTRACTS — extracted PR review learnings
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS pr_review_extracts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        pr_number INTEGER,
+        review_category TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        example TEXT,
+        reviewer TEXT,
+        occurrence_count INTEGER DEFAULT 1,
+        promoted_to_learning INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, review_category, pattern)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pr_reviews_project ON pr_review_extracts(project_id);
+      CREATE INDEX IF NOT EXISTS idx_pr_reviews_category ON pr_review_extracts(review_category);
+
+      -- ========================================================================
+      -- ONBOARDING CONTEXTS — cached onboarding docs
+      -- ========================================================================
+      CREATE TABLE IF NOT EXISTS onboarding_contexts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        section TEXT NOT NULL,
+        content TEXT NOT NULL,
+        generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME,
+        UNIQUE(project_id, section)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_onboarding_project ON onboarding_contexts(project_id);
+
+      INSERT OR REPLACE INTO _migration_meta (key, value)
+      VALUES
+        ('v4_team_intelligence_enabled', 'true'),
+        ('code_ownership_tracking_enabled', 'true');
+    `,
+    validate: (db) => {
+      const ownership = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='code_ownership'")
+        .get();
+      const teamLearnings = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='team_learnings'")
+        .get();
+      return !!ownership && !!teamLearnings;
+    },
+  },
 ];
 
 // ============================================================================
@@ -1425,6 +1930,22 @@ const REQUIRED_PROJECT_TABLES = [
   "workflow_patterns",
   "developer_profile",
   "insights",
+  "tool_calls",
+  "error_events",
+  "git_commits",
+  "work_queue",
+  "diff_analyses",
+  "error_fix_pairs",
+  "context_injections",
+  "call_graph",
+  "test_source_map",
+  "test_results",
+  "revert_events",
+  "retrieval_feedback",
+  "code_ownership",
+  "team_learnings",
+  "pr_review_extracts",
+  "onboarding_contexts",
 ];
 
 // Combined for reference

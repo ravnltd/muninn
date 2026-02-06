@@ -17,7 +17,12 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import {
   QueryInput,
   CheckInput,
@@ -35,6 +40,13 @@ import {
   validateInput,
 } from "./mcp-validation.js";
 import type { DatabaseAdapter } from "./database/adapter";
+import { createToolCallTimer } from "./ingestion/tool-logger.js";
+import { queueFileUpdate } from "./ingestion/auto-file-update.js";
+import { detectErrors, recordErrors } from "./ingestion/error-detector.js";
+import { getActiveSessionId } from "./commands/session-tracking.js";
+import { analyzeTask, getTaskContext, setTaskContext } from "./context/task-analyzer.js";
+import { buildContextOutput } from "./context/budget-manager.js";
+import { recordToolCall, checkAndUpdateFocus } from "./context/shifter.js";
 import {
   handleQuery,
   handleCheck,
@@ -122,6 +134,8 @@ const ALLOWED_PASSTHROUGH_COMMANDS = new Set([
   "db",
   "smart-status",
   "ss",
+  "ingest",
+  "install-hook",
 ]);
 
 /**
@@ -157,7 +171,15 @@ function parseCommandArgs(command: string): string[] {
   return args;
 }
 
-const server = new Server({ name: "muninn", version: "3.0.0" }, { capabilities: { tools: {} } });
+const server = new Server(
+  { name: "muninn", version: "4.0.0" },
+  { capabilities: { tools: {}, resources: {} } }
+);
+
+// Track whether session has been auto-started for this process lifetime
+let sessionAutoStarted = false;
+// Track whether initial task analysis has been done
+let taskAnalyzed = false;
 
 // ============================================================================
 // Tool Definitions - 11 Core + 1 Passthrough
@@ -394,10 +416,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   log(`Tool: ${name} args: ${JSON.stringify(args)}`);
 
+  // --- v4: Timer created early so catch block can access it ---
+  let timer: ReturnType<typeof createToolCallTimer> | null = null;
+
   try {
     // Initialize shared DB adapter (cached after first call)
     const db = await getDb();
     const projectId = await getProjectId(db, cwd);
+
+    // --- v4: Tool call timer (fire-and-forget logging) ---
+    timer = createToolCallTimer(db, projectId, name, typedArgs);
+
+    // --- v4 Phase 3: Context shifter — track tool calls for focus detection ---
+    recordToolCall(name, typedArgs);
+
+    // --- v4 Phase 3: Task analyzer — run on first meaningful tool call ---
+    if (!taskAnalyzed && name !== "muninn_session") {
+      taskAnalyzed = true;
+      analyzeTask(db, projectId, name, typedArgs)
+        .then((ctx) => setTaskContext(ctx))
+        .catch(() => {});
+    }
+
+    // --- v4 Phase 3: Context shifter — auto-update focus if topic shifted ---
+    checkAndUpdateFocus(db, projectId).catch(() => {});
+
+    // --- v4: Session auto-start on first tool call ---
+    if (!sessionAutoStarted) {
+      sessionAutoStarted = true;
+      autoStartSession(db, projectId).catch(() => {});
+    }
 
     let result: string;
 
@@ -528,9 +576,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
 
+    // --- v4: Log successful tool call ---
+    timer.finish(true);
+
+    // --- v4: Auto-update file knowledge for Edit/Write-like tools ---
+    if (name === "muninn_file_add" && typeof typedArgs.path === "string") {
+      queueFileUpdate(projectId, typedArgs.path as string);
+    }
+
+    // --- v4: Detect errors in passthrough Bash-like output ---
+    if (name === "muninn" && result) {
+      const errors = detectErrors(result);
+      if (errors.length > 0) {
+        getActiveSessionId(db, projectId)
+          .then((sessionId) => recordErrors(db, projectId, sessionId, null, errors))
+          .catch(() => {});
+      }
+    }
+
     return { content: [{ type: "text", text: result }] };
   } catch (error) {
     log(`Error: ${error}`);
+
+    // --- v4: Log failed tool call (if timer was created) ---
+    timer?.finish(false, error instanceof Error ? error.message : String(error));
+
     return {
       content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
       isError: true,
@@ -539,11 +609,202 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 // ============================================================================
+// v4 Phase 3: MCP Resources
+// ============================================================================
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  return {
+    resources: [
+      {
+        uri: "muninn://context/current",
+        name: "Current Task Context",
+        description: "Task-relevant context computed from recent tool calls. Re-computed on each read.",
+        mimeType: "text/plain",
+      },
+      {
+        uri: "muninn://context/errors",
+        name: "Recent Errors with Known Fixes",
+        description: "Recent error events with linked fixes from error-fix pair mapping.",
+        mimeType: "text/plain",
+      },
+    ],
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const { uri } = request.params;
+
+  try {
+    const db = await getDb();
+    const defaultCwd = process.cwd();
+    const projectId = await getProjectId(db, defaultCwd);
+
+    if (uri === "muninn://context/current") {
+      const taskCtx = getTaskContext();
+      if (!taskCtx) {
+        return { contents: [{ uri, mimeType: "text/plain", text: "No task context yet. Make a tool call first." }] };
+      }
+      const output = buildContextOutput(taskCtx);
+      return { contents: [{ uri, mimeType: "text/plain", text: output || "No relevant context for current task." }] };
+    }
+
+    if (uri === "muninn://context/errors") {
+      const errors = await db.all<{
+        error_type: string; message: string; file_path: string | null; created_at: string;
+      }>(
+        `SELECT error_type, message, file_path, created_at FROM error_events
+         WHERE project_id = ? ORDER BY created_at DESC LIMIT 10`,
+        [projectId]
+      );
+
+      if (errors.length === 0) {
+        return { contents: [{ uri, mimeType: "text/plain", text: "No recent errors." }] };
+      }
+
+      const lines = ["Recent errors:"];
+      for (const e of errors) {
+        const file = e.file_path ? ` in ${e.file_path}` : "";
+        lines.push(`  [${e.error_type}]${file}: ${e.message.slice(0, 80)}`);
+      }
+
+      // Include known fixes
+      const fixes = await db.all<{
+        error_signature: string; fix_description: string; confidence: number;
+      }>(
+        `SELECT error_signature, fix_description, confidence FROM error_fix_pairs
+         WHERE project_id = ? AND confidence >= 0.5
+         ORDER BY last_seen_at DESC LIMIT 5`,
+        [projectId]
+      );
+
+      if (fixes.length > 0) {
+        lines.push("");
+        lines.push("Known fixes:");
+        for (const f of fixes) {
+          lines.push(`  ${f.error_signature.slice(0, 30)} → ${(f.fix_description || "see commits").slice(0, 50)} (${Math.round(f.confidence * 100)}%)`);
+        }
+      }
+
+      return { contents: [{ uri, mimeType: "text/plain", text: lines.join("\n") }] };
+    }
+
+    return { contents: [{ uri, mimeType: "text/plain", text: `Unknown resource: ${uri}` }] };
+  } catch (error) {
+    return {
+      contents: [{ uri, mimeType: "text/plain", text: `Error reading resource: ${error instanceof Error ? error.message : String(error)}` }],
+    };
+  }
+});
+
+// ============================================================================
+// v4: Session Auto-Start/End
+// ============================================================================
+
+/** Auto-start a session on first tool call if none is active */
+async function autoStartSession(db: DatabaseAdapter, projectId: number): Promise<void> {
+  try {
+    const activeSession = await db.get<{ id: number }>(
+      `SELECT id FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      [projectId]
+    );
+    if (activeSession) return; // Session already active
+
+    const mod = await import("./commands/session.js");
+    const { captureOutput } = await import("./mcp-handlers.js");
+    await captureOutput(async () => { await mod.sessionStart(db, projectId, "Auto-started session"); });
+    log("Auto-started session");
+  } catch {
+    // Non-critical — session tracking is best-effort
+  }
+}
+
+/** Auto-end session on process termination */
+async function autoEndSession(): Promise<void> {
+  try {
+    const db = await getDb();
+    const defaultCwd = process.cwd();
+    const projectId = await getProjectId(db, defaultCwd);
+
+    const activeSession = await db.get<{ id: number }>(
+      `SELECT id FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      [projectId]
+    );
+    if (!activeSession) return;
+
+    // Get tool call summary for this session
+    const toolSummary = await db.all<{ tool_name: string; cnt: number }>(
+      `SELECT tool_name, COUNT(*) as cnt FROM tool_calls
+       WHERE session_id = ? GROUP BY tool_name ORDER BY cnt DESC LIMIT 10`,
+      [activeSession.id]
+    );
+
+    const summaryText = toolSummary.length > 0
+      ? `Tools used: ${toolSummary.map((t) => `${t.tool_name} x${t.cnt}`).join(", ")}`
+      : "No tool calls recorded";
+
+    await db.run(
+      `UPDATE sessions SET ended_at = datetime('now'), outcome = ? WHERE id = ?`,
+      [summaryText, activeSession.id]
+    );
+
+    // v4 Phase 2: Queue background learning jobs for this session
+    try {
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["map_error_fixes", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["detect_patterns", JSON.stringify({ projectId })]
+      );
+    } catch {
+      // work_queue might not exist yet
+    }
+
+    // v4 Phase 5: Queue outcome intelligence jobs for this session
+    try {
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["track_decisions", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["calibrate_confidence", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["process_context_feedback", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+    } catch {
+      // work_queue might not exist yet
+    }
+
+    // v4 Phase 6: Queue team intelligence jobs at session end
+    try {
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["aggregate_learnings", JSON.stringify({ projectId })]
+      );
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["promote_reviews", JSON.stringify({ projectId })]
+      );
+    } catch {
+      // work_queue might not exist yet
+    }
+
+    log("Auto-ended session");
+  } catch {
+    // Best-effort — process is exiting
+  }
+}
+
+// ============================================================================
 // Start Server
 // ============================================================================
 
 async function main(): Promise<void> {
-  log("Starting Muninn MCP Server v3 (in-process)...");
+  log("Starting Muninn MCP Server v4 (in-process)...");
 
   // Pre-warm the DB connection at startup
   try {
@@ -561,6 +822,15 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("Server connected via stdio");
+
+  // v4: Register signal handlers for session auto-end
+  const handleShutdown = () => {
+    autoEndSession()
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  };
+  process.on("SIGTERM", handleShutdown);
+  process.on("SIGINT", handleShutdown);
 }
 
 main().catch((error) => {

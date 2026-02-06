@@ -34,9 +34,9 @@ export async function captureOutput(fn: () => Promise<void>): Promise<string> {
 
   console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
   console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
-  // biome-ignore lint/suspicious/noExplicitAny: process.exit override must match signature
   process.exit = ((code?: number) => {
     throw new ProcessExitError(code ?? 0);
+    // biome-ignore lint/suspicious/noExplicitAny: process.exit override must match signature
   }) as any;
 
   try {
@@ -399,6 +399,122 @@ export async function handlePassthrough(
         } else {
           console.error("Usage: muninn blast <file> | --refresh | --high");
         }
+        break;
+      }
+      case "reindex": {
+        const { reindexProject } = await import("./code-intel/ast-parser");
+        const { buildAndPersistCallGraph } = await import("./code-intel/call-graph");
+        const { buildAndPersistTestMap } = await import("./code-intel/test-mapper");
+        console.error("Reindexing project symbols...");
+        const symbolResult = await reindexProject(db, projectId, cwd);
+        console.error(`Symbols: ${symbolResult.parsed} parsed, ${symbolResult.symbols} symbols, ${symbolResult.skipped} skipped`);
+        if (symbolResult.parsed > 0) {
+          // Build call graph from all parseable files
+          const { readdirSync, statSync: statSyncFn } = await import("node:fs");
+          const { relative: relativeFn, extname: extnameFn, join: joinFn } = await import("node:path");
+          const codeExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
+          const ignoreDirs = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
+          const allFiles: string[] = [];
+          const walkDir = (dir: string, depth = 0): void => {
+            if (depth > 15 || allFiles.length >= 2000) return;
+            try {
+              for (const entry of readdirSync(dir)) {
+                if (allFiles.length >= 2000) break;
+                if (entry.startsWith(".") || ignoreDirs.has(entry)) continue;
+                const full = joinFn(dir, entry);
+                const st = statSyncFn(full);
+                if (st.isDirectory()) walkDir(full, depth + 1);
+                else if (st.isFile() && codeExts.has(extnameFn(entry))) {
+                  allFiles.push(relativeFn(cwd, full));
+                }
+              }
+            } catch { /* skip */ }
+          };
+          walkDir(cwd);
+          console.error("Building call graph...");
+          const cgResult = await buildAndPersistCallGraph(db, projectId, cwd, allFiles);
+          console.error(`Call graph: ${cgResult.edges} edges from ${cgResult.files} files`);
+          console.error("Building test-source map...");
+          const tmResult = await buildAndPersistTestMap(db, projectId, cwd);
+          console.error(`Test map: ${tmResult.mappings} mappings from ${tmResult.tests} test files`);
+        }
+        break;
+      }
+      case "team": {
+        const subAction = args[0];
+        if (subAction === "learnings") {
+          const { getTeamLearnings } = await import("./team/knowledge-aggregator");
+          const domain = args[1];
+          const learnings = await getTeamLearnings(db, projectId, domain);
+          if (learnings.length === 0) {
+            console.error("No team learnings found.");
+          } else {
+            for (const l of learnings) {
+              console.error(`[${l.category}] ${l.title} (confidence: ${l.confidence})`);
+              console.error(`  ${l.content.slice(0, 150)}`);
+            }
+          }
+        } else if (subAction === "aggregate") {
+          const { aggregateLearnings } = await import("./team/knowledge-aggregator");
+          const result = await aggregateLearnings(db, projectId);
+          console.error(`Promoted ${result.promoted}, skipped ${result.skipped} (already existed)`);
+        } else if (subAction === "reviews") {
+          const { getReviewPatterns } = await import("./team/pr-reviews");
+          const patterns = await getReviewPatterns(db, projectId);
+          if (patterns.length === 0) {
+            console.error("No review patterns found.");
+          } else {
+            for (const p of patterns) {
+              console.error(`[${p.category}] ${p.pattern} (${p.occurrences}x)${p.promoted ? " [promoted]" : ""}`);
+            }
+          }
+        } else if (subAction === "cross-project") {
+          const { detectAllPatterns } = await import("./team/cross-project");
+          const patterns = await detectAllPatterns(db, projectId);
+          if (patterns.length === 0) {
+            console.error("No cross-project patterns detected.");
+          } else {
+            for (const p of patterns) {
+              console.error(`[${p.type}] ${p.title}`);
+              console.error(`  ${p.description.slice(0, 150)}`);
+            }
+          }
+        } else {
+          console.error("Usage: muninn team learnings [domain] | aggregate | reviews | cross-project");
+        }
+        break;
+      }
+      case "ownership": {
+        if (args.includes("--refresh")) {
+          const { refreshOwnership } = await import("./team/ownership");
+          const result = await refreshOwnership(db, projectId);
+          console.error(`Updated ownership for ${result.updated} files`);
+        } else if (args.length > 0 && !args[0].startsWith("--")) {
+          const { getOwnerContext } = await import("./team/ownership");
+          const ctx = await getOwnerContext(db, projectId, args[0]);
+          if (!ctx) {
+            console.error(`No ownership data for ${args[0]}`);
+          } else {
+            console.error(`Owner: ${ctx.owner}`);
+            if (ctx.decisions.length > 0) {
+              console.error("Related decisions:");
+              for (const d of ctx.decisions) console.error(`  - ${d}`);
+            }
+            if (ctx.learnings.length > 0) {
+              console.error("Related learnings:");
+              for (const l of ctx.learnings) console.error(`  - ${l}`);
+            }
+          }
+        } else {
+          console.error("Usage: muninn ownership <file> | --refresh");
+        }
+        break;
+      }
+      case "onboarding": {
+        const { generateOnboardingContext, formatOnboardingContext } = await import("./team/onboarding");
+        const forceRefresh = args.includes("--refresh");
+        const context = await generateOnboardingContext(db, projectId, forceRefresh);
+        console.error(formatOnboardingContext(context));
         break;
       }
       case "debt": {

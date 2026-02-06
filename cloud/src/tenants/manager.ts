@@ -73,7 +73,11 @@ export async function authenticateTenant(
     "SELECT * FROM tenants WHERE email = ?",
     [email]
   );
-  if (!record) return null;
+  if (!record) {
+    // Constant-time: run bcrypt against pre-computed hash to prevent timing oracle
+    await verifyPassword(password, "$2b$12$/Z.j79lZXOIYxVgZ3N.mcuqDZiSedqbtIYfsP6uj5ahA19TF1586K");
+    return null;
+  }
 
   const valid = await verifyPassword(password, record.password_hash);
   if (!valid) return null;
