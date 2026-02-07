@@ -64,7 +64,7 @@ const sessions = new Map<string, McpSession>();
 
 // Cleanup stale sessions every 30 minutes
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
-setInterval(() => {
+const sessionCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [id, session] of sessions) {
     if (now - session.createdAt > SESSION_TTL_MS) {
@@ -73,6 +73,7 @@ setInterval(() => {
     }
   }
 }, 30 * 60 * 1000);
+if (typeof sessionCleanupTimer === "object" && "unref" in sessionCleanupTimer) sessionCleanupTimer.unref();
 
 // ============================================================================
 // Passthrough Whitelist (same as local MCP server)

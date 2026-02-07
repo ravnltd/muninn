@@ -85,6 +85,7 @@ import { HELP_TEXT } from "./help";
 import { CLAUDE_MD_TEMPLATE, getMuninnSection, MUNINN_SECTION_END, MUNINN_SECTION_START } from "./templates/claude-md";
 import { outputJson, outputSuccess } from "./utils/format";
 import { flushFileUpdates } from "./ingestion/auto-file-update";
+import { onShutdown, shutdown } from "./utils/shutdown";
 
 // ============================================================================
 // Main CLI Router
@@ -678,8 +679,11 @@ async function main(): Promise<void> {
           spawn(openCmd, args, { detached: true, stdio: "ignore" }).unref();
         }
 
-        // Keep the process running
-        await new Promise(() => {});
+        // Keep process running until SIGTERM/SIGINT
+        await new Promise<void>((resolve) => {
+          process.on("SIGTERM", resolve);
+          process.on("SIGINT", resolve);
+        });
         break;
       }
 
@@ -758,9 +762,7 @@ async function main(): Promise<void> {
         console.log(HELP_TEXT);
     }
   } finally {
-    // Flush any pending file updates before closing
-    await flushFileUpdates().catch(() => {});
-    closeAll();
+    await shutdown(0);
   }
 }
 
@@ -768,14 +770,11 @@ async function main(): Promise<void> {
 // Entry Point
 // ============================================================================
 
-// Hard exit timeout — if the process hasn't exited 5s after main() resolves,
-// force it. This catches any dangling timers, open handles, or hung promises.
-main()
-  .then(() => {
-    const exitTimer = setTimeout(() => process.exit(0), 5000);
-    if (typeof exitTimer === "object" && "unref" in exitTimer) exitTimer.unref();
-  })
-  .catch((error) => {
-    console.error(`Error: ${error.message}`);
-    process.exit(1);
-  });
+// Register cleanup in order: flush queued writes, then close DB handles
+onShutdown(() => flushFileUpdates());
+onShutdown(() => closeAll());
+
+main().catch((error) => {
+  console.error(`Error: ${error.message}`);
+  process.exit(1);
+});

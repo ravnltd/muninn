@@ -47,6 +47,7 @@ import { getActiveSessionId } from "./commands/session-tracking.js";
 import { analyzeTask, getTaskContext, setTaskContext } from "./context/task-analyzer.js";
 import { buildContextOutput } from "./context/budget-manager.js";
 import { recordToolCall, checkAndUpdateFocus } from "./context/shifter.js";
+import { onShutdown, installSignalHandlers } from "./utils/shutdown.js";
 import {
   handleQuery,
   handleCheck,
@@ -823,17 +824,9 @@ async function main(): Promise<void> {
   await server.connect(transport);
   log("Server connected via stdio");
 
-  // v4: Register signal handlers for session auto-end
-  // Hard timeout ensures process exits even if autoEndSession hangs
-  const handleShutdown = () => {
-    const forceExit = setTimeout(() => process.exit(0), 5000);
-    if (typeof forceExit === "object" && "unref" in forceExit) forceExit.unref();
-    autoEndSession()
-      .catch(() => {})
-      .finally(() => process.exit(0));
-  };
-  process.on("SIGTERM", handleShutdown);
-  process.on("SIGINT", handleShutdown);
+  // Register cleanup and signal handlers via shutdown manager
+  onShutdown(() => autoEndSession());
+  installSignalHandlers();
 }
 
 main().catch((error) => {

@@ -21,12 +21,14 @@ const PLAN_RATES: Record<string, number> = {
 const buckets = new Map<string, Bucket>();
 
 // Clean up stale buckets every 10 minutes
-setInterval(() => {
+// .unref() via safeInterval prevents this from keeping the process alive
+const cleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [key, bucket] of buckets) {
     if (bucket.lastRefill < cutoff) buckets.delete(key);
   }
 }, 10 * 60 * 1000);
+if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) cleanupTimer.unref();
 
 /**
  * Rate limit middleware. Extracts tenantId from context (set by auth middleware).

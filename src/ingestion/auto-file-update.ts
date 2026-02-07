@@ -9,6 +9,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { safeTimeout } from "../utils/timers";
 
 // ============================================================================
 // Types
@@ -42,10 +43,8 @@ export function queueFileUpdate(projectId: number, filePath: string): void {
 
   // Trigger processing if not already running
   if (!processing) {
-    // Use setTimeout to defer to next tick (after MCP response)
-    // .unref() prevents this timer from keeping the event loop alive
-    const timer = setTimeout(() => processQueue(), 0);
-    if (typeof timer === "object" && "unref" in timer) timer.unref();
+    // Defer to next tick (after MCP response)
+    safeTimeout(() => processQueue(), 0);
   }
 }
 
