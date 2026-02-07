@@ -770,6 +770,12 @@ async function main(): Promise<void> {
 // Entry Point
 // ============================================================================
 
+// Hard ceiling: no CLI invocation should ever run longer than 2 minutes.
+// This catches hung API calls, stuck DB queries, or anything else that
+// prevents main() from reaching the finally block.
+import { safeTimeout } from "./utils/timers";
+safeTimeout(() => process.exit(0), 120_000);
+
 // Register cleanup in order: flush queued writes, then close DB handles
 onShutdown(() => flushFileUpdates());
 onShutdown(() => closeAll());
