@@ -116,6 +116,9 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
     }
   }
 
+  // Repair fts_issues if it was created with wrong columns (missing workaround/resolution)
+  await repairFtsIssues(globalAdapterInstance);
+
   return globalAdapterInstance;
 }
 
@@ -157,6 +160,33 @@ async function checkSchemaExists(adapter: DatabaseAdapter): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Repair fts_issues if it was created with wrong columns.
+ * The FTS table was originally created with only (title, description) but needs
+ * (title, description, workaround, resolution) to match the issues table and triggers.
+ * FTS virtual tables cannot be ALTERed — must drop and recreate.
+ */
+async function repairFtsIssues(adapter: DatabaseAdapter): Promise<void> {
+  try {
+    await adapter.get("SELECT workaround FROM fts_issues LIMIT 1");
+  } catch {
+    // Column missing — drop, recreate with correct schema, and repopulate
+    await adapter.exec(`
+      DROP TABLE IF EXISTS fts_issues;
+      CREATE VIRTUAL TABLE fts_issues USING fts5(title, description, workaround, resolution);
+      INSERT INTO fts_issues(rowid, title, description, workaround, resolution)
+        SELECT id, title, COALESCE(description, ''), COALESCE(workaround, ''), COALESCE(resolution, '')
+        FROM issues;
+      DROP TRIGGER IF EXISTS issues_ai;
+      CREATE TRIGGER issues_ai AFTER INSERT ON issues BEGIN
+        INSERT INTO fts_issues(rowid, title, description, workaround, resolution)
+        VALUES (NEW.id, NEW.title, NEW.description, NEW.workaround, NEW.resolution);
+      END;
+    `);
+  }
+}
+
 
 async function initGlobalTablesAsync(adapter: DatabaseAdapter): Promise<void> {
   await adapter.exec(`
@@ -637,8 +667,14 @@ async function initGlobalTablesAsync(adapter: DatabaseAdapter): Promise<void> {
     -- FTS tables for project data
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_files USING fts5(path, purpose, type);
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_decisions USING fts5(title, decision, reasoning);
-    CREATE VIRTUAL TABLE IF NOT EXISTS fts_issues USING fts5(title, description);
+    CREATE VIRTUAL TABLE IF NOT EXISTS fts_issues USING fts5(title, description, workaround, resolution);
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_learnings USING fts5(title, content, context);
+
+    -- FTS sync triggers
+    CREATE TRIGGER IF NOT EXISTS issues_ai AFTER INSERT ON issues BEGIN
+      INSERT INTO fts_issues(rowid, title, description, workaround, resolution)
+      VALUES (NEW.id, NEW.title, NEW.description, NEW.workaround, NEW.resolution);
+    END;
 
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_services_server ON services(server_id);
@@ -1132,8 +1168,14 @@ function initGlobalTables(db: Database): void {
     -- FTS tables for project data
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_files USING fts5(path, purpose, type);
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_decisions USING fts5(title, decision, reasoning);
-    CREATE VIRTUAL TABLE IF NOT EXISTS fts_issues USING fts5(title, description);
+    CREATE VIRTUAL TABLE IF NOT EXISTS fts_issues USING fts5(title, description, workaround, resolution);
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_learnings USING fts5(title, content, context);
+
+    -- FTS sync triggers
+    CREATE TRIGGER IF NOT EXISTS issues_ai AFTER INSERT ON issues BEGIN
+      INSERT INTO fts_issues(rowid, title, description, workaround, resolution)
+      VALUES (NEW.id, NEW.title, NEW.description, NEW.workaround, NEW.resolution);
+    END;
 
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_services_server ON services(server_id);

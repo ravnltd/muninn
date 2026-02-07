@@ -382,7 +382,7 @@ export function createTestDb(): TestDb {
     -- FTS5 virtual tables
     CREATE VIRTUAL TABLE fts_files USING fts5(path, purpose, content='files', content_rowid='id');
     CREATE VIRTUAL TABLE fts_decisions USING fts5(title, decision, reasoning, content='decisions', content_rowid='id');
-    CREATE VIRTUAL TABLE fts_issues USING fts5(title, description, workaround, content='issues', content_rowid='id');
+    CREATE VIRTUAL TABLE fts_issues USING fts5(title, description, workaround, resolution, content='issues', content_rowid='id');
     CREATE VIRTUAL TABLE fts_learnings USING fts5(title, content, context, content='learnings', content_rowid='id');
     CREATE VIRTUAL TABLE fts_symbols USING fts5(name, signature, purpose, content='symbols', content_rowid='id');
     CREATE VIRTUAL TABLE fts_observations USING fts5(content, content='observations', content_rowid='id');
@@ -483,8 +483,8 @@ export function seedTestIssues(
 
     // Update FTS
     db.run(
-      `INSERT INTO fts_issues(rowid, title, description, workaround) VALUES (?, ?, ?, ?)`,
-      [result.lastInsertRowid, issue.title, issue.description ?? null, null]
+      `INSERT INTO fts_issues(rowid, title, description, workaround, resolution) VALUES (?, ?, ?, ?, ?)`,
+      [result.lastInsertRowid, issue.title, issue.description ?? null, null, null]
     );
   }
   return ids;
