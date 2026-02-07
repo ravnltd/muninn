@@ -824,7 +824,10 @@ async function main(): Promise<void> {
   log("Server connected via stdio");
 
   // v4: Register signal handlers for session auto-end
+  // Hard timeout ensures process exits even if autoEndSession hangs
   const handleShutdown = () => {
+    const forceExit = setTimeout(() => process.exit(0), 5000);
+    if (typeof forceExit === "object" && "unref" in forceExit) forceExit.unref();
     autoEndSession()
       .catch(() => {})
       .finally(() => process.exit(0));

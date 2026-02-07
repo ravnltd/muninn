@@ -83,6 +83,7 @@ import {
 import { HELP_TEXT } from "./help";
 import { CLAUDE_MD_TEMPLATE, getMuninnSection, MUNINN_SECTION_END, MUNINN_SECTION_START } from "./templates/claude-md";
 import { outputJson, outputSuccess } from "./utils/format";
+import { flushFileUpdates } from "./ingestion/auto-file-update";
 
 // ============================================================================
 // Main CLI Router
@@ -749,6 +750,8 @@ async function main(): Promise<void> {
         console.log(HELP_TEXT);
     }
   } finally {
+    // Flush any pending file updates before closing
+    await flushFileUpdates().catch(() => {});
     closeAll();
   }
 }
@@ -757,7 +760,14 @@ async function main(): Promise<void> {
 // Entry Point
 // ============================================================================
 
-main().catch((error) => {
-  console.error(`❌ Error: ${error.message}`);
-  process.exit(1);
-});
+// Hard exit timeout — if the process hasn't exited 5s after main() resolves,
+// force it. This catches any dangling timers, open handles, or hung promises.
+main()
+  .then(() => {
+    const exitTimer = setTimeout(() => process.exit(0), 5000);
+    if (typeof exitTimer === "object" && "unref" in exitTimer) exitTimer.unref();
+  })
+  .catch((error) => {
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  });

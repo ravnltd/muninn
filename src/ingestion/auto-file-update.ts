@@ -43,7 +43,9 @@ export function queueFileUpdate(projectId: number, filePath: string): void {
   // Trigger processing if not already running
   if (!processing) {
     // Use setTimeout to defer to next tick (after MCP response)
-    setTimeout(() => processQueue(), 0);
+    // .unref() prevents this timer from keeping the event loop alive
+    const timer = setTimeout(() => processQueue(), 0);
+    if (typeof timer === "object" && "unref" in timer) timer.unref();
   }
 }
 
