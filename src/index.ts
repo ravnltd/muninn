@@ -67,6 +67,7 @@ import {
   sessionStart,
 } from "./commands/session";
 import { handleShipCommand } from "./commands/ship";
+import { fastStartup } from "./commands/startup";
 import { handleSuggestCommand } from "./commands/suggest";
 import { assignSessionNumber, handleTemporalCommand, updateFileVelocity } from "./commands/temporal";
 import { handleWorkflowCommand } from "./commands/workflow";
@@ -491,6 +492,13 @@ async function main(): Promise<void> {
         const resume = await generateResume(db, projectId);
         console.error(resume);
         outputSuccess({ markdown: resume });
+        break;
+      }
+
+      case "startup": {
+        const startupGoal = subArgs.join(" ") || "New session";
+        const startupResult = await fastStartup(db, projectId, process.cwd(), startupGoal);
+        outputJson(startupResult);
         break;
       }
 
