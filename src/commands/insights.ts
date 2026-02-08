@@ -93,12 +93,17 @@ async function detectCochangePatterns(db: DatabaseAdapter, projectId: number, re
       cochange_count: number;
     }>(`
       SELECT file_a, file_b, cochange_count FROM file_correlations
-      WHERE project_id = ? AND cochange_count >= 5
+      WHERE project_id = ? AND cochange_count >= 8
       ORDER BY cochange_count DESC
-      LIMIT 5
+      LIMIT 10
     `, [projectId]);
 
     for (const pair of pairs) {
+      // Skip same-directory pairs (obvious coupling, not actionable)
+      const dirA = pair.file_a.substring(0, pair.file_a.lastIndexOf("/"));
+      const dirB = pair.file_b.substring(0, pair.file_b.lastIndexOf("/"));
+      if (dirA === dirB) continue;
+
       results.push({
         type: "correlation",
         title: `High co-change: ${basename(pair.file_a)} + ${basename(pair.file_b)}`,
@@ -506,7 +511,37 @@ export async function handleInsightsCommand(db: DatabaseAdapter, projectId: numb
       break;
     }
 
+    case "batch-dismiss": {
+      // Format: muninn insights batch-dismiss 656 998 944 724
+      const ids = args.slice(1).map(Number).filter(Boolean);
+      if (ids.length === 0) {
+        console.error("Usage: muninn insights batch-dismiss <id> [id ...]");
+        return;
+      }
+      for (const id of ids) {
+        await dismissInsight(db, id);
+      }
+      console.error(`Dismissed ${ids.length} insight(s): ${ids.join(", ")}`);
+      outputJson(ids.map((id) => ({ id, status: "dismissed" })));
+      break;
+    }
+
+    case "batch-ack": {
+      // Format: muninn insights batch-ack 28 135
+      const ids = args.slice(1).map(Number).filter(Boolean);
+      if (ids.length === 0) {
+        console.error("Usage: muninn insights batch-ack <id> [id ...]");
+        return;
+      }
+      for (const id of ids) {
+        await acknowledgeInsight(db, id);
+      }
+      console.error(`Acknowledged ${ids.length} insight(s): ${ids.join(", ")}`);
+      outputJson(ids.map((id) => ({ id, status: "acknowledged" })));
+      break;
+    }
+
     default:
-      console.error("Usage: muninn insights <list|generate|ack|dismiss|apply|shown> [args]");
+      console.error("Usage: muninn insights <list|generate|ack|dismiss|apply|shown|batch-dismiss|batch-ack> [args]");
   }
 }

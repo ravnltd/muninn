@@ -205,6 +205,31 @@ export function formatRelationsNative(opts: {
 }
 
 /**
+ * Format code intelligence in native format
+ */
+export function formatCodeIntelNative(opts: {
+  file: string;
+  exports: number;
+  callers: number;
+  callerFiles: number;
+  tests: number;
+  topCallers?: string[];
+}): string {
+  const parts = [
+    escapeNativeFormat(opts.file),
+    `exports:${opts.exports}`,
+    `callers:${opts.callers} in ${opts.callerFiles} files`,
+    `tests:${opts.tests}`,
+  ];
+
+  if (opts.topCallers && opts.topCallers.length > 0) {
+    parts.push(`top:${opts.topCallers.slice(0, 3).map(escapeNativeFormat).join(",")}`);
+  }
+
+  return `CI[${parts.join("|")}]`;
+}
+
+/**
  * Format blocking message
  */
 export function formatBlocked(opts: {

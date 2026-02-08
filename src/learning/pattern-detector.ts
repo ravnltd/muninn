@@ -62,13 +62,18 @@ async function detectFileSequences(
        FROM read_files r
        JOIN write_files w ON r.session_id = w.session_id AND r.file_path != w.file_path
        GROUP BY r.file_path, w.file_path
-       HAVING occurrence_count >= 3
+       HAVING occurrence_count >= 5
        ORDER BY occurrence_count DESC
-       LIMIT 5`,
+       LIMIT 10`,
       [projectId, projectId]
     );
 
     for (const seq of sequences) {
+      // Skip same-directory pairs (obvious coupling)
+      const dirA = seq.read_file.substring(0, seq.read_file.lastIndexOf("/"));
+      const dirB = seq.write_file.substring(0, seq.write_file.lastIndexOf("/"));
+      if (dirA === dirB) continue;
+
       patterns.push({
         type: "file_sequence",
         title: `Workflow: ${basename(seq.read_file)} before ${basename(seq.write_file)}`,

@@ -138,3 +138,7 @@ export function learningKey(projectId: number, query: string): string {
 export function testFileKey(projectId: number, path: string): string {
   return `test:${projectId}:${path}`;
 }
+
+export function codeIntelKey(projectId: number, path: string): string {
+  return `ci:${projectId}:${path}`;
+}

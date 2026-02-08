@@ -13,6 +13,7 @@ import { LearningsEnricher } from "./learnings";
 import { IssuesEnricher } from "./issues";
 import { DecisionsEnricher } from "./decisions";
 import { BlastRadiusEnricher } from "./blast-radius";
+import { CodeIntelEnricher } from "./code-intel";
 import { CorrelationsEnricher } from "./correlations";
 import { TestsEnricher } from "./tests";
 
@@ -23,6 +24,7 @@ export { LearningsEnricher } from "./learnings";
 export { IssuesEnricher } from "./issues";
 export { DecisionsEnricher } from "./decisions";
 export { BlastRadiusEnricher } from "./blast-radius";
+export { CodeIntelEnricher } from "./code-intel";
 export { CorrelationsEnricher } from "./correlations";
 export { TestsEnricher } from "./tests";
 
@@ -39,6 +41,7 @@ export function registerBuiltinEnrichers(engine: EnrichmentEngine): void {
   registry.register(new IssuesEnricher()); // 40
   registry.register(new DecisionsEnricher()); // 50
   registry.register(new BlastRadiusEnricher()); // 60
+  registry.register(new CodeIntelEnricher()); // 65
   registry.register(new CorrelationsEnricher()); // 70
   registry.register(new TestsEnricher()); // 80
 }
@@ -54,6 +57,7 @@ export function createBuiltinEnrichers() {
     new IssuesEnricher(),
     new DecisionsEnricher(),
     new BlastRadiusEnricher(),
+    new CodeIntelEnricher(),
     new CorrelationsEnricher(),
     new TestsEnricher(),
   ];

@@ -44,6 +44,24 @@ export async function recordOutcome(
     [status, notes ?? null, decisionId]
   );
 
+  // Adaptive review cadence: adjust interval based on outcome
+  if (status === "succeeded") {
+    await db.run(
+      `UPDATE decisions SET check_after_sessions = MIN(100, check_after_sessions * 2), sessions_since = 0 WHERE id = ?`,
+      [decisionId]
+    );
+  } else if (status === "failed") {
+    await db.run(
+      `UPDATE decisions SET check_after_sessions = MAX(3, check_after_sessions / 2), sessions_since = 0 WHERE id = ?`,
+      [decisionId]
+    );
+  } else if (status === "revised") {
+    await db.run(
+      `UPDATE decisions SET check_after_sessions = 5, sessions_since = 0 WHERE id = ?`,
+      [decisionId]
+    );
+  }
+
   // Handle the learning-decision feedback loop
   await processLearningFeedback(db, decisionId, status);
 }
@@ -329,8 +347,39 @@ export async function handleOutcomeCommand(db: DatabaseAdapter, projectId: numbe
       break;
     }
 
+    case "batch": {
+      // Format: muninn outcome batch 21:succeeded 22:succeeded 29:failed
+      const entries = args.slice(1);
+      if (entries.length === 0) {
+        console.error("Usage: muninn outcome batch <id:status> [id:status ...]");
+        return;
+      }
+
+      const results: Array<{ id: number; status: string; error?: string }> = [];
+      for (const entry of entries) {
+        const [idStr, status] = entry.split(":");
+        const id = parseInt(idStr, 10);
+        if (!id || !status || !["succeeded", "failed", "revised", "unknown"].includes(status)) {
+          results.push({ id: id || 0, status: "error", error: `Invalid entry: ${entry}` });
+          continue;
+        }
+        try {
+          await recordOutcome(db, projectId, id, status as OutcomeStatus);
+          results.push({ id, status });
+        } catch (error) {
+          results.push({ id, status: "error", error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+
+      const ok = results.filter((r) => r.status !== "error").length;
+      const failed = results.length - ok;
+      console.error(`Batch: ${ok} recorded${failed > 0 ? `, ${failed} failed` : ""}`);
+      outputJson(results);
+      break;
+    }
+
     default:
-      console.error("Usage: muninn outcome <due|record> [args]");
+      console.error("Usage: muninn outcome <due|record|batch> [args]");
   }
 }
 
@@ -432,6 +481,12 @@ export async function confirmFoundationalLearning(db: DatabaseAdapter, projectId
     [id]
   );
 
+  // Increase review interval after each confirmation (cap 120)
+  await db.run(
+    `UPDATE learnings SET review_after_sessions = MIN(120, COALESCE(review_after_sessions, 30) + 10) WHERE id = ?`,
+    [id]
+  );
+
   // After confirming, switch back to pending for next review cycle
   await db.run(
     `
@@ -499,6 +554,12 @@ export async function reviseFoundationalLearning(
     WHERE id = ?
   `,
     [newContent, id]
+  );
+
+  // Reset review interval on revision
+  await db.run(
+    `UPDATE learnings SET review_after_sessions = 30 WHERE id = ?`,
+    [id]
   );
 
   // After revising, switch back to pending for next review cycle

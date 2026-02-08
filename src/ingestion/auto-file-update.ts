@@ -102,6 +102,30 @@ async function updateFileKnowledge(
        WHERE id = ?`,
       [newCount, newCount, existing.id]
     );
+
+    // Best-effort content hash update
+    try {
+      const { resolve } = await import("node:path");
+      const { readFileSync, existsSync } = await import("node:fs");
+      const project = await db.get<{ path: string }>(
+        "SELECT path FROM projects WHERE id = ?",
+        [projectId]
+      );
+      if (project) {
+        const fullPath = filePath.startsWith("/") ? filePath : resolve(project.path, filePath);
+        if (existsSync(fullPath)) {
+          const hasher = new Bun.CryptoHasher("sha256");
+          hasher.update(readFileSync(fullPath));
+          const hash = hasher.digest("hex");
+          await db.run(
+            "UPDATE files SET content_hash = ?, fs_modified_at = datetime(?) WHERE project_id = ? AND path = ?",
+            [hash, new Date().toISOString(), projectId, filePath]
+          );
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
   } else {
     // Create minimal file entry for new/untracked files
     await db.run(
