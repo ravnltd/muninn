@@ -1318,34 +1318,38 @@ export async function ensureProject(adapter: DatabaseAdapter, projectPath?: stri
 
   // Detect project rename: if no match by path, check for a project
   // with the most data that likely IS this project under an old path.
-  // This DB is project-local (.claude/memory.db inside the project dir),
-  // so any existing project with a stale path is a rename candidate.
-  const renamed = await adapter.get<{ id: number; path: string }>(`
-    SELECT p.id, p.path FROM projects p
-    LEFT JOIN files f ON f.project_id = p.id
-    GROUP BY p.id
-    ORDER BY COUNT(f.id) DESC
-    LIMIT 1
-  `);
+  // ONLY for local mode — local DBs are project-scoped (one project per DB),
+  // so a stale path means the project was renamed/moved.
+  // In HTTP mode the DB is shared across all projects, so rename detection
+  // would incorrectly merge unrelated projects.
+  if (getConfig().mode !== "http") {
+    const renamed = await adapter.get<{ id: number; path: string }>(`
+      SELECT p.id, p.path FROM projects p
+      LEFT JOIN files f ON f.project_id = p.id
+      GROUP BY p.id
+      ORDER BY COUNT(f.id) DESC
+      LIMIT 1
+    `);
 
-  if (renamed && renamed.path !== path) {
-    // Preserve old path in rename history
-    const prev = await adapter.get<{ previous_paths: string | null }>(
-      "SELECT previous_paths FROM projects WHERE id = ?",
-      [renamed.id]
-    );
-    const history: string[] = prev?.previous_paths ? JSON.parse(prev.previous_paths) : [];
-    if (!history.includes(renamed.path)) {
-      history.push(renamed.path);
+    if (renamed && renamed.path !== path) {
+      // Preserve old path in rename history
+      const prev = await adapter.get<{ previous_paths: string | null }>(
+        "SELECT previous_paths FROM projects WHERE id = ?",
+        [renamed.id]
+      );
+      const history: string[] = prev?.previous_paths ? JSON.parse(prev.previous_paths) : [];
+      if (!history.includes(renamed.path)) {
+        history.push(renamed.path);
+      }
+      await adapter.run("UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?", [
+        path,
+        name,
+        JSON.stringify(history),
+        renamed.id,
+      ]);
+      await syncProjectToGlobal(path, name);
+      return renamed.id;
     }
-    await adapter.run("UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?", [
-      path,
-      name,
-      JSON.stringify(history),
-      renamed.id,
-    ]);
-    await syncProjectToGlobal(path, name);
-    return renamed.id;
   }
 
   const result = await adapter.run("INSERT INTO projects (path, name) VALUES (?, ?)", [path, name]);

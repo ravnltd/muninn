@@ -5,24 +5,25 @@
 
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LocalAdapter } from "../src/database/adapters/local";
 import { createApp } from "../src/web-server";
 
 describe("API Validation", () => {
   let app: ReturnType<typeof createApp>;
   let tempDir: string;
-  let dbPath: string;
+  let testDb: Database;
 
   beforeAll(() => {
     // Create temp directory and test database
     tempDir = mkdtempSync(join(tmpdir(), "muninn-test-"));
-    dbPath = join(tempDir, "test.db");
+    const dbPath = join(tempDir, "test.db");
 
     // Initialize test database with minimal schema
-    const db = new Database(dbPath);
-    db.exec(`
+    testDb = new Database(dbPath);
+    testDb.exec(`
       CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
@@ -114,105 +115,13 @@ describe("API Validation", () => {
       INSERT INTO decisions (project_id, title, decision) VALUES (1, 'Use TypeScript', 'Type safety');
       INSERT INTO issues (project_id, title, severity) VALUES (1, 'Bug 1', 7);
     `);
-    db.close();
 
-    // Create project .claude directory with memory.db
-    const claudeDir = join(tempDir, ".claude");
-    mkdirSync(claudeDir, { recursive: true });
-
-    // Copy test db to project location
-    const projectDb = new Database(join(claudeDir, "memory.db"));
-    projectDb.exec(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        path TEXT UNIQUE NOT NULL,
-        status TEXT DEFAULT 'active',
-        mode TEXT,
-        type TEXT,
-        stack TEXT,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS files (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        path TEXT NOT NULL,
-        purpose TEXT,
-        fragility INTEGER DEFAULT 1,
-        temperature TEXT,
-        archived_at DATETIME,
-        velocity_score REAL,
-        UNIQUE(project_id, path)
-      );
-      CREATE TABLE IF NOT EXISTS decisions (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        decision TEXT NOT NULL,
-        reasoning TEXT,
-        status TEXT DEFAULT 'active',
-        temperature TEXT,
-        archived_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS issues (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT,
-        type TEXT DEFAULT 'bug',
-        severity INTEGER DEFAULT 5,
-        status TEXT DEFAULT 'open',
-        temperature TEXT,
-        workaround TEXT,
-        resolution TEXT,
-        resolved_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS learnings (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER,
-        title TEXT NOT NULL,
-        content TEXT NOT NULL,
-        category TEXT,
-        context TEXT,
-        temperature TEXT,
-        archived_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS sessions (
-        id INTEGER PRIMARY KEY,
-        project_id INTEGER NOT NULL,
-        goal TEXT,
-        outcome TEXT,
-        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        ended_at DATETIME,
-        success INTEGER,
-        session_number INTEGER,
-        files_touched TEXT
-      );
-      CREATE TABLE IF NOT EXISTS relationships (
-        id INTEGER PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_id INTEGER NOT NULL,
-        target_type TEXT NOT NULL,
-        target_id INTEGER NOT NULL,
-        relationship TEXT NOT NULL,
-        strength INTEGER DEFAULT 5
-      );
-      CREATE VIRTUAL TABLE IF NOT EXISTS fts_files USING fts5(path, purpose);
-
-      INSERT INTO projects (id, name, path) VALUES (1, 'Test Project', '${tempDir}');
-      INSERT INTO files (project_id, path, purpose, fragility) VALUES (1, 'src/index.ts', 'Entry point', 8);
-      INSERT INTO decisions (project_id, title, decision) VALUES (1, 'Use TypeScript', 'Type safety');
-      INSERT INTO issues (project_id, title, severity) VALUES (1, 'Bug 1', 7);
-    `);
-    projectDb.close();
-
-    app = createApp(dbPath);
+    // Pass a LocalAdapter wrapping the test DB
+    app = createApp(new LocalAdapter(testDb));
   });
 
   afterAll(() => {
+    testDb.close();
     rmSync(tempDir, { recursive: true, force: true });
   });
 
