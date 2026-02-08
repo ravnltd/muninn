@@ -607,8 +607,10 @@ export class HttpAdapter implements DatabaseAdapter {
   }
 
   close(): void {
-    // No persistent connection to close in HTTP mode
-    this.initialized = false;
+    // No-op: HTTP adapter is purely fetch-based with no persistent connection.
+    // Do NOT reset `initialized` — in MCP mode, command handlers call
+    // closeGlobalDb() (designed for CLI single-process mode) which would
+    // invalidate the shared adapter and break subsequent tool calls.
   }
 
   raw(): null {
