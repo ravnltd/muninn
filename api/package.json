@@ -1,0 +1,22 @@
+{
+  "name": "@muninn/api",
+  "version": "0.1.0",
+  "description": "Muninn Memory API — Memory as a Service for Raven apps",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/server.ts",
+    "start": "bun run src/server.ts",
+    "build": "bun build ./src/server.ts --compile --outfile=muninn-api",
+    "typecheck": "bun x tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.11.7",
+    "postgres": "^3.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

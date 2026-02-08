@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: muninn_memories
+      POSTGRES_USER: muninn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "${POSTGRES_PORT:-127.0.0.1:5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U muninn -d muninn_memories"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://muninn:${POSTGRES_PASSWORD}@postgres:5432/muninn_memories
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
+      API_KEYS: ${API_KEYS}
+      PORT: ${PORT:-3400}
+    ports:
+      - "${API_PORT:-127.0.0.1:3400}:${PORT:-3400}"
+
+volumes:
+  pgdata:
