@@ -149,6 +149,36 @@ async function checkSingleFile(db: DatabaseAdapter, projectId: number, projectPa
     suggestions.push(`Often changes with: ${topCorrelated}`);
   }
 
+  // Parallel: learnings + blast radius (adds ~20ms)
+  const [learnings, blastResult] = await Promise.all([
+    db
+      .all<{ title: string; category: string; confidence: number }>(
+        `SELECT title, category, confidence FROM learnings
+         WHERE project_id = ? AND status = 'active'
+         AND (files LIKE ? OR content LIKE ?)
+         ORDER BY confidence DESC LIMIT 3`,
+        [projectId, `%${filePath}%`, `%${filePath}%`]
+      )
+      .catch(() => [] as Array<{ title: string; category: string; confidence: number }>),
+    getBlastRadius(db, projectId, projectPath, filePath).catch(() => null),
+  ]);
+
+  if (learnings.length > 0) {
+    suggestions.push("Relevant learnings:");
+    for (const l of learnings) {
+      suggestions.push(`  [${l.category}] ${l.title} (conf:${l.confidence})`);
+    }
+  }
+
+  if (blastResult && blastResult.riskLevel !== "low") {
+    warnings.push(
+      `Blast radius: ${blastResult.riskLevel} — ` +
+        `${blastResult.directDependents.length} direct, ` +
+        `${blastResult.transitiveDependents.length} transitive, ` +
+        `${blastResult.affectedTests.length} tests`
+    );
+  }
+
   return {
     path: filePath,
     warnings,

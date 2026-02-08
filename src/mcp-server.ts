@@ -64,6 +64,7 @@ import {
   handleApprove,
   handlePassthrough,
 } from "./mcp-handlers.js";
+import { SessionState } from "./session-state.js";
 
 function log(msg: string): void {
   process.stderr.write(`[muninn-mcp] ${msg}\n`);
@@ -75,6 +76,14 @@ function log(msg: string): void {
 
 let dbAdapter: DatabaseAdapter | null = null;
 const projectIdCache = new Map<string, number>();
+let sessionState: SessionState | null = null;
+
+function getSessionState(cwd: string): SessionState {
+  if (!sessionState) {
+    sessionState = new SessionState(cwd);
+  }
+  return sessionState;
+}
 
 /**
  * Get or initialize the shared database adapter.
@@ -435,16 +444,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!taskAnalyzed && name !== "muninn_session") {
       taskAnalyzed = true;
       analyzeTask(db, projectId, name, typedArgs)
-        .then((ctx) => setTaskContext(ctx))
+        .then((ctx) => {
+          setTaskContext(ctx);
+          // Cache for UserPromptSubmit hook
+          const output = buildContextOutput(ctx, 800);
+          if (output) {
+            getSessionState(cwd).writeContext(output);
+          }
+        })
         .catch(() => {});
     }
 
     // --- v4 Phase 3: Context shifter — auto-update focus if topic shifted ---
-    checkAndUpdateFocus(db, projectId).catch(() => {});
+    checkAndUpdateFocus(db, projectId)
+      .then((shifted) => {
+        if (shifted) {
+          analyzeTask(db, projectId, name, typedArgs)
+            .then((ctx) => {
+              setTaskContext(ctx);
+              const output = buildContextOutput(ctx, 800);
+              if (output) {
+                getSessionState(cwd).writeContext(output);
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
 
     // --- v4: Session auto-start on first tool call ---
     if (!sessionAutoStarted) {
       sessionAutoStarted = true;
+      const state = getSessionState(cwd);
+      state.clear();
+      state.writeDiscoveryFile();
       autoStartSession(db, projectId).catch(() => {});
     }
 
@@ -464,6 +497,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const validation = validateInput(CheckInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
         result = await handleCheck(db, projectId, validation.data.cwd || cwd, validation.data);
+        // Track checked files for enforcement hook
+        getSessionState(cwd).markChecked(validation.data.files);
         break;
       }
 
@@ -579,6 +614,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // --- v4: Log successful tool call ---
     timer.finish(true);
+
+    // --- v4 Phase 3: Auto-append task context to read-oriented responses ---
+    const READ_TOOLS = new Set([
+      "muninn_query", "muninn_check", "muninn_predict",
+      "muninn_suggest", "muninn_enrich",
+    ]);
+    if (READ_TOOLS.has(name)) {
+      const taskCtx = getTaskContext();
+      if (taskCtx) {
+        const contextBlock = buildContextOutput(taskCtx, 800);
+        if (contextBlock && contextBlock.length < 4000) {
+          result += "\n\n--- Task Context ---\n" + contextBlock;
+        }
+      }
+    }
 
     // --- v4: Auto-update file knowledge for Edit/Write-like tools ---
     if (name === "muninn_file_add" && typeof typedArgs.path === "string") {

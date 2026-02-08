@@ -268,6 +268,28 @@ When triggered:
 
 ---
 
+## Muninn Native Format
+
+Muninn outputs in **transformer-native format** — dense, token-efficient, optimized for AI attention. This is enabled by default via `MUNINN_OUTPUT_FORMAT=native`.
+
+**Reading the format** (pipe-delimited, bracket-wrapped, one item per line):
+```
+K[type|ent:x,y|when:cond|do:action|why:reason|conf:N]  — Learning
+D[title|ent:x,y|choice:x|alt:y|why:z|conf:N]           — Decision
+F[path|frag:N|type|purpose]                              — File
+I[#id|sev:N|type|title]                                  — Issue
+S[#id|goal:x|outcome:y|next:z|ago:time]                  — Session
+P[key|val:x|conf:N]                                      — Profile
+B[score:N|direct:N|trans:N|tests:N|risk:level]           — Blast radius
+R[cochangers:a,b|tests:c,d]                              — Relations
+```
+
+**K types**: pattern (how-to), gotcha (warning), decision (choice), fact (info), pref (preference)
+
+**Writing to muninn**: Use plain English in tool inputs. The system converts to native format automatically. Never use backticks, dollar signs, parens, braces, pipes, semicolons, ampersands, angle brackets, or backslashes in muninn text fields — they break shell escaping.
+
+---
+
 ## Quality Standards
 
 - **No `any` type** without justification
