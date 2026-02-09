@@ -52,6 +52,16 @@ EOF
 chmod +x "$INSTALL_DIR/muninn-worker"
 echo "✓ Worker installed to $INSTALL_DIR/muninn-worker"
 
+# Install Claude Code hooks (symlinks + settings.json merge)
+echo ""
+echo "Installing Claude Code hooks..."
+if bun run "$SCRIPT_DIR/scripts/install-hooks.ts" 2>&1; then
+    echo "✓ Claude Code hooks installed"
+else
+    echo "⚠️  Hook installation failed (non-critical)"
+    echo "   Run manually: bun run $SCRIPT_DIR/scripts/install-hooks.ts"
+fi
+
 # Install git post-commit hook (if in a git repo)
 install_git_hook() {
     local git_dir="$1"
