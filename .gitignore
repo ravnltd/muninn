@@ -1,9 +1,9 @@
 node_modules/
 dist/
-muninn
-muninn-mcp
-context
-context-mcp
+/muninn
+/muninn-mcp
+/context
+/context-mcp
 *.db
 *.db-shm
 *.db-wal
