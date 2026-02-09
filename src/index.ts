@@ -31,6 +31,7 @@ import { handleNativeCommand } from "./commands/native";
 import { handleNetworkCommand } from "./commands/network";
 import { generateInsights, handleInsightsCommand } from "./commands/insights";
 import { analyzeImpact, checkConflicts, checkFiles, getSmartStatus } from "./commands/intelligence";
+import { SessionState } from "./session-state";
 import {
   decisionAdd,
   decisionList,
@@ -525,6 +526,10 @@ async function main(): Promise<void> {
           console.error("Usage: muninn check <file1> [file2] ...");
         } else {
           await checkFiles(db, projectId, process.cwd(), subArgs);
+          // Write to checked-files list so enforce-check hook allows edits
+          const state = new SessionState(process.cwd());
+          state.markChecked(subArgs);
+          state.writeDiscoveryFile();
         }
         break;
 
