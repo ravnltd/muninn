@@ -31,6 +31,9 @@ mock.module("../src/tenants/turso", () => ({
 // Mock pool
 mock.module("../src/tenants/pool", () => ({
   evictTenant: () => {},
+  setManagementDb: () => {},
+  getPoolStats: () => ({ size: 0, maxSize: 200 }),
+  getTenantDb: async () => db,
 }));
 
 const { api } = await import("../src/api/routes");

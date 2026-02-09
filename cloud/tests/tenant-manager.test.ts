@@ -23,6 +23,9 @@ mock.module("../src/tenants/turso", () => ({
 // Mock the pool module to avoid side effects
 mock.module("../src/tenants/pool", () => ({
   evictTenant: () => {},
+  setManagementDb: () => {},
+  getPoolStats: () => ({ size: 0, maxSize: 200 }),
+  getTenantDb: async () => db,
 }));
 
 // Import after mocking
