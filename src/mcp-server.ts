@@ -478,7 +478,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       sessionAutoStarted = true;
       const state = getSessionState(cwd);
       state.clear();
-      state.writeDiscoveryFile();
+      // Check if project has any file knowledge — skip enforcement for new projects
+      const fileCount = await db.get<{ cnt: number }>(
+        "SELECT COUNT(*) as cnt FROM files WHERE project_id = ?",
+        [projectId]
+      );
+      state.writeDiscoveryFile({ hasFileData: (fileCount?.cnt ?? 0) > 0 });
       autoStartSession(db, projectId).catch(() => {});
     }
 

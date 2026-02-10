@@ -75,6 +75,15 @@ else
 fi
 
 [ -z "$checked_path" ] && allow
+
+# Skip enforcement for new projects with no muninn file data
+if command -v jq >/dev/null 2>&1; then
+  has_data=$(jq -r '.hasFileData // true' "$discovery" 2>/dev/null) || true
+else
+  has_data=$(grep -oP '"hasFileData"\s*:\s*\K(true|false)' "$discovery" 2>/dev/null | head -1) || true
+fi
+[ "$has_data" = "false" ] && allow
+
 [ ! -f "$checked_path" ] && deny "BLOCKED: Call muninn_check on $rel_path before editing. No files have been checked yet."
 
 # Check if file was checked (grep -F for literal match, -q for speed)

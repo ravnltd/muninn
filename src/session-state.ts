@@ -81,7 +81,7 @@ export class SessionState {
   }
 
   /** Write discovery file so hooks can find project-specific temp paths. */
-  writeDiscoveryFile(): void {
+  writeDiscoveryFile(options?: { hasFileData?: boolean }): void {
     try {
       const tmp = this.discoveryPath + ".tmp";
       writeFileSync(
@@ -89,6 +89,7 @@ export class SessionState {
         JSON.stringify({
           checkedPath: this.checkedPath,
           contextPath: this.contextPath,
+          hasFileData: options?.hasFileData ?? true,
         })
       );
       renameSync(tmp, this.discoveryPath);
