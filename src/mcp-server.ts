@@ -47,7 +47,8 @@ import { getActiveSessionId } from "./commands/session-tracking.js";
 import { analyzeTask, getTaskContext, setTaskContext } from "./context/task-analyzer.js";
 import { buildContextOutput } from "./context/budget-manager.js";
 import { recordToolCall, checkAndUpdateFocus } from "./context/shifter.js";
-import { onShutdown, installSignalHandlers } from "./utils/shutdown.js";
+import { onShutdown, installSignalHandlers, shutdown } from "./utils/shutdown.js";
+import { safeInterval } from "./utils/timers.js";
 import {
   handleQuery,
   handleCheck,
@@ -857,6 +858,33 @@ async function autoEndSession(): Promise<void> {
 async function main(): Promise<void> {
   log("Starting Muninn MCP Server v4 (in-process)...");
 
+  // --- Global error handlers: prevent silent crashes ---
+  process.on("unhandledRejection", (reason) => {
+    log(`Unhandled rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+  });
+  process.on("uncaughtException", (error) => {
+    log(`Uncaught exception: ${error.stack || error.message}`);
+    // Give a moment for the log to flush, then exit
+    setTimeout(() => process.exit(1), 100);
+  });
+
+  // --- Stdio pipe monitoring: detect broken pipes ---
+  process.stdin.on("error", (err) => {
+    log(`stdin error: ${err.message}`);
+  });
+  process.stdout.on("error", (err) => {
+    if (err && "code" in err && err.code === "EPIPE") {
+      log("stdout pipe broken (parent disconnected)");
+      shutdown(0);
+    } else {
+      log(`stdout error: ${err.message}`);
+    }
+  });
+  process.stdin.on("end", () => {
+    log("stdin ended (parent disconnected)");
+    shutdown(0);
+  });
+
   // Pre-warm the DB connection at startup
   try {
     const db = await getDb();
@@ -873,6 +901,26 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("Server connected via stdio");
+
+  // --- MCP server error/close handlers ---
+  server.onerror = (error) => {
+    log(`MCP server error: ${error instanceof Error ? error.message : String(error)}`);
+  };
+  server.onclose = () => {
+    log("MCP server connection closed");
+    shutdown(0);
+  };
+
+  // --- Database keepalive: prevent connection staleness ---
+  const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  safeInterval(async () => {
+    try {
+      const db = await getDb();
+      await db.get("SELECT 1");
+    } catch (err) {
+      log(`Keepalive ping failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, KEEPALIVE_INTERVAL_MS);
 
   // Register cleanup and signal handlers via shutdown manager
   onShutdown(() => autoEndSession());

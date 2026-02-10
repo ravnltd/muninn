@@ -193,12 +193,37 @@ export class HttpAdapter implements DatabaseAdapter {
     }
   }
 
+  // Retry config
+  private readonly MAX_RETRIES = 3;
+  private readonly RETRY_BASE_MS = 200;
+
   /**
-   * Execute a pipeline request to sqld v3/pipeline endpoint
+   * Check if an error is transient and worth retrying.
+   */
+  private isTransientError(error: unknown): boolean {
+    if (error instanceof Error) {
+      const msg = error.message.toLowerCase();
+      // Network errors, timeouts, server overload
+      if (msg.includes("fetch failed") || msg.includes("econnrefused") ||
+          msg.includes("econnreset") || msg.includes("etimedout") ||
+          msg.includes("enetunreach") || msg.includes("abort") ||
+          msg.includes("timeout") || msg.includes("socket hang up")) {
+        return true;
+      }
+      // HTTP 5xx server errors
+      if (/^http 5\d\d/.test(msg)) return true;
+      // HTTP 429 rate limited
+      if (msg.startsWith("http 429")) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Execute a pipeline request to sqld v3/pipeline endpoint.
+   * Retries transient network errors with exponential backoff.
    */
   private async executeRequest(requests: HranaRequest[]): Promise<HranaPipelineResponse> {
     const url = `${this.config.primaryUrl}/v3/pipeline`;
-    const start = performance.now();
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -213,45 +238,69 @@ export class HttpAdapter implements DatabaseAdapter {
       requests,
     });
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body,
-        signal: AbortSignal.timeout(this.config.timeout || 30000),
-      });
+    let lastError: unknown;
 
-      const latencyMs = Math.round(performance.now() - start);
-      this._lastSyncLatencyMs = latencyMs;
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const error = `HTTP ${response.status}: ${errorText}`;
-        this._lastSyncError = error;
-        this._connected = false;
-        throw new Error(error);
+    for (let attempt = 0; attempt <= this.MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delayMs = this.RETRY_BASE_MS * 2 ** (attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
 
-      const result = (await response.json()) as HranaPipelineResponse;
+      const start = performance.now();
 
-      // Check for errors in the results
-      for (const res of result.results) {
-        if (res.type === "error" && res.error) {
-          throw new Error(res.error.message);
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers,
+          body,
+          signal: AbortSignal.timeout(this.config.timeout || 30000),
+        });
+
+        const latencyMs = Math.round(performance.now() - start);
+        this._lastSyncLatencyMs = latencyMs;
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          const error = new Error(`HTTP ${response.status}: ${errorText}`);
+          this._lastSyncError = error.message;
+          this._connected = false;
+
+          if (this.isTransientError(error) && attempt < this.MAX_RETRIES) {
+            lastError = error;
+            continue;
+          }
+          throw error;
         }
+
+        const result = (await response.json()) as HranaPipelineResponse;
+
+        // Check for errors in the results
+        for (const res of result.results) {
+          if (res.type === "error" && res.error) {
+            throw new Error(res.error.message);
+          }
+        }
+
+        this._lastSyncAt = new Date();
+        this._lastSyncError = null;
+        this._connected = true;
+
+        return result;
+      } catch (error) {
+        this._lastSyncLatencyMs = Math.round(performance.now() - start);
+        this._lastSyncError = error instanceof Error ? error.message : "Unknown error";
+        this._connected = false;
+        lastError = error;
+
+        if (this.isTransientError(error) && attempt < this.MAX_RETRIES) {
+          continue;
+        }
+        throw error;
       }
-
-      this._lastSyncAt = new Date();
-      this._lastSyncError = null;
-      this._connected = true;
-
-      return result;
-    } catch (error) {
-      this._lastSyncLatencyMs = Math.round(performance.now() - start);
-      this._lastSyncError = error instanceof Error ? error.message : "Unknown error";
-      this._connected = false;
-      throw error;
     }
+
+    // Should be unreachable, but satisfy TypeScript
+    throw lastError;
   }
 
   /**
