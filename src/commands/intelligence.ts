@@ -6,7 +6,7 @@
 import type { DatabaseAdapter } from "../database/adapter";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { BlastSummary, FileCheck, ImpactResult, ProjectHealth, SmartStatus, StaleFile } from "../types";
 import { safeJsonParse } from "../utils/errors";
 import { computeContentHash, outputJson } from "../utils/format";
@@ -49,8 +49,8 @@ async function checkSingleFile(db: DatabaseAdapter, projectId: number, projectPa
   let fragility: number | undefined;
   let isStale = false;
 
-  // Get file info from database
-  const fileRecord = await db.get<{
+  // Get file info from database (try given path, fall back to absolute for legacy data)
+  type FileRecord = {
     id: number;
     fragility: number;
     fragility_reason: string | null;
@@ -59,11 +59,19 @@ async function checkSingleFile(db: DatabaseAdapter, projectId: number, projectPa
     purpose: string | null;
     dependencies: string | null;
     dependents: string | null;
-  }>(`
+  };
+  const fileRecordSql = `
     SELECT id, fragility, fragility_reason, content_hash, last_analyzed, purpose, dependencies, dependents
     FROM files
     WHERE project_id = ? AND path = ?
-  `, [projectId, filePath]);
+  `;
+  let fileRecord = await db.get<FileRecord>(fileRecordSql, [projectId, filePath]);
+  if (!fileRecord) {
+    const absPath = resolve(projectPath, filePath);
+    if (absPath !== filePath) {
+      fileRecord = await db.get<FileRecord>(fileRecordSql, [projectId, absPath]);
+    }
+  }
 
   if (fileRecord) {
     fragility = fileRecord.fragility;

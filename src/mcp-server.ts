@@ -49,6 +49,7 @@ import { buildContextOutput } from "./context/budget-manager.js";
 import { recordToolCall, checkAndUpdateFocus } from "./context/shifter.js";
 import { onShutdown, installSignalHandlers, shutdown } from "./utils/shutdown.js";
 import { safeInterval } from "./utils/timers.js";
+import { normalizePath, normalizePaths } from "./utils/paths.js";
 import {
   handleQuery,
   handleCheck,
@@ -502,6 +503,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_check": {
         const validation = validateInput(CheckInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
+        validation.data.files = normalizePaths(cwd, validation.data.files);
         result = await handleCheck(db, projectId, validation.data.cwd || cwd, validation.data);
         // Track checked files for enforcement hook
         getSessionState(cwd).markChecked(validation.data.files);
@@ -511,6 +513,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_file_add": {
         const validation = validateInput(FileAddInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
+        validation.data.path = normalizePath(cwd, validation.data.path);
         result = await handleFileAdd(db, projectId, validation.data);
         break;
       }
@@ -557,6 +560,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_predict": {
         const validation = validateInput(PredictInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
+        if (validation.data.files) {
+          validation.data.files = normalizePaths(cwd, validation.data.files);
+        }
         result = await handlePredict(db, projectId, validation.data);
         break;
       }
@@ -571,6 +577,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "muninn_enrich": {
         const validation = validateInput(EnrichInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
+        // Normalize file paths inside the JSON input string
+        try {
+          const parsed = JSON.parse(validation.data.input);
+          if (parsed.file_path) {
+            parsed.file_path = normalizePath(cwd, parsed.file_path);
+            validation.data.input = JSON.stringify(parsed);
+          }
+        } catch {
+          // Not valid JSON or no file_path — pass through unchanged
+        }
         result = await handleEnrich(db, projectId, validation.data.cwd || cwd, validation.data);
         break;
       }

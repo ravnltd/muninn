@@ -51,6 +51,8 @@ git_root=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -n "$git_root" ]; then
   rel_path="${file_path#"$git_root"/}"
 fi
+# Strip leading ./ for consistent matching
+rel_path="${rel_path#./}"
 
 # Skip files not tracked by git (untracked/gitignored = no fragility data anyway)
 if [ -n "$git_root" ]; then
