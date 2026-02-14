@@ -200,9 +200,10 @@ export class HttpAdapter implements DatabaseAdapter {
   }
 
   // Retry config — keep timeouts short so MCP tool calls don't hang
-  private readonly MAX_RETRIES = 3;
+  // 2 retries = 3 total attempts. Worst case: 3*8s + 0.45s = ~24.5s
+  private readonly MAX_RETRIES = 2;
   private readonly RETRY_BASE_MS = 150;
-  private readonly DEFAULT_TIMEOUT_MS = 10_000; // 10s per attempt (was 30s)
+  private readonly DEFAULT_TIMEOUT_MS = 8_000; // 8s per attempt
 
   /**
    * Check if an error is transient and worth retrying.
@@ -226,21 +227,13 @@ export class HttpAdapter implements DatabaseAdapter {
   }
 
   /**
-   * Check if the adapter is currently healthy and accepting requests.
-   * Used by callers to decide whether to reset/recreate the adapter.
+   * HTTP adapter is always structurally healthy — it's stateless (fetch-based).
+   * Connection resilience is handled internally by retry logic + circuit breaker.
+   * Callers should NOT reset/recreate the adapter based on this — let the
+   * circuit breaker handle recovery naturally (cooldown → half-open → heal).
    */
   isHealthy(): boolean {
-    return this._connected && this._consecutiveFailures < this.CIRCUIT_FAILURE_THRESHOLD;
-  }
-
-  /**
-   * Reset circuit breaker state — call after recreating the adapter.
-   */
-  resetCircuit(): void {
-    this._consecutiveFailures = 0;
-    this._circuitOpenUntil = 0;
-    this._connected = false;
-    this._lastSyncError = null;
+    return true;
   }
 
   /**
@@ -314,19 +307,15 @@ export class HttpAdapter implements DatabaseAdapter {
 
         const result = (await response.json()) as HranaPipelineResponse;
 
-        // Check for errors in the results
-        for (const res of result.results) {
-          if (res.type === "error" && res.error) {
-            throw new Error(res.error.message);
-          }
-        }
-
-        // Success — reset failure tracking
+        // Connection succeeded — reset failure tracking
         this._lastSyncAt = new Date();
         this._lastSyncError = null;
         this._connected = true;
         this._consecutiveFailures = 0;
 
+        // SQL-level errors are checked AFTER marking connection healthy.
+        // These are thrown outside the retry loop so they don't trigger
+        // circuit breaker or connection-failure tracking.
         return result;
       } catch (error) {
         this._lastSyncLatencyMs = Math.round(performance.now() - start);
@@ -347,6 +336,18 @@ export class HttpAdapter implements DatabaseAdapter {
 
     // Should be unreachable, but satisfy TypeScript
     throw lastError;
+  }
+
+  /**
+   * Check pipeline results for SQL-level errors and throw if any found.
+   * Called after executeRequest — SQL errors don't affect connection health.
+   */
+  private checkResultErrors(response: HranaPipelineResponse): void {
+    for (const res of response.results) {
+      if (res.type === "error" && res.error) {
+        throw new Error(res.error.message);
+      }
+    }
   }
 
   /**
@@ -438,6 +439,7 @@ export class HttpAdapter implements DatabaseAdapter {
         stmt: { sql, args, want_rows: true },
       },
     ]);
+    this.checkResultErrors(response);
 
     const result = response.results[0]?.response?.result;
     if (!result || result.rows.length === 0) {
@@ -469,6 +471,7 @@ export class HttpAdapter implements DatabaseAdapter {
         stmt: { sql, args, want_rows: true },
       },
     ]);
+    this.checkResultErrors(response);
 
     const result = response.results[0]?.response?.result;
     if (!result) {
@@ -495,6 +498,7 @@ export class HttpAdapter implements DatabaseAdapter {
         stmt: { sql, args, want_rows: false },
       },
     ]);
+    this.checkResultErrors(response);
 
     const result = response.results[0]?.response?.result;
     return {
@@ -526,7 +530,8 @@ export class HttpAdapter implements DatabaseAdapter {
 
     // Send all statements in a single HTTP request
     if (requests.length > 0) {
-      await this.executeRequest(requests);
+      const response = await this.executeRequest(requests);
+      this.checkResultErrors(response);
     }
   }
 
@@ -664,12 +669,13 @@ export class HttpAdapter implements DatabaseAdapter {
       { stmt: { sql: "COMMIT", want_rows: false } as HranaStatement },
     ];
 
-    await this.executeRequest([
+    const response = await this.executeRequest([
       {
         type: "batch",
         batch: { steps },
       },
     ]);
+    this.checkResultErrors(response);
   }
 
   /**

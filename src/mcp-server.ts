@@ -106,38 +106,17 @@ function getSessionState(cwd: string): SessionState {
 
 /**
  * Get or initialize the shared database adapter.
- * Creates one connection and reuses it. If the adapter is unhealthy
- * (circuit breaker open), resets and reinitializes.
+ * Creates one connection and reuses it for the process lifetime.
+ * The HttpAdapter handles all connection resilience internally
+ * (retries + circuit breaker) — we never reset it from outside.
  */
 async function getDb(): Promise<DatabaseAdapter> {
-  // If adapter exists but is unhealthy, reset it
-  if (dbAdapter?.isHealthy && !dbAdapter.isHealthy()) {
-    log("DB adapter unhealthy, resetting for reconnection...");
-    resetDb();
-  }
-
   if (dbAdapter) return dbAdapter;
 
   const conn = await loadConnectionModule();
   dbAdapter = await conn.getGlobalDb();
   consecutiveKeepaliveFailures = 0;
   return dbAdapter;
-}
-
-/**
- * Reset the DB adapter singleton so it gets recreated on next getDb() call.
- * Used when the connection is broken and needs fresh initialization.
- */
-function resetDb(): void {
-  if (dbAdapter) {
-    try { dbAdapter.close(); } catch { /* ignore close errors */ }
-  }
-  dbAdapter = null;
-  projectIdCache.clear();
-  // Reset the global adapter in connection.ts so getGlobalDb() creates a fresh one
-  if (connModule) {
-    connModule.closeGlobalDb();
-  }
 }
 
 /**
@@ -765,14 +744,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // --- v4: Log failed tool call (if timer was created) ---
     timer?.finish(false, errMsg);
 
-    // If this looks like a connection error, reset the adapter for recovery
-    const lowerMsg = errMsg.toLowerCase();
-    if (lowerMsg.includes("circuit breaker") || lowerMsg.includes("fetch failed") ||
-        lowerMsg.includes("econnrefused") || lowerMsg.includes("econnreset") ||
-        lowerMsg.includes("etimedout") || lowerMsg.includes("timeout")) {
-      log("Connection error detected, resetting DB adapter for next call...");
-      resetDb();
-    }
+    // Connection resilience is handled inside HttpAdapter (retries + circuit breaker).
+    // Don't reset the adapter from here — it defeats the circuit breaker's protection
+    // and causes expensive re-initialization. The circuit breaker will naturally
+    // recover after its cooldown period.
 
     return {
       content: [{ type: "text", text: `Error: ${errMsg}` }],
@@ -1069,26 +1044,20 @@ async function main(): Promise<void> {
   log("Server connected via stdio");
 
   // --- Database keepalive: prevent connection staleness ---
-  // Ping every 3 minutes. If it fails consecutively, reset the adapter.
-  const KEEPALIVE_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
-  const MAX_KEEPALIVE_FAILURES = 3;
+  // Ping every 5 minutes. Monitor-only — the adapter's circuit breaker
+  // handles recovery. Keepalive just keeps the connection warm.
+  const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   safeInterval(async () => {
+    if (!dbAdapter) return; // No adapter yet
     try {
-      const db = await getDb();
-      await db.get("SELECT 1");
+      await dbAdapter.get("SELECT 1");
       if (consecutiveKeepaliveFailures > 0) {
         log(`Keepalive recovered after ${consecutiveKeepaliveFailures} failure(s)`);
       }
       consecutiveKeepaliveFailures = 0;
     } catch (err) {
       consecutiveKeepaliveFailures++;
-      log(`Keepalive ping failed (${consecutiveKeepaliveFailures}/${MAX_KEEPALIVE_FAILURES}): ${err instanceof Error ? err.message : String(err)}`);
-
-      if (consecutiveKeepaliveFailures >= MAX_KEEPALIVE_FAILURES) {
-        log("Max keepalive failures reached, resetting DB adapter...");
-        resetDb();
-        consecutiveKeepaliveFailures = 0;
-      }
+      log(`Keepalive ping failed (${consecutiveKeepaliveFailures}): ${err instanceof Error ? err.message : String(err)}`);
     }
   }, KEEPALIVE_INTERVAL_MS);
 
