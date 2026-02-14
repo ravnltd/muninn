@@ -93,6 +93,12 @@ export class HttpAdapter implements DatabaseAdapter {
   private _lastSyncLatencyMs: number | null = null;
   private _connected = false;
 
+  // Circuit breaker state
+  private _consecutiveFailures = 0;
+  private _circuitOpenUntil = 0;
+  private readonly CIRCUIT_FAILURE_THRESHOLD = 5;
+  private readonly CIRCUIT_RESET_MS = 30_000; // 30s cooldown when circuit opens
+
   // In-memory LRU cache for read queries
   private cache = new Map<string, { data: unknown; expiry: number; lastAccess: number }>();
   private readonly CACHE_TTL = 30_000; // 30 seconds
@@ -193,9 +199,10 @@ export class HttpAdapter implements DatabaseAdapter {
     }
   }
 
-  // Retry config
+  // Retry config — keep timeouts short so MCP tool calls don't hang
   private readonly MAX_RETRIES = 3;
-  private readonly RETRY_BASE_MS = 200;
+  private readonly RETRY_BASE_MS = 150;
+  private readonly DEFAULT_TIMEOUT_MS = 10_000; // 10s per attempt (was 30s)
 
   /**
    * Check if an error is transient and worth retrying.
@@ -219,10 +226,38 @@ export class HttpAdapter implements DatabaseAdapter {
   }
 
   /**
+   * Check if the adapter is currently healthy and accepting requests.
+   * Used by callers to decide whether to reset/recreate the adapter.
+   */
+  isHealthy(): boolean {
+    return this._connected && this._consecutiveFailures < this.CIRCUIT_FAILURE_THRESHOLD;
+  }
+
+  /**
+   * Reset circuit breaker state — call after recreating the adapter.
+   */
+  resetCircuit(): void {
+    this._consecutiveFailures = 0;
+    this._circuitOpenUntil = 0;
+    this._connected = false;
+    this._lastSyncError = null;
+  }
+
+  /**
    * Execute a pipeline request to sqld v3/pipeline endpoint.
    * Retries transient network errors with exponential backoff.
+   * Circuit breaker prevents hammering a dead server.
    */
   private async executeRequest(requests: HranaRequest[]): Promise<HranaPipelineResponse> {
+    // Circuit breaker: fail fast if too many consecutive failures
+    const now = Date.now();
+    if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD && now < this._circuitOpenUntil) {
+      throw new Error(
+        `Circuit breaker open: ${this._consecutiveFailures} consecutive failures. ` +
+        `Retry in ${Math.ceil((this._circuitOpenUntil - now) / 1000)}s. Last error: ${this._lastSyncError}`
+      );
+    }
+
     const url = `${this.config.primaryUrl}/v3/pipeline`;
 
     const headers: Record<string, string> = {
@@ -239,6 +274,7 @@ export class HttpAdapter implements DatabaseAdapter {
     });
 
     let lastError: unknown;
+    const timeoutMs = this.config.timeout || this.DEFAULT_TIMEOUT_MS;
 
     for (let attempt = 0; attempt <= this.MAX_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -253,7 +289,7 @@ export class HttpAdapter implements DatabaseAdapter {
           method: "POST",
           headers,
           body,
-          signal: AbortSignal.timeout(this.config.timeout || 30000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
 
         const latencyMs = Math.round(performance.now() - start);
@@ -269,6 +305,10 @@ export class HttpAdapter implements DatabaseAdapter {
             lastError = error;
             continue;
           }
+          this._consecutiveFailures++;
+          if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD) {
+            this._circuitOpenUntil = Date.now() + this.CIRCUIT_RESET_MS;
+          }
           throw error;
         }
 
@@ -281,9 +321,11 @@ export class HttpAdapter implements DatabaseAdapter {
           }
         }
 
+        // Success — reset failure tracking
         this._lastSyncAt = new Date();
         this._lastSyncError = null;
         this._connected = true;
+        this._consecutiveFailures = 0;
 
         return result;
       } catch (error) {
@@ -294,6 +336,10 @@ export class HttpAdapter implements DatabaseAdapter {
 
         if (this.isTransientError(error) && attempt < this.MAX_RETRIES) {
           continue;
+        }
+        this._consecutiveFailures++;
+        if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD) {
+          this._circuitOpenUntil = Date.now() + this.CIRCUIT_RESET_MS;
         }
         throw error;
       }

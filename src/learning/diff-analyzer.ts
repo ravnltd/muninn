@@ -224,6 +224,23 @@ export async function analyzeUnprocessedCommits(
       };
     }
 
+    // Populate changedFunctions from symbols table (approximate: all functions in changed files)
+    if (files.length > 0) {
+      try {
+        const placeholders = files.map(() => "?").join(",");
+        const symbols = await db.all<{ name: string }>(
+          `SELECT name FROM symbols
+           WHERE project_id = ? AND file_path IN (${placeholders})
+           AND kind IN ('function', 'method', 'arrow')
+           ORDER BY name`,
+          [projectId, ...files]
+        );
+        analysis.changedFunctions = symbols.map((s) => s.name);
+      } catch {
+        // symbols table might not be populated yet
+      }
+    }
+
     // Store analysis
     await db.run(
       `INSERT OR IGNORE INTO diff_analyses (project_id, commit_id, intent_summary, intent_category, changed_functions, analyzed_by)

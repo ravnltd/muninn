@@ -1763,6 +1763,34 @@ export const MIGRATIONS: Migration[] = [
       return !!ownership && !!teamLearnings;
     },
   },
+
+  // ========================================================================
+  // v30: Budget Recommendations — persist context feedback budget adjustments
+  // ========================================================================
+  {
+    version: 30,
+    name: "budget_recommendations",
+    description: "Persist context feedback budget recommendations for budget manager",
+    up: `
+      CREATE TABLE IF NOT EXISTS budget_recommendations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        context_type TEXT NOT NULL,
+        recommended_budget INTEGER NOT NULL,
+        reason TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, context_type)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_budget_recs_project ON budget_recommendations(project_id);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='budget_recommendations'")
+        .get();
+      return !!table;
+    },
+  },
 ];
 
 // ============================================================================
@@ -1946,6 +1974,7 @@ const REQUIRED_PROJECT_TABLES = [
   "team_learnings",
   "pr_review_extracts",
   "onboarding_contexts",
+  "budget_recommendations",
 ];
 
 // Combined for reference

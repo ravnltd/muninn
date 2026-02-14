@@ -76,4 +76,11 @@ export interface DatabaseAdapter {
    * Returns undefined in local mode
    */
   getHealth?(): NetworkHealth;
+
+  /**
+   * Check if the adapter connection is healthy.
+   * HTTP mode: tracks consecutive failures and circuit breaker state.
+   * Local mode: always returns true.
+   */
+  isHealthy?(): boolean;
 }

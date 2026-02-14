@@ -327,6 +327,33 @@ export async function persistPatternInsights(
     }
   }
 
+  // Auto-archive stale provisional learnings (from heuristic extraction)
+  // that haven't been applied after 10+ sessions
+  try {
+    const currentSession = await db.get<{ session_number: number }>(
+      `SELECT MAX(session_number) as session_number FROM sessions WHERE project_id = ?`,
+      [projectId]
+    );
+    if (currentSession && currentSession.session_number > 10) {
+      await db.run(
+        `UPDATE learnings SET archived_at = datetime('now')
+         WHERE project_id = ? AND source LIKE '%:provisional'
+         AND times_applied = 0
+         AND archived_at IS NULL
+         AND id IN (
+           SELECT l.id FROM learnings l
+           JOIN session_learnings sl ON sl.learning_id = l.id
+           JOIN sessions s ON sl.session_id = s.id
+           WHERE l.project_id = ?
+           AND s.session_number <= ? - 10
+         )`,
+        [projectId, projectId, currentSession.session_number]
+      );
+    }
+  } catch {
+    // session_number or times_applied column might not exist
+  }
+
   return persisted;
 }
 

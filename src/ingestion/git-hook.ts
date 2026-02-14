@@ -109,10 +109,22 @@ export async function processCommit(db: DatabaseAdapter, projectId: number): Pro
   const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
   const filePaths = files.map((f) => f.path);
 
+  // Link commit to active session (enables error-fix mapping and revert detection)
+  let sessionId: number | null = null;
+  try {
+    const activeSession = await db.get<{ id: number }>(
+      `SELECT id FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      [projectId]
+    );
+    sessionId = activeSession?.id ?? null;
+  } catch {
+    // sessions table might not have the right shape yet
+  }
+
   // Store commit metadata
   await db.run(
-    `INSERT OR IGNORE INTO git_commits (project_id, commit_hash, author, message, files_changed, insertions, deletions, committed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO git_commits (project_id, commit_hash, author, message, files_changed, insertions, deletions, committed_at, session_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       projectId,
       commitInfo.hash,
@@ -122,6 +134,7 @@ export async function processCommit(db: DatabaseAdapter, projectId: number): Pro
       totalInsertions,
       totalDeletions,
       commitInfo.committedAt,
+      sessionId,
     ]
   );
 

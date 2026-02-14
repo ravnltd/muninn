@@ -45,7 +45,7 @@ import { queueFileUpdate } from "./ingestion/auto-file-update.js";
 import { detectErrors, recordErrors } from "./ingestion/error-detector.js";
 import { getActiveSessionId } from "./commands/session-tracking.js";
 import { analyzeTask, getTaskContext, setTaskContext } from "./context/task-analyzer.js";
-import { buildContextOutput } from "./context/budget-manager.js";
+import { buildContextOutput, applyWeightAdjustments } from "./context/budget-manager.js";
 import { recordToolCall, checkAndUpdateFocus } from "./context/shifter.js";
 import { onShutdown, installSignalHandlers, shutdown } from "./utils/shutdown.js";
 import { safeInterval } from "./utils/timers.js";
@@ -79,6 +79,23 @@ function log(msg: string): void {
 let dbAdapter: DatabaseAdapter | null = null;
 const projectIdCache = new Map<string, number>();
 let sessionState: SessionState | null = null;
+let consecutiveKeepaliveFailures = 0;
+let consecutiveSlowCalls = 0;
+
+// Rate-limited exception tracking: survive sporadic exceptions, die on systemic failure
+const exceptionWindow: number[] = [];
+const EXCEPTION_WINDOW_MS = 60_000;
+const MAX_EXCEPTIONS_IN_WINDOW = 5;
+
+// Lazily loaded connection module (cached after first import)
+let connModule: typeof import("./database/connection") | null = null;
+
+async function loadConnectionModule() {
+  if (!connModule) {
+    connModule = await import("./database/connection");
+  }
+  return connModule;
+}
 
 function getSessionState(cwd: string): SessionState {
   if (!sessionState) {
@@ -89,14 +106,38 @@ function getSessionState(cwd: string): SessionState {
 
 /**
  * Get or initialize the shared database adapter.
- * Only creates one connection for the lifetime of the MCP server process.
+ * Creates one connection and reuses it. If the adapter is unhealthy
+ * (circuit breaker open), resets and reinitializes.
  */
 async function getDb(): Promise<DatabaseAdapter> {
+  // If adapter exists but is unhealthy, reset it
+  if (dbAdapter?.isHealthy && !dbAdapter.isHealthy()) {
+    log("DB adapter unhealthy, resetting for reconnection...");
+    resetDb();
+  }
+
   if (dbAdapter) return dbAdapter;
 
-  const { getGlobalDb } = await import("./database/connection");
-  dbAdapter = await getGlobalDb();
+  const conn = await loadConnectionModule();
+  dbAdapter = await conn.getGlobalDb();
+  consecutiveKeepaliveFailures = 0;
   return dbAdapter;
+}
+
+/**
+ * Reset the DB adapter singleton so it gets recreated on next getDb() call.
+ * Used when the connection is broken and needs fresh initialization.
+ */
+function resetDb(): void {
+  if (dbAdapter) {
+    try { dbAdapter.close(); } catch { /* ignore close errors */ }
+  }
+  dbAdapter = null;
+  projectIdCache.clear();
+  // Reset the global adapter in connection.ts so getGlobalDb() creates a fresh one
+  if (connModule) {
+    connModule.closeGlobalDb();
+  }
 }
 
 /**
@@ -106,8 +147,8 @@ async function getProjectId(db: DatabaseAdapter, cwd: string): Promise<number> {
   const cached = projectIdCache.get(cwd);
   if (cached !== undefined) return cached;
 
-  const { ensureProject } = await import("./database/connection");
-  const projectId = await ensureProject(db, cwd);
+  const conn = await loadConnectionModule();
+  const projectId = await conn.ensureProject(db, cwd);
   projectIdCache.set(cwd, projectId);
   return projectId;
 }
@@ -192,6 +233,22 @@ const server = new Server(
 let sessionAutoStarted = false;
 // Track whether initial task analysis has been done
 let taskAnalyzed = false;
+// Worker spawn rate-limiting
+let lastWorkerSpawnAt = 0;
+const WORKER_SPAWN_COOLDOWN_MS = 5 * 60_000; // 5 minutes
+// Cached budget weights from confidence calibrator
+let cachedBudgetWeights: Record<string, number> = {};
+let budgetWeightsLoaded = false;
+
+/** Build context output with calibrated budget weights applied */
+function buildCalibratedContext(ctx: import("./context/task-analyzer").TaskContext, budget?: number): string {
+  const defaultAlloc = {
+    criticalWarnings: 400, decisions: 400, learnings: 400,
+    fileContext: 400, errorFixes: 200, reserve: 200,
+  };
+  const adjusted = applyWeightAdjustments(defaultAlloc, cachedBudgetWeights);
+  return buildContextOutput(ctx, budget, adjusted);
+}
 
 // ============================================================================
 // Tool Definitions - 11 Core + 1 Passthrough
@@ -445,34 +502,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // --- v4 Phase 3: Task analyzer — run on first meaningful tool call ---
     if (!taskAnalyzed && name !== "muninn_session") {
       taskAnalyzed = true;
-      analyzeTask(db, projectId, name, typedArgs)
-        .then((ctx) => {
-          setTaskContext(ctx);
-          // Cache for UserPromptSubmit hook
-          const output = buildContextOutput(ctx, 800);
-          if (output) {
-            getSessionState(cwd).writeContext(output);
-          }
-        })
-        .catch(() => {});
+      try {
+        analyzeTask(db, projectId, name, typedArgs)
+          .then((ctx) => {
+            setTaskContext(ctx);
+            const output = buildCalibratedContext(ctx, 800);
+            if (output) {
+              getSessionState(cwd).writeContext(output);
+            }
+          })
+          .catch(() => {});
+      } catch { /* guard sync throw */ }
     }
 
     // --- v4 Phase 3: Context shifter — auto-update focus if topic shifted ---
-    checkAndUpdateFocus(db, projectId)
-      .then((shifted) => {
-        if (shifted) {
-          analyzeTask(db, projectId, name, typedArgs)
-            .then((ctx) => {
-              setTaskContext(ctx);
-              const output = buildContextOutput(ctx, 800);
-              if (output) {
-                getSessionState(cwd).writeContext(output);
-              }
-            })
-            .catch(() => {});
-        }
-      })
-      .catch(() => {});
+    try {
+      checkAndUpdateFocus(db, projectId)
+        .then((shifted) => {
+          if (shifted) {
+            try {
+              analyzeTask(db, projectId, name, typedArgs)
+                .then((ctx) => {
+                  setTaskContext(ctx);
+                  const output = buildCalibratedContext(ctx, 800);
+                  if (output) {
+                    getSessionState(cwd).writeContext(output);
+                  }
+                })
+                .catch(() => {});
+            } catch { /* guard sync throw */ }
+          }
+        })
+        .catch(() => {});
+    } catch { /* guard sync throw */ }
 
     // --- v4: Session auto-start on first tool call ---
     if (!sessionAutoStarted) {
@@ -485,7 +547,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         [projectId]
       );
       state.writeDiscoveryFile({ hasFileData: (fileCount?.cnt ?? 0) > 0 });
-      autoStartSession(db, projectId).catch(() => {});
+      try {
+        autoStartSession(db, projectId).catch(() => {});
+      } catch { /* guard sync throw */ }
+      // Load budget weights for this session
+      if (!budgetWeightsLoaded) {
+        budgetWeightsLoaded = true;
+        try {
+          import("./outcomes/confidence-calibrator.js")
+            .then((mod) => mod.getWeightAdjustments(db, projectId))
+            .then((weights) => { cachedBudgetWeights = weights; })
+            .catch(() => {});
+        } catch { /* guard sync throw */ }
+      }
     }
 
     let result: string;
@@ -635,7 +709,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // --- v4: Log successful tool call ---
-    timer.finish(true);
+    const durationMs = timer.finish(true);
+
+    // --- v4: Slow-call monitoring ---
+    const SLOW_THRESHOLD_MS = 5_000;
+    const SLOW_WARNING_THRESHOLD = 3;
+    if (durationMs !== undefined && durationMs > SLOW_THRESHOLD_MS) {
+      consecutiveSlowCalls++;
+    } else {
+      consecutiveSlowCalls = 0;
+    }
 
     // --- v4 Phase 3: Auto-append task context to read-oriented responses ---
     const READ_TOOLS = new Set([
@@ -645,9 +728,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (READ_TOOLS.has(name)) {
       const taskCtx = getTaskContext();
       if (taskCtx) {
-        const contextBlock = buildContextOutput(taskCtx, 800);
+        const contextBlock = buildCalibratedContext(taskCtx, 800);
         if (contextBlock && contextBlock.length < 4000) {
-          result += "\n\n--- Task Context ---\n" + contextBlock;
+          result += `\n\n--- Task Context ---\n${contextBlock}`;
         }
       }
     }
@@ -659,23 +742,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // --- v4: Detect errors in passthrough Bash-like output ---
     if (name === "muninn" && result) {
-      const errors = detectErrors(result);
-      if (errors.length > 0) {
-        getActiveSessionId(db, projectId)
-          .then((sessionId) => recordErrors(db, projectId, sessionId, null, errors))
-          .catch(() => {});
-      }
+      try {
+        const errors = detectErrors(result);
+        if (errors.length > 0) {
+          getActiveSessionId(db, projectId)
+            .then((sessionId) => recordErrors(db, projectId, sessionId, null, errors))
+            .catch(() => {});
+        }
+      } catch { /* guard sync throw */ }
+    }
+
+    // --- v4: Prepend slow-call warning if consecutive threshold exceeded ---
+    if (consecutiveSlowCalls >= SLOW_WARNING_THRESHOLD) {
+      result = `[Slow responses detected — ${consecutiveSlowCalls} consecutive calls >5s — check sqld connectivity]\n\n${result}`;
     }
 
     return { content: [{ type: "text", text: result }] };
   } catch (error) {
-    log(`Error: ${error}`);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    log(`Error: ${errMsg}`);
 
     // --- v4: Log failed tool call (if timer was created) ---
-    timer?.finish(false, error instanceof Error ? error.message : String(error));
+    timer?.finish(false, errMsg);
+
+    // If this looks like a connection error, reset the adapter for recovery
+    const lowerMsg = errMsg.toLowerCase();
+    if (lowerMsg.includes("circuit breaker") || lowerMsg.includes("fetch failed") ||
+        lowerMsg.includes("econnrefused") || lowerMsg.includes("econnreset") ||
+        lowerMsg.includes("etimedout") || lowerMsg.includes("timeout")) {
+      log("Connection error detected, resetting DB adapter for next call...");
+      resetDb();
+    }
 
     return {
-      content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+      content: [{ type: "text", text: `Error: ${errMsg}` }],
       isError: true,
     };
   }
@@ -717,7 +817,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       if (!taskCtx) {
         return { contents: [{ uri, mimeType: "text/plain", text: "No task context yet. Make a tool call first." }] };
       }
-      const output = buildContextOutput(taskCtx);
+      const output = buildCalibratedContext(taskCtx);
       return { contents: [{ uri, mimeType: "text/plain", text: output || "No relevant context for current task." }] };
     }
 
@@ -772,6 +872,26 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 // ============================================================================
 // v4: Session Auto-Start/End
 // ============================================================================
+
+/** Spawn the background worker if enough time has passed since last spawn */
+function spawnWorkerIfNeeded(): void {
+  const now = Date.now();
+  if (now - lastWorkerSpawnAt < WORKER_SPAWN_COOLDOWN_MS) return;
+  lastWorkerSpawnAt = now;
+
+  try {
+    const workerPath = new URL("./worker.ts", import.meta.url).pathname;
+    const proc = Bun.spawn(["bun", "run", workerPath, "--once"], {
+      stdio: ["ignore", "ignore", "ignore"],
+      env: { ...process.env },
+    });
+    // Detach from parent — let worker run independently
+    proc.unref();
+    log("Spawned background worker");
+  } catch (err) {
+    log(`Failed to spawn worker: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 /** Auto-start a session on first tool call if none is active */
 async function autoStartSession(db: DatabaseAdapter, projectId: number): Promise<void> {
@@ -866,6 +986,9 @@ async function autoEndSession(): Promise<void> {
       // work_queue might not exist yet
     }
 
+    // Spawn worker to process queued jobs
+    spawnWorkerIfNeeded();
+
     log("Auto-ended session");
   } catch {
     // Best-effort — process is exiting
@@ -885,8 +1008,21 @@ async function main(): Promise<void> {
   });
   process.on("uncaughtException", (error) => {
     log(`Uncaught exception: ${error.stack || error.message}`);
-    // Give a moment for the log to flush, then exit
-    setTimeout(() => process.exit(1), 100);
+
+    // Rate-limit: track exceptions in a sliding window
+    const now = Date.now();
+    exceptionWindow.push(now);
+    // Evict entries older than the window
+    while (exceptionWindow.length > 0 && exceptionWindow[0] < now - EXCEPTION_WINDOW_MS) {
+      exceptionWindow.shift();
+    }
+
+    if (exceptionWindow.length >= MAX_EXCEPTIONS_IN_WINDOW) {
+      log(`${exceptionWindow.length} exceptions in ${EXCEPTION_WINDOW_MS / 1000}s — systemic failure, exiting`);
+      setTimeout(() => process.exit(1), 100);
+    } else {
+      log(`Exception survived (${exceptionWindow.length}/${MAX_EXCEPTIONS_IN_WINDOW} in window)`);
+    }
   });
 
   // --- Stdio pipe monitoring: detect broken pipes ---
@@ -919,11 +1055,7 @@ async function main(): Promise<void> {
     log(`Warning: DB pre-warm failed (will retry on first tool call): ${error}`);
   }
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  log("Server connected via stdio");
-
-  // --- MCP server error/close handlers ---
+  // --- MCP server error/close handlers (set BEFORE connect to avoid race) ---
   server.onerror = (error) => {
     log(`MCP server error: ${error instanceof Error ? error.message : String(error)}`);
   };
@@ -932,16 +1064,53 @@ async function main(): Promise<void> {
     shutdown(0);
   };
 
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  log("Server connected via stdio");
+
   // --- Database keepalive: prevent connection staleness ---
-  const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  // Ping every 3 minutes. If it fails consecutively, reset the adapter.
+  const KEEPALIVE_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+  const MAX_KEEPALIVE_FAILURES = 3;
   safeInterval(async () => {
     try {
       const db = await getDb();
       await db.get("SELECT 1");
+      if (consecutiveKeepaliveFailures > 0) {
+        log(`Keepalive recovered after ${consecutiveKeepaliveFailures} failure(s)`);
+      }
+      consecutiveKeepaliveFailures = 0;
     } catch (err) {
-      log(`Keepalive ping failed: ${err instanceof Error ? err.message : String(err)}`);
+      consecutiveKeepaliveFailures++;
+      log(`Keepalive ping failed (${consecutiveKeepaliveFailures}/${MAX_KEEPALIVE_FAILURES}): ${err instanceof Error ? err.message : String(err)}`);
+
+      if (consecutiveKeepaliveFailures >= MAX_KEEPALIVE_FAILURES) {
+        log("Max keepalive failures reached, resetting DB adapter...");
+        resetDb();
+        consecutiveKeepaliveFailures = 0;
+      }
     }
   }, KEEPALIVE_INTERVAL_MS);
+
+  // --- Periodic stale-job check: spawn worker if jobs are stuck ---
+  const STALE_JOB_CHECK_MS = 10 * 60_000; // 10 minutes
+  safeInterval(async () => {
+    try {
+      const db = await getDb();
+      const staleJob = await db.get<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM work_queue
+         WHERE status = 'pending'
+         AND created_at < datetime('now', '-5 minutes')`,
+        []
+      );
+      if (staleJob && staleJob.cnt > 0) {
+        log(`${staleJob.cnt} stale job(s) in queue, spawning worker`);
+        spawnWorkerIfNeeded();
+      }
+    } catch {
+      // Best-effort — work_queue might not exist
+    }
+  }, STALE_JOB_CHECK_MS);
 
   // Register cleanup and signal handlers via shutdown manager
   onShutdown(() => autoEndSession());

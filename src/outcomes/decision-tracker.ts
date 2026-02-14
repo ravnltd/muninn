@@ -45,7 +45,7 @@ async function collectPositiveSignals(
       `SELECT DISTINCT json_each.value as file_path
        FROM tool_calls, json_each(files_involved)
        WHERE tool_calls.project_id = ? AND tool_calls.session_id = ?
-       AND tool_calls.tool_name IN ('muninn_file_add')
+       AND tool_calls.tool_name IN ('muninn_file_add', 'muninn_check')
        AND files_involved IS NOT NULL`,
       [projectId, sessionId]
     );

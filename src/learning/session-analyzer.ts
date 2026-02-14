@@ -283,7 +283,8 @@ function extractHeuristic(summary: SessionSummary, goal: string): ExtractedLearn
 
 /**
  * Save extracted learnings to the database.
- * Only saves learnings with confidence >= 0.7.
+ * Threshold: 0.5 for heuristic (provisional), 0.7 for LLM-extracted.
+ * Provisional learnings are auto-archived by detect_patterns if unused after 10 sessions.
  */
 export async function saveLearnings(
   db: DatabaseAdapter,
@@ -294,7 +295,12 @@ export async function saveLearnings(
   let saved = 0;
 
   for (const learning of learnings) {
-    if (learning.confidence < 0.7) continue;
+    if (learning.confidence < 0.5) continue;
+
+    const isProvisional = learning.confidence < 0.7;
+    const source = isProvisional
+      ? `session:${sessionId}:auto:provisional`
+      : `session:${sessionId}:auto`;
 
     try {
       const result = await db.run(
@@ -305,7 +311,7 @@ export async function saveLearnings(
           learning.category,
           learning.title,
           learning.content,
-          `session:${sessionId}:auto`,
+          source,
           Math.round(learning.confidence * 10),
         ]
       );

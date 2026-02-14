@@ -106,7 +106,7 @@ export function createToolCallTimer(
   const inputSummary = summarizeInput(args);
 
   return {
-    finish(success: boolean, errorMessage?: string) {
+    finish(success: boolean, errorMessage?: string): number {
       const durationMs = Date.now() - startTime;
 
       // Get session ID asynchronously — don't block
@@ -136,6 +136,8 @@ export function createToolCallTimer(
             errorMessage,
           });
         });
+
+      return durationMs;
     },
   };
 }

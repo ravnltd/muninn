@@ -258,6 +258,36 @@ export async function generateBudgetRecommendations(
 // ============================================================================
 
 /**
+ * Persist budget recommendations to the database for budget-manager to load.
+ */
+async function persistRecommendations(
+  db: DatabaseAdapter,
+  projectId: number,
+  recommendations: BudgetRecommendation[]
+): Promise<number> {
+  let persisted = 0;
+
+  for (const rec of recommendations) {
+    try {
+      await db.run(
+        `INSERT INTO budget_recommendations (project_id, context_type, recommended_budget, reason, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(project_id, context_type) DO UPDATE SET
+           recommended_budget = excluded.recommended_budget,
+           reason = excluded.reason,
+           updated_at = datetime('now')`,
+        [projectId, rec.contextType, rec.recommendedBudget, rec.reason]
+      );
+      persisted++;
+    } catch {
+      // Table might not exist yet
+    }
+  }
+
+  return persisted;
+}
+
+/**
  * Process context feedback for a completed session.
  * Called at session end from background worker.
  */
@@ -265,9 +295,10 @@ export async function processContextFeedback(
   db: DatabaseAdapter,
   projectId: number,
   sessionId: number
-): Promise<{ marked: number; recommendations: BudgetRecommendation[] }> {
+): Promise<{ marked: number; recommendations: BudgetRecommendation[]; persisted: number }> {
   const marked = await markUsedContext(db, projectId, sessionId);
   const recommendations = await generateBudgetRecommendations(db, projectId);
+  const persisted = await persistRecommendations(db, projectId, recommendations);
 
-  return { marked, recommendations };
+  return { marked, recommendations, persisted };
 }

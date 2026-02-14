@@ -256,6 +256,36 @@ export function extractDomains(files: string[]): string[] {
 // Full Task Analysis (with DB lookups)
 // ============================================================================
 
+/**
+ * Get keyword hints from developer profile to boost FTS results.
+ * Reads high-confidence profile entries and extracts search terms.
+ */
+async function getProfileHints(db: DatabaseAdapter, projectId: number): Promise<string[]> {
+  try {
+    const entries = await db.all<{ key: string; value: string }>(
+      `SELECT key, value FROM developer_profile
+       WHERE project_id = ? AND confidence >= 0.7
+       ORDER BY confidence DESC LIMIT 5`,
+      [projectId]
+    );
+
+    const hints: string[] = [];
+    for (const entry of entries) {
+      // Extract meaningful keywords from profile values
+      // e.g., "preferred_tools: vitest, bun" -> ["vitest", "bun"]
+      const words = entry.value
+        .toLowerCase()
+        .split(/[,\s:]+/)
+        .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+      hints.push(...words);
+    }
+
+    return [...new Set(hints)].slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
 /** Build complete task context — async DB lookups for relevant items */
 export async function analyzeTask(
   db: DatabaseAdapter,
@@ -268,8 +298,11 @@ export async function analyzeTask(
   const taskType = detectTaskType(keywords);
   const domains = extractDomains(files);
 
-  // Combine keywords + domains for search
-  const searchTerms = [...new Set([...keywords, ...domains])].slice(0, 10);
+  // Get developer profile hints to bias search results
+  const profileHints = await getProfileHints(db, projectId);
+
+  // Combine keywords + domains + profile hints for search
+  const searchTerms = [...new Set([...keywords, ...domains, ...profileHints])].slice(0, 12);
   const searchQuery = searchTerms.join(" ");
 
   // Run all DB lookups in parallel (all best-effort)

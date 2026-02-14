@@ -131,6 +131,90 @@ function serializeErrorFix(fix: ErrorFix): string {
 }
 
 // ============================================================================
+// Weight Adjustments (from confidence calibrator)
+// ============================================================================
+
+/**
+ * Apply accuracy-based weight adjustments to budget allocation.
+ * Maps calibrator context types to budget categories:
+ *   prediction -> fileContext, suggestion -> fileContext, enrichment -> all categories
+ * Clamps adjusted values to [100, 800].
+ */
+export function applyWeightAdjustments(
+  allocation: BudgetAllocation,
+  weights: Record<string, number>
+): BudgetAllocation {
+  if (Object.keys(weights).length === 0) return allocation;
+
+  const adjusted = { ...allocation };
+
+  // prediction/suggestion accuracy affects file context budget
+  const fileMult = weights.prediction ?? weights.suggestion ?? null;
+  if (fileMult !== null) {
+    adjusted.fileContext = clampBudget(Math.round(allocation.fileContext * fileMult));
+  }
+
+  // enrichment accuracy affects all categories proportionally
+  const enrichMult = weights.enrichment;
+  if (enrichMult !== undefined) {
+    adjusted.criticalWarnings = clampBudget(Math.round(allocation.criticalWarnings * enrichMult));
+    adjusted.decisions = clampBudget(Math.round(allocation.decisions * enrichMult));
+    adjusted.learnings = clampBudget(Math.round(allocation.learnings * enrichMult));
+    adjusted.errorFixes = clampBudget(Math.round(allocation.errorFixes * enrichMult));
+  }
+
+  return adjusted;
+}
+
+function clampBudget(value: number): number {
+  return Math.max(100, Math.min(800, value));
+}
+
+// ============================================================================
+// Budget Overrides (from context feedback recommendations)
+// ============================================================================
+
+const TYPE_TO_CATEGORY: Record<string, keyof BudgetAllocation> = {
+  warning: "criticalWarnings",
+  decision: "decisions",
+  learning: "learnings",
+  file: "fileContext",
+  error_fix: "errorFixes",
+};
+
+/**
+ * Load persisted budget recommendations and apply as base allocation.
+ */
+export async function loadBudgetOverrides(
+  db: import("../database/adapter").DatabaseAdapter,
+  projectId: number
+): Promise<BudgetAllocation> {
+  const allocation = { ...DEFAULT_ALLOCATION };
+
+  try {
+    const overrides = await db.all<{
+      context_type: string;
+      recommended_budget: number;
+    }>(
+      `SELECT context_type, recommended_budget FROM budget_recommendations
+       WHERE project_id = ?`,
+      [projectId]
+    );
+
+    for (const override of overrides) {
+      const category = TYPE_TO_CATEGORY[override.context_type];
+      if (category && category in allocation) {
+        allocation[category] = clampBudget(override.recommended_budget);
+      }
+    }
+  } catch {
+    // Table might not exist yet
+  }
+
+  return allocation;
+}
+
+// ============================================================================
 // Budget Allocation
 // ============================================================================
 

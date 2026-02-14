@@ -26,6 +26,8 @@ class ProcessExitError extends Error {
  * Also intercepts process.exit() calls to prevent killing the MCP server.
  * Safe because MCP processes tool calls sequentially.
  */
+const CAPTURE_TIMEOUT_MS = 30_000;
+
 export async function captureOutput(fn: () => Promise<void>): Promise<string> {
   const lines: string[] = [];
   const origLog = console.log;
@@ -40,11 +42,22 @@ export async function captureOutput(fn: () => Promise<void>): Promise<string> {
   }) as any;
 
   try {
-    await fn();
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("[TIMEOUT] Command exceeded 30s limit")),
+        CAPTURE_TIMEOUT_MS
+      );
+      timer.unref();
+    });
+
+    await Promise.race([fn(), timeoutPromise]);
     return lines.join("\n");
   } catch (error) {
     if (error instanceof ProcessExitError) {
-      // Command tried to exit — return captured output so far
+      return lines.join("\n");
+    }
+    if (error instanceof Error && error.message.includes("[TIMEOUT]")) {
+      lines.push(error.message);
       return lines.join("\n");
     }
     throw error;
