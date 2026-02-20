@@ -96,8 +96,13 @@ export class HttpAdapter implements DatabaseAdapter {
   // Circuit breaker state
   private _consecutiveFailures = 0;
   private _circuitOpenUntil = 0;
+  private _circuitState: "closed" | "open" | "half-open" = "closed";
+  private _circuitOpens = 0; // consecutive opens for exponential backoff
+  private _lastCircuitOpenAt = 0; // when circuit last opened (for backoff reset)
   private readonly CIRCUIT_FAILURE_THRESHOLD = 5;
-  private readonly CIRCUIT_RESET_MS = 30_000; // 30s cooldown when circuit opens
+  private readonly CIRCUIT_BASE_MS = 30_000; // 30s base cooldown
+  private readonly CIRCUIT_MAX_MS = 300_000; // 5min max cooldown
+  private readonly CIRCUIT_RESET_OPENS_MS = 60_000; // reset opens counter after 60s success
 
   // In-memory LRU cache for read queries
   private cache = new Map<string, { data: unknown; expiry: number; lastAccess: number }>();
@@ -211,6 +216,9 @@ export class HttpAdapter implements DatabaseAdapter {
   private isTransientError(error: unknown): boolean {
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
+      const name = error.name.toLowerCase();
+      // AbortSignal.timeout() throws DOMException/TimeoutError with varying names
+      if (name.includes("timeout") || name.includes("abort")) return true;
       // Network errors, timeouts, server overload
       if (msg.includes("fetch failed") || msg.includes("econnrefused") ||
           msg.includes("econnreset") || msg.includes("etimedout") ||
@@ -224,6 +232,36 @@ export class HttpAdapter implements DatabaseAdapter {
       if (msg.startsWith("http 429")) return true;
     }
     return false;
+  }
+
+  /**
+   * Open circuit breaker with exponential backoff.
+   * Half-open failures reopen with longer cooldown.
+   */
+  private maybeOpenCircuit(): void {
+    if (this._circuitState === "half-open") {
+      // Test request failed — reopen with longer cooldown
+      this._circuitOpens++;
+      const cooldown = Math.min(
+        this.CIRCUIT_BASE_MS * 2 ** this._circuitOpens,
+        this.CIRCUIT_MAX_MS,
+      );
+      this._circuitOpenUntil = Date.now() + cooldown;
+      this._circuitState = "open";
+      this._lastCircuitOpenAt = Date.now();
+      return;
+    }
+
+    if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD) {
+      this._circuitOpens++;
+      const cooldown = Math.min(
+        this.CIRCUIT_BASE_MS * 2 ** (this._circuitOpens - 1),
+        this.CIRCUIT_MAX_MS,
+      );
+      this._circuitOpenUntil = Date.now() + cooldown;
+      this._circuitState = "open";
+      this._lastCircuitOpenAt = Date.now();
+    }
   }
 
   /**
@@ -244,11 +282,15 @@ export class HttpAdapter implements DatabaseAdapter {
   private async executeRequest(requests: HranaRequest[]): Promise<HranaPipelineResponse> {
     // Circuit breaker: fail fast if too many consecutive failures
     const now = Date.now();
-    if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD && now < this._circuitOpenUntil) {
-      throw new Error(
-        `Circuit breaker open: ${this._consecutiveFailures} consecutive failures. ` +
-        `Retry in ${Math.ceil((this._circuitOpenUntil - now) / 1000)}s. Last error: ${this._lastSyncError}`
-      );
+    if (this._circuitState === "open") {
+      if (now < this._circuitOpenUntil) {
+        throw new Error(
+          `Circuit breaker open: ${this._consecutiveFailures} consecutive failures. ` +
+          `Retry in ${Math.ceil((this._circuitOpenUntil - now) / 1000)}s. Last error: ${this._lastSyncError}`
+        );
+      }
+      // Cooldown expired — enter half-open: allow exactly 1 test request
+      this._circuitState = "half-open";
     }
 
     const url = `${this.config.primaryUrl}/v3/pipeline`;
@@ -299,9 +341,7 @@ export class HttpAdapter implements DatabaseAdapter {
             continue;
           }
           this._consecutiveFailures++;
-          if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD) {
-            this._circuitOpenUntil = Date.now() + this.CIRCUIT_RESET_MS;
-          }
+          this.maybeOpenCircuit();
           throw error;
         }
 
@@ -312,6 +352,17 @@ export class HttpAdapter implements DatabaseAdapter {
         this._lastSyncError = null;
         this._connected = true;
         this._consecutiveFailures = 0;
+
+        // Half-open success → close circuit
+        if (this._circuitState === "half-open") {
+          this._circuitState = "closed";
+        }
+
+        // Reset exponential backoff after 60s of sustained success since last circuit open
+        if (this._circuitOpens > 0 && this._lastCircuitOpenAt > 0 &&
+            Date.now() - this._lastCircuitOpenAt > this.CIRCUIT_RESET_OPENS_MS) {
+          this._circuitOpens = 0;
+        }
 
         // SQL-level errors are checked AFTER marking connection healthy.
         // These are thrown outside the retry loop so they don't trigger
@@ -327,9 +378,7 @@ export class HttpAdapter implements DatabaseAdapter {
           continue;
         }
         this._consecutiveFailures++;
-        if (this._consecutiveFailures >= this.CIRCUIT_FAILURE_THRESHOLD) {
-          this._circuitOpenUntil = Date.now() + this.CIRCUIT_RESET_MS;
-        }
+        this.maybeOpenCircuit();
         throw error;
       }
     }

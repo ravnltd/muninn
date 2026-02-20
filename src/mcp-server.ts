@@ -85,7 +85,17 @@ let consecutiveSlowCalls = 0;
 // Rate-limited exception tracking: survive sporadic exceptions, die on systemic failure
 const exceptionWindow: number[] = [];
 const EXCEPTION_WINDOW_MS = 60_000;
-const MAX_EXCEPTIONS_IN_WINDOW = 5;
+const MAX_EXCEPTIONS_IN_WINDOW = 10;
+
+// Exceptions that don't count toward the crash threshold
+function isExpectedException(error: Error): boolean {
+  const msg = error.message.toLowerCase();
+  return msg.includes("validation") ||
+    msg.includes("invalid params") ||
+    msg.includes("not found") ||
+    msg.includes("circuit breaker open") ||
+    msg.includes("must be called before");
+}
 
 // Lazily loaded connection module (cached after first import)
 let connModule: typeof import("./database/connection") | null = null;
@@ -984,6 +994,12 @@ async function main(): Promise<void> {
   process.on("uncaughtException", (error) => {
     log(`Uncaught exception: ${error.stack || error.message}`);
 
+    // Skip expected errors (validation, tool errors) — they don't indicate systemic failure
+    if (isExpectedException(error)) {
+      log("Expected exception (not counted toward crash threshold)");
+      return;
+    }
+
     // Rate-limit: track exceptions in a sliding window
     const now = Date.now();
     exceptionWindow.push(now);
@@ -994,7 +1010,7 @@ async function main(): Promise<void> {
 
     if (exceptionWindow.length >= MAX_EXCEPTIONS_IN_WINDOW) {
       log(`${exceptionWindow.length} exceptions in ${EXCEPTION_WINDOW_MS / 1000}s — systemic failure, exiting`);
-      setTimeout(() => process.exit(1), 100);
+      shutdown(1);
     } else {
       log(`Exception survived (${exceptionWindow.length}/${MAX_EXCEPTIONS_IN_WINDOW} in window)`);
     }
