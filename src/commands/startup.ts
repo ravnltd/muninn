@@ -9,6 +9,7 @@
 
 import type { DatabaseAdapter } from "../database/adapter";
 import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { isNativeFormat } from "../config/index.js";
 import { getTimeAgo } from "../utils/format";
 import {
@@ -30,6 +31,12 @@ import { assignSessionNumber } from "./temporal";
 // Types
 // ============================================================================
 
+interface UpdateInfo {
+  behind: boolean;
+  count: number;
+  updateCmd: string;
+}
+
 interface StartupResult {
   resume: string;
   smartStatus: {
@@ -38,6 +45,7 @@ interface StartupResult {
     warnings: string[];
   };
   sessionId: number;
+  updateAvailable?: { count: number; command: string };
 }
 
 // ============================================================================
@@ -68,6 +76,7 @@ export async function fastStartup(
     recentObs,
     staleFileCount,
     gitChangedFiles,
+    updateInfo,
   ] = await Promise.all([
     // Resume data
     db.get<Record<string, unknown>>(
@@ -147,6 +156,8 @@ export async function fastStartup(
     ),
     // Git changed files (with timeout)
     safeGitDiff(projectPath),
+    // Update check (cached, fail-open)
+    checkForUpdates(),
   ]);
 
   // ── Phase 2: Build resume markdown ───────────────────────────────────
@@ -177,11 +188,11 @@ export async function fastStartup(
   await decayTemperatures(db, projectId);
 
   // Insert session
-  const result = await db.run(
+  const insertResult = await db.run(
     `INSERT INTO sessions (project_id, goal) VALUES (?, ?)`,
     [projectId, goal]
   );
-  const sessionId = Number(result.lastInsertRowid);
+  const sessionId = Number(insertResult.lastInsertRowid);
 
   // Session bookkeeping (sequential - depends on sessionId)
   await assignSessionNumber(db, projectId, sessionId);
@@ -191,7 +202,14 @@ export async function fastStartup(
   // Fire-and-forget insight generation (don't block startup)
   generateInsightsIfDue(db, projectId).catch(() => {});
 
-  return { resume, smartStatus, sessionId };
+  const result: StartupResult = { resume, smartStatus, sessionId };
+  if (updateInfo?.behind && updateInfo.count > 0) {
+    result.updateAvailable = {
+      count: updateInfo.count,
+      command: updateInfo.updateCmd,
+    };
+  }
+  return result;
 }
 
 // ============================================================================
@@ -413,6 +431,122 @@ function buildSmartStatus(data: SmartStatusData): StartupResult["smartStatus"] {
     actions: actions.sort((a, b) => a.priority - b.priority),
     warnings,
   };
+}
+
+// ============================================================================
+// Update Check
+// ============================================================================
+
+const UPDATE_CACHE_PATH = "/tmp/muninn-update-check.json";
+const UPDATE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+const UPDATE_CMD = "cd ~/.local/share/muninn && git pull && bun install && ./install.sh";
+
+interface UpdateCache {
+  timestamp: number;
+  behind: boolean;
+  count: number;
+}
+
+function checkForUpdates(): Promise<UpdateInfo | null> {
+  try {
+    // Check cache first
+    const cached = readUpdateCache();
+    if (cached) {
+      return Promise.resolve({
+        behind: cached.behind,
+        count: cached.count,
+        updateCmd: UPDATE_CMD,
+      });
+    }
+
+    // Resolve muninn source directory
+    const muninnDir = getMuninnSourceDir();
+    if (!muninnDir) return Promise.resolve(null);
+
+    // Get remote HEAD (lightweight network check)
+    const remoteHead = execSync("git ls-remote origin HEAD", {
+      cwd: muninnDir,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).split(/\s/)[0]?.trim();
+
+    if (!remoteHead) {
+      writeUpdateCache(false, 0);
+      return Promise.resolve(null);
+    }
+
+    // Get local HEAD
+    const localHead = execSync("git rev-parse HEAD", {
+      cwd: muninnDir,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+
+    if (remoteHead === localHead) {
+      writeUpdateCache(false, 0);
+      return Promise.resolve(null);
+    }
+
+    // Different — fetch and count commits behind
+    execSync("git fetch origin --quiet", {
+      cwd: muninnDir,
+      timeout: 10000,
+    });
+
+    const countStr = execSync("git rev-list HEAD..origin/HEAD --count", {
+      cwd: muninnDir,
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+
+    const count = parseInt(countStr, 10) || 0;
+    const behind = count > 0;
+
+    writeUpdateCache(behind, count);
+    return Promise.resolve(behind ? { behind, count, updateCmd: UPDATE_CMD } : null);
+  } catch {
+    return Promise.resolve(null);
+  }
+}
+
+function readUpdateCache(): UpdateCache | null {
+  try {
+    const raw = readFileSync(UPDATE_CACHE_PATH, "utf-8");
+    const data = JSON.parse(raw) as UpdateCache;
+    if (Date.now() - data.timestamp < UPDATE_CACHE_MAX_AGE_MS) {
+      return data;
+    }
+  } catch {
+    // No cache or invalid — will re-check
+  }
+  return null;
+}
+
+function writeUpdateCache(behind: boolean, count: number): void {
+  try {
+    writeFileSync(
+      UPDATE_CACHE_PATH,
+      JSON.stringify({ timestamp: Date.now(), behind, count }),
+    );
+  } catch {
+    // Non-critical
+  }
+}
+
+function getMuninnSourceDir(): string | null {
+  try {
+    // import.meta.dir points to the compiled/source dir
+    // Walk up from src/commands/ to the repo root
+    const dir = import.meta.dir;
+    const parts = dir.split("/");
+    const srcIdx = parts.lastIndexOf("src");
+    if (srcIdx > 0) {
+      return parts.slice(0, srcIdx).join("/");
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================

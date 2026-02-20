@@ -28,6 +28,23 @@ if [ -n "$STARTUP_JSON" ]; then
   echo "$STARTUP_JSON" | jq -r '.resume // empty' 2>/dev/null
   echo ""
 
+  # Check for update notification
+  UPDATE_COUNT=$(echo "$STARTUP_JSON" | jq -r '.updateAvailable.count // empty' 2>/dev/null)
+  UPDATE_CMD=$(echo "$STARTUP_JSON" | jq -r '.updateAvailable.command // empty' 2>/dev/null)
+  if [ -n "$UPDATE_COUNT" ] && [ "$UPDATE_COUNT" != "null" ] && [ "$UPDATE_COUNT" -gt 0 ] 2>/dev/null; then
+    echo "## Update Available"
+    echo "Muninn is **${UPDATE_COUNT} commit(s) behind**. To update:"
+    echo '```'
+    echo "$UPDATE_CMD"
+    echo '```'
+    echo ""
+    # Also show in user's terminal
+    echo "" >&2
+    echo "** Muninn update available (${UPDATE_COUNT} commits behind) **" >&2
+    echo "   Run: ${UPDATE_CMD}" >&2
+    echo "" >&2
+  fi
+
   # Extract and format smart status
   echo "## Smart Status"
   echo "$STARTUP_JSON" | jq -r '
