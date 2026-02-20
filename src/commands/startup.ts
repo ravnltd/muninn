@@ -463,11 +463,19 @@ function checkForUpdates(): Promise<UpdateInfo | null> {
     const muninnDir = getMuninnSourceDir();
     if (!muninnDir) return Promise.resolve(null);
 
+    // Env to prevent interactive SSH/credential prompts
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=3",
+    };
+
     // Get remote HEAD (lightweight network check)
     const remoteHead = execSync("git ls-remote origin HEAD", {
       cwd: muninnDir,
       encoding: "utf-8",
       timeout: 5000,
+      env: gitEnv,
     }).split(/\s/)[0]?.trim();
 
     if (!remoteHead) {
@@ -491,6 +499,7 @@ function checkForUpdates(): Promise<UpdateInfo | null> {
     execSync("git fetch origin --quiet", {
       cwd: muninnDir,
       timeout: 10000,
+      env: gitEnv,
     });
 
     const countStr = execSync("git rev-list HEAD..origin/HEAD --count", {
