@@ -38,6 +38,7 @@ interface UpdateInfo {
   behind: boolean;
   count: number;
   updateCmd: string;
+  warning?: string;
 }
 
 interface StartupResult {
@@ -204,6 +205,11 @@ export async function fastStartup(
 
   // Fire-and-forget insight generation (don't block startup)
   generateInsightsIfDue(db, projectId).catch(() => {});
+
+  // Surface update check warnings into smart status
+  if (updateInfo?.warning) {
+    smartStatus.warnings.push(updateInfo.warning);
+  }
 
   const result: StartupResult = { resume, smartStatus, sessionId };
   if (updateInfo?.behind && updateInfo.count > 0) {
@@ -466,60 +472,123 @@ async function checkForUpdates(): Promise<UpdateInfo | null> {
     const muninnDir = getMuninnSourceDir();
     if (!muninnDir) return null;
 
-    // Env to prevent interactive SSH/credential prompts
-    const gitEnv = {
-      ...process.env,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=3",
-    };
+    const localHead = await getLocalHead(muninnDir);
+    if (!localHead) return null;
 
-    // Common options: async exec with stdin closed to prevent any prompt
-    const gitOpts = (timeout: number) => ({
-      cwd: muninnDir,
-      encoding: "utf-8" as const,
-      timeout,
-      env: gitEnv,
-      // Close stdin so SSH cannot prompt for passphrase
-      stdio: ["ignore", "pipe", "pipe"] as const,
-    });
-
-    // Get remote HEAD (lightweight network check)
-    const { stdout: remoteRaw } = await execFileAsync(
-      "git", ["ls-remote", "origin", "HEAD"], gitOpts(5000)
-    );
-    const remoteHead = remoteRaw.split(/\s/)[0]?.trim();
+    // Try SSH first, fall back to HTTPS API
+    const remoteHead = await getRemoteHeadSsh(muninnDir)
+      ?? await getRemoteHeadHttps(muninnDir);
 
     if (!remoteHead) {
-      writeUpdateCache(false, 0);
-      return null;
+      return {
+        behind: false,
+        count: 0,
+        updateCmd: UPDATE_CMD,
+        warning: "Update check failed: could not reach remote (SSH key passphrase? No network?)",
+      };
     }
-
-    // Get local HEAD
-    const { stdout: localRaw } = await execFileAsync(
-      "git", ["rev-parse", "HEAD"], { cwd: muninnDir, encoding: "utf-8", timeout: 5000 }
-    );
-    const localHead = localRaw.trim();
 
     if (remoteHead === localHead) {
       writeUpdateCache(false, 0);
       return null;
     }
 
-    // Different — fetch and count commits behind
-    await execFileAsync(
-      "git", ["fetch", "origin", "--quiet"], gitOpts(10000)
-    );
+    // Try to get exact commit count via fetch, fall back to "at least 1"
+    const count = await fetchAndCountBehind(muninnDir) ?? 1;
+    writeUpdateCache(true, count);
+    return { behind: true, count, updateCmd: UPDATE_CMD };
+  } catch {
+    return {
+      behind: false,
+      count: 0,
+      updateCmd: UPDATE_CMD,
+      warning: "Update check failed unexpectedly",
+    };
+  }
+}
 
-    const { stdout: countRaw } = await execFileAsync(
+/** Get local HEAD sha */
+async function getLocalHead(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8", timeout: 5000 }
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Try git ls-remote via SSH (fast, but fails with passphrase-protected keys) */
+async function getRemoteHeadSsh(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git", ["ls-remote", "origin", "HEAD"],
+      {
+        cwd,
+        encoding: "utf-8",
+        timeout: 5000,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=3",
+        },
+      }
+    );
+    return stdout.split(/\s/)[0]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback: use GitHub HTTPS API to get HEAD sha (no SSH required) */
+async function getRemoteHeadHttps(cwd: string): Promise<string | null> {
+  try {
+    // Parse owner/repo from the git remote URL
+    const { stdout: remoteUrl } = await execFileAsync(
+      "git", ["remote", "get-url", "origin"], { cwd, encoding: "utf-8", timeout: 3000 }
+    );
+    const match = remoteUrl.trim().match(/github\.com[:/]([^/]+)\/([^/.]+)/);
+    if (!match) return null;
+
+    const [, owner, repo] = match;
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/commits/HEAD`;
+
+    const response = await fetch(apiUrl, {
+      headers: { Accept: "application/vnd.github.sha", "User-Agent": "muninn-update-check" },
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!response.ok) return null;
+    const sha = (await response.text()).trim();
+    return sha.length === 40 ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch and count commits behind. Returns null if fetch fails. */
+async function fetchAndCountBehind(cwd: string): Promise<number | null> {
+  try {
+    const gitEnv = {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=3",
+    };
+    const gitOpts = {
+      cwd,
+      encoding: "utf-8" as const,
+      timeout: 10000,
+      env: gitEnv,
+    };
+
+    await execFileAsync("git", ["fetch", "origin", "--quiet"], gitOpts);
+
+    const { stdout } = await execFileAsync(
       "git", ["rev-list", "HEAD..origin/HEAD", "--count"],
-      { cwd: muninnDir, encoding: "utf-8", timeout: 5000 }
+      { cwd, encoding: "utf-8", timeout: 5000 }
     );
-
-    const count = parseInt(countRaw.trim(), 10) || 0;
-    const behind = count > 0;
-
-    writeUpdateCache(behind, count);
-    return behind ? { behind, count, updateCmd: UPDATE_CMD } : null;
+    return parseInt(stdout.trim(), 10) || 0;
   } catch {
     return null;
   }
