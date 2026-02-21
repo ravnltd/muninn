@@ -8,8 +8,11 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
-import { execSync } from "node:child_process";
+import { execSync, execFile as execFileCb } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCb);
 import { isNativeFormat } from "../config/index.js";
 import { getTimeAgo } from "../utils/format";
 import {
@@ -447,74 +450,78 @@ interface UpdateCache {
   count: number;
 }
 
-function checkForUpdates(): Promise<UpdateInfo | null> {
+async function checkForUpdates(): Promise<UpdateInfo | null> {
   try {
     // Check cache first
     const cached = readUpdateCache();
     if (cached) {
-      return Promise.resolve({
+      return {
         behind: cached.behind,
         count: cached.count,
         updateCmd: UPDATE_CMD,
-      });
+      };
     }
 
     // Resolve muninn source directory
     const muninnDir = getMuninnSourceDir();
-    if (!muninnDir) return Promise.resolve(null);
+    if (!muninnDir) return null;
 
     // Env to prevent interactive SSH/credential prompts
     const gitEnv = {
       ...process.env,
       GIT_TERMINAL_PROMPT: "0",
-      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=3",
+      GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=3",
     };
 
-    // Get remote HEAD (lightweight network check)
-    const remoteHead = execSync("git ls-remote origin HEAD", {
+    // Common options: async exec with stdin closed to prevent any prompt
+    const gitOpts = (timeout: number) => ({
       cwd: muninnDir,
-      encoding: "utf-8",
-      timeout: 5000,
+      encoding: "utf-8" as const,
+      timeout,
       env: gitEnv,
-    }).split(/\s/)[0]?.trim();
+      // Close stdin so SSH cannot prompt for passphrase
+      stdio: ["ignore", "pipe", "pipe"] as const,
+    });
+
+    // Get remote HEAD (lightweight network check)
+    const { stdout: remoteRaw } = await execFileAsync(
+      "git", ["ls-remote", "origin", "HEAD"], gitOpts(5000)
+    );
+    const remoteHead = remoteRaw.split(/\s/)[0]?.trim();
 
     if (!remoteHead) {
       writeUpdateCache(false, 0);
-      return Promise.resolve(null);
+      return null;
     }
 
     // Get local HEAD
-    const localHead = execSync("git rev-parse HEAD", {
-      cwd: muninnDir,
-      encoding: "utf-8",
-      timeout: 5000,
-    }).trim();
+    const { stdout: localRaw } = await execFileAsync(
+      "git", ["rev-parse", "HEAD"], { cwd: muninnDir, encoding: "utf-8", timeout: 5000 }
+    );
+    const localHead = localRaw.trim();
 
     if (remoteHead === localHead) {
       writeUpdateCache(false, 0);
-      return Promise.resolve(null);
+      return null;
     }
 
     // Different — fetch and count commits behind
-    execSync("git fetch origin --quiet", {
-      cwd: muninnDir,
-      timeout: 10000,
-      env: gitEnv,
-    });
+    await execFileAsync(
+      "git", ["fetch", "origin", "--quiet"], gitOpts(10000)
+    );
 
-    const countStr = execSync("git rev-list HEAD..origin/HEAD --count", {
-      cwd: muninnDir,
-      encoding: "utf-8",
-      timeout: 5000,
-    }).trim();
+    const { stdout: countRaw } = await execFileAsync(
+      "git", ["rev-list", "HEAD..origin/HEAD", "--count"],
+      { cwd: muninnDir, encoding: "utf-8", timeout: 5000 }
+    );
 
-    const count = parseInt(countStr, 10) || 0;
+    const count = parseInt(countRaw.trim(), 10) || 0;
     const behind = count > 0;
 
     writeUpdateCache(behind, count);
-    return Promise.resolve(behind ? { behind, count, updateCmd: UPDATE_CMD } : null);
+    return behind ? { behind, count, updateCmd: UPDATE_CMD } : null;
   } catch {
-    return Promise.resolve(null);
+    return null;
   }
 }
 
