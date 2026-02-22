@@ -17,6 +17,7 @@ function makeTaskContext(overrides: Partial<TaskContext> = {}): TaskContext {
     relevantLearnings: [],
     relevantIssues: [],
     errorFixes: [],
+    contradictions: [],
     analyzedAt: Date.now(),
     ...overrides,
   };
@@ -24,12 +25,13 @@ function makeTaskContext(overrides: Partial<TaskContext> = {}): TaskContext {
 
 describe("applyWeightAdjustments", () => {
   const defaultAlloc = {
-    criticalWarnings: 400,
-    decisions: 400,
-    learnings: 400,
-    fileContext: 400,
-    errorFixes: 200,
-    reserve: 200,
+    contradictions: 300,
+    criticalWarnings: 350,
+    decisions: 350,
+    learnings: 350,
+    fileContext: 350,
+    errorFixes: 150,
+    reserve: 150,
   };
 
   test("returns unchanged allocation with empty weights", () => {
@@ -39,30 +41,30 @@ describe("applyWeightAdjustments", () => {
 
   test("applies prediction weight to fileContext", () => {
     const result = applyWeightAdjustments(defaultAlloc, { prediction: 1.2 });
-    expect(result.fileContext).toBe(480);
+    expect(result.fileContext).toBe(420);
     // Other categories unchanged
-    expect(result.decisions).toBe(400);
-    expect(result.learnings).toBe(400);
+    expect(result.decisions).toBe(350);
+    expect(result.learnings).toBe(350);
   });
 
   test("applies suggestion weight to fileContext", () => {
     const result = applyWeightAdjustments(defaultAlloc, { suggestion: 0.8 });
-    expect(result.fileContext).toBe(320);
+    expect(result.fileContext).toBe(280);
   });
 
   test("prediction takes priority over suggestion for fileContext", () => {
     const result = applyWeightAdjustments(defaultAlloc, { prediction: 1.2, suggestion: 0.8 });
-    expect(result.fileContext).toBe(480);
+    expect(result.fileContext).toBe(420);
   });
 
   test("applies enrichment weight to all non-file categories", () => {
     const result = applyWeightAdjustments(defaultAlloc, { enrichment: 1.2 });
-    expect(result.criticalWarnings).toBe(480);
-    expect(result.decisions).toBe(480);
-    expect(result.learnings).toBe(480);
-    expect(result.errorFixes).toBe(240);
+    expect(result.criticalWarnings).toBe(420);
+    expect(result.decisions).toBe(420);
+    expect(result.learnings).toBe(420);
+    expect(result.errorFixes).toBe(180);
     // fileContext unaffected by enrichment alone
-    expect(result.fileContext).toBe(400);
+    expect(result.fileContext).toBe(350);
   });
 
   test("clamps minimum budget to 100", () => {
@@ -160,6 +162,7 @@ describe("buildContextOutput", () => {
     });
     // Give all budget to learnings, none to files
     const allocation = {
+      contradictions: 0,
       criticalWarnings: 0,
       decisions: 0,
       learnings: 2000,

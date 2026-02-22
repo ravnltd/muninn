@@ -63,12 +63,46 @@ export class BlastRadiusEnricher extends BaseEnricher {
           risk,
         });
         lines.push(formatted);
+
+        // v5: Surface fragility signal breakdown if available
+        const explanation = await getFragilityExplanation(ctx, input.projectId, filePath);
+        if (explanation) {
+          lines.push(`  ${explanation}`);
+        }
       }
     }
 
     if (lines.length === 0) return null;
 
     return this.output(lines.join("\n"));
+  }
+}
+
+async function getFragilityExplanation(
+  ctx: EnrichmentContext,
+  projectId: number,
+  filePath: string
+): Promise<string | null> {
+  try {
+    const result = await ctx.db.get<{ fragility_signals: string | null }>(
+      `SELECT fragility_signals FROM files
+       WHERE project_id = ? AND path = ?`,
+      [projectId, filePath]
+    );
+
+    if (!result?.fragility_signals) return null;
+
+    const signals = JSON.parse(result.fragility_signals) as Record<string, number>;
+    const parts: string[] = [];
+
+    if (signals.dependentCount > 0) parts.push(`${signals.dependentCount} callers`);
+    if (signals.testCoverage === 0) parts.push("no tests");
+    if (signals.errorCount > 0) parts.push(`${signals.errorCount} recent errors`);
+    if (signals.exportCount > 5) parts.push(`${signals.exportCount} exports`);
+
+    return parts.length > 0 ? `[${parts.join(", ")}]` : null;
+  } catch {
+    return null;
   }
 }
 

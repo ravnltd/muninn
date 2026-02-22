@@ -466,9 +466,13 @@ function inferFileType(filePath: string): string {
   return "util";
 }
 
+/**
+ * Compute baseline fragility from dependency graph.
+ * This is the initial estimate — v5 composite scorer refines it
+ * in background worker with test coverage, errors, velocity, etc.
+ */
 function computeFragilityFromGraph(dependentCount: number, _importCount: number): number {
-  // Files with many dependents are fragile (changes cascade)
-  // Scale: 0 deps = 0, 1-2 = 2, 3-5 = 4, 6-10 = 6, 11+ = 7
+  if (dependentCount >= 21) return 8;
   if (dependentCount >= 11) return 7;
   if (dependentCount >= 6) return 6;
   if (dependentCount >= 3) return 4;

@@ -63,6 +63,14 @@ export interface ErrorFix {
   confidence: number;
 }
 
+export interface Contradiction {
+  sourceType: "decision" | "learning";
+  sourceId: number;
+  title: string;
+  summary: string;
+  severity: "warning" | "critical";
+}
+
 export interface TaskContext {
   taskType: TaskType;
   domains: string[];
@@ -73,6 +81,7 @@ export interface TaskContext {
   relevantLearnings: RelevantLearning[];
   relevantIssues: RelevantIssue[];
   errorFixes: ErrorFix[];
+  contradictions: Contradiction[];
   analyzedAt: number;
 }
 
@@ -306,26 +315,40 @@ export async function analyzeTask(
   const searchQuery = searchTerms.join(" ");
 
   // Run all DB lookups in parallel (all best-effort)
-  const [relevantFiles, relevantDecisions, relevantLearnings, relevantIssues, errorFixes] = await Promise.all([
+  // v5 Phase 3: Include semantic search in parallel
+  const { findSemanticMatches, isCacheWarmed } = await import("./embedding-cache.js");
+
+  const [relevantFiles, relevantDecisions, relevantLearnings, relevantIssues, errorFixes, semanticMatches] = await Promise.all([
     findRelevantFiles(db, projectId, searchQuery, files),
     findRelevantDecisions(db, projectId, searchQuery, files),
     findRelevantLearnings(db, projectId, searchQuery),
     findRelevantIssues(db, projectId, searchQuery),
     findErrorFixes(db, projectId, taskType, searchQuery),
+    isCacheWarmed() ? findSemanticMatches(searchQuery, 10) : Promise.resolve([]),
   ]);
 
-  return {
+  // v5 Phase 3: Merge semantic results with FTS results
+  const mergedLearnings = mergeSemanticLearnings(relevantLearnings, semanticMatches);
+  const mergedDecisions = mergeSemanticDecisions(relevantDecisions, semanticMatches);
+
+  // v5 Phase 4: Detect contradictions
+  const { detectContradictions } = await import("./contradiction-detector.js");
+  const taskCtx: TaskContext = {
     taskType,
     domains,
     keywords: searchTerms,
     files,
     relevantFiles,
-    relevantDecisions,
-    relevantLearnings,
+    relevantDecisions: mergedDecisions,
+    relevantLearnings: mergedLearnings,
     relevantIssues,
     errorFixes,
+    contradictions: [],
     analyzedAt: Date.now(),
   };
+  taskCtx.contradictions = detectContradictions(taskCtx, semanticMatches);
+
+  return taskCtx;
 }
 
 // ============================================================================
@@ -558,6 +581,82 @@ async function findErrorFixes(
   } catch {
     return [];
   }
+}
+
+// ============================================================================
+// v5 Phase 3: Semantic + FTS Merging
+// ============================================================================
+
+/** Merge semantic learning matches with FTS results. Agreement = boost. */
+function mergeSemanticLearnings(
+  ftsResults: RelevantLearning[],
+  semanticMatches: import("./embedding-cache").SemanticMatch[]
+): RelevantLearning[] {
+  const seen = new Set(ftsResults.map((r) => r.id));
+  const merged = [...ftsResults];
+
+  // Boost FTS results that also appear in semantic matches (agreement)
+  for (const result of merged) {
+    const semantic = semanticMatches.find((m) => m.type === "learning" && m.id === result.id);
+    if (semantic) {
+      result.score = Math.min(1.0, result.score + 0.2); // agreement boost
+    }
+  }
+
+  // Add semantic-only results with weighted score
+  for (const match of semanticMatches) {
+    if (match.type !== "learning") continue;
+    if (seen.has(match.id)) continue;
+    seen.add(match.id);
+
+    merged.push({
+      id: match.id,
+      category: "semantic",
+      title: match.title,
+      content: match.content,
+      confidence: match.confidence,
+      score: match.similarity * 0.4, // semantic-only gets 0.4 weight
+    });
+  }
+
+  // Re-sort by score and limit
+  merged.sort((a, b) => b.score - a.score);
+  return merged.slice(0, 8);
+}
+
+/** Merge semantic decision matches with FTS results. */
+function mergeSemanticDecisions(
+  ftsResults: RelevantDecision[],
+  semanticMatches: import("./embedding-cache").SemanticMatch[]
+): RelevantDecision[] {
+  const seen = new Set(ftsResults.map((r) => r.id));
+  const merged = [...ftsResults];
+
+  // Boost FTS results that also appear in semantic matches
+  for (const result of merged) {
+    const semantic = semanticMatches.find((m) => m.type === "decision" && m.id === result.id);
+    if (semantic) {
+      result.score = Math.min(1.0, result.score + 0.2);
+    }
+  }
+
+  // Add semantic-only decision results
+  for (const match of semanticMatches) {
+    if (match.type !== "decision") continue;
+    if (seen.has(match.id)) continue;
+    seen.add(match.id);
+
+    merged.push({
+      id: match.id,
+      title: match.title,
+      decision: match.content,
+      outcomeStatus: "pending", // semantic matches don't carry outcome
+      score: match.similarity * 0.4,
+    });
+  }
+
+  merged.sort((a, b) => b.score - a.score);
+  return merged.slice(0, 5);
 }
 
 // ============================================================================

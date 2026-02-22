@@ -37,12 +37,13 @@ export interface BudgetRecommendation {
 // ============================================================================
 
 const DEFAULT_BUDGETS: Record<string, number> = {
-  criticalWarnings: 400,
-  decisions: 400,
-  learnings: 400,
-  fileContext: 400,
-  errorFixes: 200,
-  reserve: 200,
+  contradictions: 300,
+  criticalWarnings: 350,
+  decisions: 350,
+  learnings: 350,
+  fileContext: 350,
+  errorFixes: 150,
+  reserve: 150,
 };
 
 // ============================================================================
@@ -73,8 +74,13 @@ export async function markUsedContext(
     const touchedSet = new Set(touchedFiles.map((f) => f.file_path));
 
     // Get context injections for this session
-    const injections = await db.all<{ id: number; context_type: string; item_path: string | null }>(
-      `SELECT ci.id, ci.context_type,
+    const injections = await db.all<{
+      id: number;
+      context_type: string;
+      source_id: number | null;
+      item_path: string | null;
+    }>(
+      `SELECT ci.id, ci.context_type, ci.source_id,
               CASE ci.context_type
                 WHEN 'file' THEN (SELECT path FROM files WHERE id = ci.source_id)
                 ELSE NULL
@@ -86,22 +92,25 @@ export async function markUsedContext(
 
     for (const injection of injections) {
       let used = false;
+      let relevanceSignal: "positive" | "negative" | "neutral" = "neutral";
 
       // File context is "used" if the file was touched
       if (injection.item_path && touchedSet.has(injection.item_path)) {
         used = true;
+        relevanceSignal = "positive";
       }
 
-      // Decision/learning context is always considered partially used
-      // (it informed the AI's approach even if not directly referenced)
+      // Decision/learning context — track with signal based on file overlap
       if (injection.context_type === "decision" || injection.context_type === "learning") {
         used = true;
+        // If the session touched files related to the learning, it was relevant
+        relevanceSignal = touchedFiles.length > 0 ? "positive" : "neutral";
       }
 
       if (used) {
         await db.run(
-          `UPDATE context_injections SET was_used = 1 WHERE id = ?`,
-          [injection.id]
+          `UPDATE context_injections SET was_used = 1, relevance_signal = ? WHERE id = ?`,
+          [relevanceSignal, injection.id]
         );
         marked++;
       }

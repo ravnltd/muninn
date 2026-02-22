@@ -133,6 +133,21 @@ const JOB_HANDLERS: Record<string, JobHandler> = {
     await processContextFeedback(db, projectId, sessionId);
   },
 
+  // v5 Phase 1: Reinforce learnings based on session outcomes
+  async reinforce_learnings(db, payload) {
+    const { reinforceLearnings } = await import("./outcomes/learning-reinforcer");
+    const projectId = payload.projectId as number;
+    const sessionId = payload.sessionId as number;
+    await reinforceLearnings(db, projectId, sessionId);
+  },
+
+  // v5 Phase 2: Compute composite fragility scores
+  async compute_fragility(db, payload) {
+    const { computeProjectFragility } = await import("./code-intel/fragility-scorer");
+    const projectId = payload.projectId as number;
+    await computeProjectFragility(db, projectId);
+  },
+
   // v4 Phase 6: Aggregate high-confidence learnings to team
   async aggregate_learnings(db, payload) {
     const { aggregateLearnings } = await import("./team/knowledge-aggregator");

@@ -46,7 +46,15 @@ import { detectErrors, recordErrors } from "./ingestion/error-detector.js";
 import { getActiveSessionId } from "./commands/session-tracking.js";
 import { analyzeTask, getTaskContext, setTaskContext } from "./context/task-analyzer.js";
 import { buildContextOutput, applyWeightAdjustments } from "./context/budget-manager.js";
-import { recordToolCall, checkAndUpdateFocus } from "./context/shifter.js";
+import {
+  recordToolCall,
+  checkAndUpdateFocus,
+  shouldRefreshContext,
+  recordFileAccess,
+  resetQuality,
+  setContextFiles,
+} from "./context/shifter.js";
+import { warmCache } from "./context/embedding-cache.js";
 import { onShutdown, installSignalHandlers, shutdown } from "./utils/shutdown.js";
 import { safeInterval } from "./utils/timers.js";
 import { normalizePath, normalizePaths } from "./utils/paths.js";
@@ -222,6 +230,8 @@ const server = new Server(
 let sessionAutoStarted = false;
 // Track whether initial task analysis has been done
 let taskAnalyzed = false;
+// Track whether embedding cache has been warmed
+let embeddingCacheWarmed = false;
 // Worker spawn rate-limiting
 let lastWorkerSpawnAt = 0;
 const WORKER_SPAWN_COOLDOWN_MS = 5 * 60_000; // 5 minutes
@@ -232,8 +242,8 @@ let budgetWeightsLoaded = false;
 /** Build context output with calibrated budget weights applied */
 function buildCalibratedContext(ctx: import("./context/task-analyzer").TaskContext, budget?: number): string {
   const defaultAlloc = {
-    criticalWarnings: 400, decisions: 400, learnings: 400,
-    fileContext: 400, errorFixes: 200, reserve: 200,
+    contradictions: 300, criticalWarnings: 350, decisions: 350,
+    learnings: 350, fileContext: 350, errorFixes: 150, reserve: 150,
   };
   const adjusted = applyWeightAdjustments(defaultAlloc, cachedBudgetWeights);
   return buildContextOutput(ctx, budget, adjusted);
@@ -488,13 +498,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // --- v4 Phase 3: Context shifter — track tool calls for focus detection ---
     recordToolCall(name, typedArgs);
 
-    // --- v4 Phase 3: Task analyzer — run on first meaningful tool call ---
-    if (!taskAnalyzed && name !== "muninn_session") {
+    // --- v5: Track file accesses for context quality ---
+    const fileFields = ["path", "file_path"];
+    for (const field of fileFields) {
+      const val = typedArgs[field];
+      if (typeof val === "string") recordFileAccess(val);
+    }
+
+    // --- v5 Phase 3/5: Task analyzer — run on first tool call + quality-driven refresh ---
+    const needsAnalysis = (!taskAnalyzed && name !== "muninn_session") || shouldRefreshContext();
+    if (needsAnalysis) {
+      const isRefresh = taskAnalyzed;
       taskAnalyzed = true;
+      if (isRefresh) resetQuality();
       try {
         analyzeTask(db, projectId, name, typedArgs)
           .then((ctx) => {
             setTaskContext(ctx);
+            // Track context files for quality monitoring
+            setContextFiles(ctx.relevantFiles.map((f) => f.path));
             const output = buildCalibratedContext(ctx, 800);
             if (output) {
               getSessionState(cwd).writeContext(output);
@@ -509,10 +531,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       checkAndUpdateFocus(db, projectId)
         .then((shifted) => {
           if (shifted) {
+            resetQuality();
             try {
               analyzeTask(db, projectId, name, typedArgs)
                 .then((ctx) => {
                   setTaskContext(ctx);
+                  setContextFiles(ctx.relevantFiles.map((f) => f.path));
                   const output = buildCalibratedContext(ctx, 800);
                   if (output) {
                     getSessionState(cwd).writeContext(output);
@@ -547,6 +571,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             .then((mod) => mod.getWeightAdjustments(db, projectId))
             .then((weights) => { cachedBudgetWeights = weights; })
             .catch(() => {});
+        } catch { /* guard sync throw */ }
+      }
+      // v5 Phase 3: Warm embedding cache for hybrid semantic retrieval
+      if (!embeddingCacheWarmed) {
+        embeddingCacheWarmed = true;
+        try {
+          warmCache(db, projectId).catch(() => {});
         } catch { /* guard sync throw */ }
       }
     }
@@ -952,6 +983,11 @@ async function autoEndSession(): Promise<void> {
       await db.run(
         `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
         ["process_context_feedback", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+      // v5 Phase 1: Reinforce learnings after context feedback
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["reinforce_learnings", JSON.stringify({ projectId, sessionId: activeSession.id })]
       );
     } catch {
       // work_queue might not exist yet

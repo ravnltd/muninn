@@ -14,6 +14,7 @@ import { estimateTokens } from "../enrichment/formatter";
 // ============================================================================
 
 interface BudgetAllocation {
+  contradictions: number;
   criticalWarnings: number;
   decisions: number;
   learnings: number;
@@ -35,12 +36,13 @@ interface ContextSection {
 const DEFAULT_TOTAL_BUDGET = 2000;
 
 const DEFAULT_ALLOCATION: BudgetAllocation = {
-  criticalWarnings: 400,
-  decisions: 400,
-  learnings: 400,
-  fileContext: 400,
-  errorFixes: 200,
-  reserve: 200,
+  contradictions: 300,
+  criticalWarnings: 350,
+  decisions: 350,
+  learnings: 350,
+  fileContext: 350,
+  errorFixes: 150,
+  reserve: 150,
 };
 
 // ============================================================================
@@ -257,6 +259,15 @@ export function buildContextOutput(
   allocation: BudgetAllocation = DEFAULT_ALLOCATION
 ): string {
   const sections: ContextSection[] = [];
+
+  // 0. Contradictions (highest priority — goes at TOP)
+  if (taskContext.contradictions && taskContext.contradictions.length > 0) {
+    const { serializeContradictions } = require("./contradiction-detector") as typeof import("./contradiction-detector");
+    const content = serializeContradictions(taskContext.contradictions);
+    if (content) {
+      sections.push({ type: "contradictions", content, tokens: estimateTokens(content) });
+    }
+  }
 
   // 1. Critical warnings (fragile files + failed decisions)
   const criticalFiles = taskContext.relevantFiles.filter((f) => f.fragility >= 7);

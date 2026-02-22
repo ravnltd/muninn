@@ -205,9 +205,114 @@ export function getCurrentFiles(): string[] {
   return Array.from(current.files);
 }
 
+// ============================================================================
+// v5 Phase 5: Context Quality Tracking
+// ============================================================================
+
+interface ContextQuality {
+  contextFiles: Set<string>;   // Files mentioned in context
+  accessedFiles: string[];     // Files actually accessed
+  consecutiveMisses: number;   // Files accessed but not in context
+  lastRefreshAt: number;
+  totalAccesses: number;
+  totalHits: number;
+}
+
+const quality: ContextQuality = {
+  contextFiles: new Set(),
+  accessedFiles: [],
+  consecutiveMisses: 0,
+  lastRefreshAt: 0,
+  totalAccesses: 0,
+  totalHits: 0,
+};
+
+const QUALITY_REFRESH_COOLDOWN_MS = 30_000; // 30s for quality-driven refreshes
+const MISS_THRESHOLD = 3; // 3 consecutive misses triggers refresh
+
+/**
+ * Record which files the context predicted would be relevant.
+ * Called after task analysis sets context.
+ */
+export function setContextFiles(files: string[]): void {
+  quality.contextFiles = new Set(files);
+  quality.consecutiveMisses = 0;
+  quality.lastRefreshAt = Date.now();
+}
+
+/**
+ * Record a file access (from Read/Edit/Write tool calls).
+ * Tracks whether context predicted this file correctly.
+ */
+export function recordFileAccess(filePath: string): void {
+  quality.accessedFiles.push(filePath);
+  quality.totalAccesses++;
+
+  if (quality.contextFiles.has(filePath)) {
+    quality.totalHits++;
+    quality.consecutiveMisses = 0;
+  } else {
+    quality.consecutiveMisses++;
+  }
+
+  // Keep sliding window of recent accesses
+  if (quality.accessedFiles.length > 20) {
+    quality.accessedFiles.shift();
+  }
+}
+
+/**
+ * Check if context should be refreshed based on quality signals.
+ * Returns true if quality has degraded enough to justify a refresh.
+ */
+export function shouldRefreshContext(): boolean {
+  // Respect cooldown
+  if (Date.now() - quality.lastRefreshAt < QUALITY_REFRESH_COOLDOWN_MS) return false;
+
+  // Not enough data yet
+  if (quality.totalAccesses < 3) return false;
+
+  // Consecutive miss threshold
+  if (quality.consecutiveMisses >= MISS_THRESHOLD) return true;
+
+  // Overall hit rate dropped below 30%
+  const hitRate = quality.totalHits / quality.totalAccesses;
+  if (quality.totalAccesses >= 5 && hitRate < 0.3) return true;
+
+  return false;
+}
+
+/**
+ * Reset quality tracking (called after a refresh).
+ */
+export function resetQuality(): void {
+  quality.consecutiveMisses = 0;
+  quality.lastRefreshAt = Date.now();
+  quality.totalAccesses = 0;
+  quality.totalHits = 0;
+  quality.accessedFiles = [];
+}
+
+/**
+ * Get current context quality metrics.
+ */
+export function getQualityMetrics(): { hitRate: number; misses: number; accesses: number } {
+  return {
+    hitRate: quality.totalAccesses > 0 ? quality.totalHits / quality.totalAccesses : 1,
+    misses: quality.consecutiveMisses,
+    accesses: quality.totalAccesses,
+  };
+}
+
 /** Reset all state (for testing) */
 export function resetShifter(): void {
   recentCalls.length = 0;
   initialFocus = null;
   lastAutoFocusAt = 0;
+  quality.contextFiles.clear();
+  quality.accessedFiles = [];
+  quality.consecutiveMisses = 0;
+  quality.lastRefreshAt = 0;
+  quality.totalAccesses = 0;
+  quality.totalHits = 0;
 }

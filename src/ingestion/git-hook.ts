@@ -173,6 +173,15 @@ export async function processCommit(db: DatabaseAdapter, projectId: number): Pro
         `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
         ["build_call_graph", JSON.stringify({ projectId, projectPath, filePaths: codeFiles })]
       );
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["build_test_map", JSON.stringify({ projectId, projectPath })]
+      );
+      // v5 Phase 2: Compute composite fragility after code intel
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["compute_fragility", JSON.stringify({ projectId })]
+      );
     } catch {
       // work_queue might not exist yet
     }

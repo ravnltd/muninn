@@ -1791,6 +1791,78 @@ export const MIGRATIONS: Migration[] = [
       return !!table;
     },
   },
+
+  // ========================================================================
+  // v5 Phase 1: Bayesian Learning Loop
+  // ========================================================================
+  {
+    version: 31,
+    name: "v5_bayesian_learning",
+    description: "Add reinforcement tracking columns to learnings and relevance signal to context injections",
+    up: `
+      ALTER TABLE learnings ADD COLUMN auto_reinforcement_count INTEGER DEFAULT 0;
+
+      ALTER TABLE context_injections ADD COLUMN relevance_signal TEXT DEFAULT NULL;
+    `,
+    validate: (db) => {
+      const col = db
+        .query<{ name: string }, []>("SELECT name FROM pragma_table_info('learnings') WHERE name='auto_reinforcement_count'")
+        .get();
+      return !!col;
+    },
+  },
+
+  // ========================================================================
+  // v5 Phase 2: Composite Fragility Score
+  // ========================================================================
+  {
+    version: 32,
+    name: "v5_composite_fragility",
+    description: "Add fragility signal breakdown and computation timestamp to files",
+    up: `
+      ALTER TABLE files ADD COLUMN fragility_signals TEXT DEFAULT NULL;
+      ALTER TABLE files ADD COLUMN fragility_computed_at DATETIME DEFAULT NULL;
+    `,
+    validate: (db) => {
+      const col = db
+        .query<{ name: string }, []>("SELECT name FROM pragma_table_info('files') WHERE name='fragility_signals'")
+        .get();
+      return !!col;
+    },
+  },
+
+  // ========================================================================
+  // v5 Phase 4: Contradiction Detection
+  // ========================================================================
+  {
+    version: 33,
+    name: "v5_contradiction_alerts",
+    description: "Create contradiction alerts table for tracking detected contradictions",
+    up: `
+      CREATE TABLE IF NOT EXISTS contradiction_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        source_type TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        current_action TEXT NOT NULL,
+        contradiction_summary TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'warning',
+        dismissed INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_contradiction_project ON contradiction_alerts(project_id);
+      CREATE INDEX IF NOT EXISTS idx_contradiction_session ON contradiction_alerts(session_id);
+      CREATE INDEX IF NOT EXISTS idx_contradiction_dismissed ON contradiction_alerts(dismissed);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='contradiction_alerts'")
+        .get();
+      return !!table;
+    },
+  },
 ];
 
 // ============================================================================
@@ -1975,6 +2047,7 @@ const REQUIRED_PROJECT_TABLES = [
   "pr_review_extracts",
   "onboarding_contexts",
   "budget_recommendations",
+  "contradiction_alerts",
 ];
 
 // Combined for reference
