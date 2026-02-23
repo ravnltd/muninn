@@ -112,3 +112,91 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_tenant ON audit_log(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(tenant_id, action);
+
+-- Rate Limit State (cross-instance persistence)
+CREATE TABLE IF NOT EXISTS rate_limit_state (
+  key TEXT NOT NULL,
+  instance_id TEXT NOT NULL,
+  tokens REAL NOT NULL,
+  last_refill_ms INTEGER NOT NULL,
+  plan TEXT NOT NULL DEFAULT 'free',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (key, instance_id)
+);
+
+-- Rate Limit Violations (audit trail)
+CREATE TABLE IF NOT EXISTS rate_limit_violations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  plan TEXT NOT NULL,
+  limit_value INTEGER NOT NULL,
+  ip_address TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Users (RBAC)
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  name TEXT,
+  password_hash TEXT,
+  role TEXT NOT NULL DEFAULT 'member',
+  status TEXT NOT NULL DEFAULT 'active',
+  last_login_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(tenant_id, email)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(tenant_id, email);
+
+-- Invitations (team member invites)
+CREATE TABLE IF NOT EXISTS invitations (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  invited_by_user_id TEXT NOT NULL REFERENCES users(id),
+  token_hash TEXT UNIQUE NOT NULL,
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_invitations_tenant ON invitations(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token_hash);
+
+-- SSO Configs
+CREATE TABLE IF NOT EXISTS sso_configs (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT UNIQUE NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL DEFAULT 'saml',
+  entity_id TEXT,
+  sso_url TEXT,
+  slo_url TEXT,
+  certificate_pem TEXT,
+  oidc_issuer TEXT,
+  oidc_client_id TEXT,
+  oidc_client_secret_encrypted TEXT,
+  domain TEXT,
+  enforce_sso INTEGER NOT NULL DEFAULT 0,
+  allow_password_fallback INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- SAML Relay State (stores OAuth params during SSO redirect)
+CREATE TABLE IF NOT EXISTS saml_relay_state (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  client_id TEXT,
+  redirect_uri TEXT,
+  code_challenge TEXT,
+  state TEXT,
+  scope TEXT,
+  expires_at INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -14,6 +14,10 @@ import { createCheckoutSession, createBillingPortalSession } from "../billing/st
 import { bearerAuth, type AuthedEnv } from "./middleware";
 import { sanitizeError, generateRequestId } from "../lib/errors";
 import { logAudit } from "../compliance/audit-log";
+import { requirePermission } from "../rbac/permissions";
+import { teamRoutes } from "./team-routes";
+import { inviteAcceptRoutes } from "./team-routes";
+import { ssoAdminRoutes } from "./sso-routes";
 
 const api = new Hono<AuthedEnv>();
 
@@ -113,15 +117,18 @@ authed.get("/account", async (c) => {
   });
 });
 
-// Delete account
-authed.delete("/account", async (c) => {
+// Delete account (owner only)
+authed.delete("/account", requirePermission("delete_account"), async (c) => {
   const tenantId = c.get("tenantId");
   const mgmtDb = await getManagementDb();
   await deleteTenant(mgmtDb, tenantId);
   return c.json({ success: true });
 });
 
-// API Keys
+// API Keys (admin+ only)
+authed.use("/keys/*", requirePermission("manage_keys"));
+authed.use("/keys", requirePermission("manage_keys"));
+
 const CreateKeyInput = z.object({
   name: z.string().min(1).max(100).optional(),
 });
@@ -165,7 +172,7 @@ const BYODInput = z.object({
   tursoAuthToken: z.string().min(1),
 });
 
-authed.put("/database", async (c) => {
+authed.put("/database", requirePermission("manage_keys"), async (c) => {
   const tenantId = c.get("tenantId");
   const body = await c.req.json();
   const parsed = BYODInput.safeParse(body);
@@ -190,7 +197,7 @@ const CheckoutInput = z.object({
   plan: z.enum(["pro"]),
 });
 
-authed.post("/billing/checkout", async (c) => {
+authed.post("/billing/checkout", requirePermission("manage_billing"), async (c) => {
   const tenantId = c.get("tenantId");
   const body = await c.req.json().catch(() => ({}));
   const parsed = CheckoutInput.safeParse(body);
@@ -210,7 +217,7 @@ authed.post("/billing/checkout", async (c) => {
 });
 
 // Billing: Portal
-authed.post("/billing/portal", async (c) => {
+authed.post("/billing/portal", requirePermission("manage_billing"), async (c) => {
   const tenantId = c.get("tenantId");
   try {
     const mgmtDb = await getManagementDb();
@@ -231,8 +238,8 @@ authed.get("/export", async (c) => {
   return c.json(data);
 });
 
-// Data deletion (GDPR Article 17)
-authed.post("/delete-my-data", async (c) => {
+// Data deletion (GDPR Article 17, owner only)
+authed.post("/delete-my-data", requirePermission("delete_account"), async (c) => {
   const tenantId = c.get("tenantId");
   const { eraseTenantData } = await import("../compliance/data-export");
   await eraseTenantData(tenantId);
@@ -269,7 +276,16 @@ authed.get("/export-token", async (c) => {
   return c.json({ exportToken: dbConfig.export_token });
 });
 
+// Mount team routes (protected by bearerAuth + manage_team permission)
+authed.route("/team", teamRoutes);
+
+// Mount SSO admin routes (protected by bearerAuth + manage_sso permission)
+authed.route("/sso", ssoAdminRoutes);
+
 // Mount protected routes
 api.route("/", authed);
+
+// Public invite acceptance (no auth required)
+api.route("/invite", inviteAcceptRoutes);
 
 export { api };

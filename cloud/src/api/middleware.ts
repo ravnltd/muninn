@@ -16,6 +16,8 @@ export type AuthedEnv = {
   Variables: {
     auth: AuthInfo;
     tenantId: string;
+    userId: string;
+    role: string;
   };
 };
 
@@ -58,6 +60,9 @@ export function bearerAuth() {
       const authInfo = await verifyAccessToken(mgmtDb, token);
       c.set("auth", authInfo);
       c.set("tenantId", authInfo.clientId);
+      const extra = authInfo.extra as Record<string, string> | undefined;
+      c.set("userId", extra?.userId ?? authInfo.clientId);
+      c.set("role", extra?.role ?? "owner");
     } catch (error) {
       if (error instanceof AuthError) {
         return c.json({ error: error.message }, error.statusCode as 401);

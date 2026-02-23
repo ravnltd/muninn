@@ -27,10 +27,33 @@ export async function logAudit(
   action: string,
   resourceType: string,
   resourceId: string,
-  extra?: { ip?: string; userAgent?: string; metadata?: Record<string, unknown> }
+  extra?: { ip?: string; userAgent?: string; userId?: string; metadata?: Record<string, unknown> }
 ): Promise<void> {
   try {
     const mgmtDb = await getManagementDb();
+    // Try with user_id column first
+    if (extra?.userId) {
+      try {
+        await mgmtDb.run(
+          `INSERT INTO audit_log (tenant_id, action, resource_type, resource_id, ip_address, user_agent, user_id, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            tenantId,
+            action,
+            resourceType,
+            resourceId,
+            extra?.ip ?? null,
+            extra?.userAgent ?? null,
+            extra.userId,
+            extra?.metadata ? JSON.stringify(extra.metadata) : null,
+          ]
+        );
+        return;
+      } catch {
+        // user_id column might not exist — fall through
+      }
+    }
+
     await mgmtDb.run(
       `INSERT INTO audit_log (tenant_id, action, resource_type, resource_id, ip_address, user_agent, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,

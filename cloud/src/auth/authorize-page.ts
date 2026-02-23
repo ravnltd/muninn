@@ -14,6 +14,8 @@ interface AuthorizePageParams {
   scope: string;
   csrfToken?: string;
   error?: string;
+  ssoEnabled?: boolean;
+  ssoLoginUrl?: string;
 }
 
 function escapeHtml(s: string): string {
@@ -106,6 +108,20 @@ export function renderAuthorizePage(params: AuthorizePageParams): string {
           Authorize
         </button>
       </form>
+
+      ${params.ssoEnabled && params.ssoLoginUrl ? `
+      <div class="mt-4 pt-4 border-t border-zinc-800">
+        <a
+          href="${escapeHtml(params.ssoLoginUrl)}"
+          class="w-full flex items-center justify-center gap-2 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-lg transition-colors border border-zinc-600"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+          </svg>
+          Sign in with SSO
+        </a>
+      </div>
+      ` : ""}
 
       <p class="text-center text-xs text-zinc-500 mt-4">
         Don't have an account? <a href="https://muninn.pro" class="text-emerald-400 hover:underline">Sign up</a>

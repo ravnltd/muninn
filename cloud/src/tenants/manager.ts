@@ -7,6 +7,7 @@
 import type { DatabaseAdapter } from "../types";
 import { provisionDatabase, deleteDatabase } from "./turso";
 import { evictTenant } from "./pool";
+import { createUser } from "../rbac/users";
 
 export interface Tenant {
   id: string;
@@ -51,6 +52,19 @@ export async function createTenant(db: DatabaseAdapter, input: CreateTenantInput
      VALUES (?, 'managed', ?, ?, ?, ?)`,
     [id, provisioned.name, provisioned.url, provisioned.authToken, provisioned.exportToken]
   );
+
+  // Create owner user for RBAC
+  try {
+    await createUser(db, {
+      tenantId: id,
+      email: input.email,
+      name: input.name,
+      passwordHash: passwordHash,
+      role: "owner",
+    });
+  } catch {
+    // Non-fatal — users table might not exist during migration
+  }
 
   return {
     id,

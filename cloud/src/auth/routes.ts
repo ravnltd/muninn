@@ -17,6 +17,8 @@ import {
 } from "./provider";
 import { authenticateTenant } from "../tenants/manager";
 import { renderAuthorizePage, renderAuthorizeError } from "./authorize-page";
+import { getUserByEmail } from "../rbac/users";
+import { getSsoConfig } from "../sso/config-manager";
 
 const auth = new Hono();
 
@@ -179,6 +181,34 @@ auth.get("/authorize", async (c) => {
 
   const csrfToken = await generateCsrfToken();
 
+  // Check if client's tenant has SSO configured
+  let ssoEnabled = false;
+  let ssoLoginUrl: string | undefined;
+  const clientTenant = await mgmtDb.get<{ tenant_id: string | null }>(
+    "SELECT tenant_id FROM oauth_clients WHERE client_id = ?",
+    [clientId]
+  );
+  if (clientTenant?.tenant_id) {
+    try {
+      const ssoConfig = await getSsoConfig(mgmtDb, clientTenant.tenant_id);
+      if (ssoConfig) {
+        ssoEnabled = true;
+        const BASE_URL = process.env.BASE_URL || "https://api.muninn.pro";
+        const ssoParams = new URLSearchParams({
+          tenant_id: clientTenant.tenant_id,
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          code_challenge: codeChallenge ?? "",
+          state: state ?? "",
+          scope: scope ?? "mcp:tools",
+        });
+        ssoLoginUrl = `${BASE_URL}/auth/sso/login?${ssoParams.toString()}`;
+      }
+    } catch {
+      // SSO check is best-effort
+    }
+  }
+
   return c.html(renderAuthorizePage({
     clientId,
     clientName: client.client_name,
@@ -187,6 +217,8 @@ auth.get("/authorize", async (c) => {
     codeChallenge: codeChallenge ?? "",
     scope: scope ?? "mcp:tools",
     csrfToken,
+    ssoEnabled,
+    ssoLoginUrl,
   }));
 });
 
@@ -264,6 +296,15 @@ auth.post("/authorize", async (c) => {
   const store = new ClientsStore(mgmtDb);
   await store.bindClientToTenant(clientId, tenant.id);
 
+  // Resolve user_id for RBAC (fallback gracefully for pre-migration)
+  let userId: string | undefined;
+  try {
+    const user = await getUserByEmail(mgmtDb, tenant.id, email);
+    userId = user?.id;
+  } catch {
+    // users table might not exist yet
+  }
+
   // Create authorization code
   const scopes = scope ? scope.split(" ") : ["mcp:tools"];
   const code = await createAuthorizationCode(
@@ -272,7 +313,8 @@ auth.post("/authorize", async (c) => {
     tenant.id,
     redirectUri,
     codeChallenge || null,
-    scopes
+    scopes,
+    userId
   );
 
   // Redirect back with code

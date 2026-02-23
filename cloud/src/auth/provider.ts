@@ -25,10 +25,25 @@ export async function createAuthorizationCode(
   tenantId: string,
   redirectUri: string,
   codeChallenge: string | null,
-  scopes: string[] | null
+  scopes: string[] | null,
+  userId?: string
 ): Promise<string> {
   const code = generateSecureToken();
   const expiresAt = Date.now() + AUTH_CODE_TTL_MS;
+
+  // Use user_id column if available (post-migration)
+  if (userId) {
+    try {
+      await db.run(
+        `INSERT INTO oauth_codes (code, client_id, tenant_id, redirect_uri, code_challenge, code_challenge_method, scopes, expires_at, user_id)
+         VALUES (?, ?, ?, ?, ?, 'S256', ?, ?, ?)`,
+        [code, clientId, tenantId, redirectUri, codeChallenge, scopes ? JSON.stringify(scopes) : null, expiresAt, userId]
+      );
+      return code;
+    } catch {
+      // user_id column might not exist yet — fall through
+    }
+  }
 
   await db.run(
     `INSERT INTO oauth_codes (code, client_id, tenant_id, redirect_uri, code_challenge, code_challenge_method, scopes, expires_at)
@@ -57,15 +72,26 @@ export async function exchangeAuthorizationCode(
   codeVerifier?: string,
   redirectUri?: string
 ): Promise<TokenPair> {
-  const codeRecord = await db.get<{
+  // Try with user_id column first, fall back without it
+  let codeRecord: {
     tenant_id: string;
     scopes: string | null;
     code_challenge: string | null;
     redirect_uri: string;
-  }>(
-    "SELECT tenant_id, scopes, code_challenge, redirect_uri FROM oauth_codes WHERE code = ? AND client_id = ? AND used_at IS NULL AND expires_at > ?",
-    [authorizationCode, clientId, Date.now()]
-  );
+    user_id?: string;
+  } | null = null;
+  try {
+    codeRecord = await db.get(
+      "SELECT tenant_id, scopes, code_challenge, redirect_uri, user_id FROM oauth_codes WHERE code = ? AND client_id = ? AND used_at IS NULL AND expires_at > ?",
+      [authorizationCode, clientId, Date.now()]
+    );
+  } catch {
+    // user_id column might not exist yet
+    codeRecord = await db.get(
+      "SELECT tenant_id, scopes, code_challenge, redirect_uri FROM oauth_codes WHERE code = ? AND client_id = ? AND used_at IS NULL AND expires_at > ?",
+      [authorizationCode, clientId, Date.now()]
+    );
+  }
   if (!codeRecord) throw new Error("Invalid or expired authorization code");
 
   // Redirect URI verification (RFC 6749 §4.1.3)
@@ -84,7 +110,7 @@ export async function exchangeAuthorizationCode(
 
   await db.run("UPDATE oauth_codes SET used_at = datetime('now') WHERE code = ?", [authorizationCode]);
 
-  return generateTokenPair(db, clientId, codeRecord.tenant_id, codeRecord.scopes);
+  return generateTokenPair(db, clientId, codeRecord.tenant_id, codeRecord.scopes, codeRecord.user_id);
 }
 
 /**
@@ -96,16 +122,24 @@ export async function exchangeRefreshToken(
   refreshToken: string
 ): Promise<TokenPair> {
   const refreshHash = await hashToken(refreshToken);
-  const record = await db.get<{ tenant_id: string; scopes: string | null }>(
-    "SELECT tenant_id, scopes FROM oauth_tokens WHERE token_hash = ? AND token_type = 'refresh' AND client_id = ? AND revoked_at IS NULL AND expires_at > ?",
-    [refreshHash, clientId, Date.now()]
-  );
+  let record: { tenant_id: string; scopes: string | null; user_id?: string } | null = null;
+  try {
+    record = await db.get(
+      "SELECT tenant_id, scopes, user_id FROM oauth_tokens WHERE token_hash = ? AND token_type = 'refresh' AND client_id = ? AND revoked_at IS NULL AND expires_at > ?",
+      [refreshHash, clientId, Date.now()]
+    );
+  } catch {
+    record = await db.get(
+      "SELECT tenant_id, scopes FROM oauth_tokens WHERE token_hash = ? AND token_type = 'refresh' AND client_id = ? AND revoked_at IS NULL AND expires_at > ?",
+      [refreshHash, clientId, Date.now()]
+    );
+  }
   if (!record) throw new Error("Invalid or expired refresh token");
 
   // Revoke old refresh token (rotation)
   await db.run("UPDATE oauth_tokens SET revoked_at = datetime('now') WHERE token_hash = ?", [refreshHash]);
 
-  return generateTokenPair(db, clientId, record.tenant_id, record.scopes);
+  return generateTokenPair(db, clientId, record.tenant_id, record.scopes, record.user_id ?? undefined);
 }
 
 /**
@@ -142,12 +176,39 @@ async function generateTokenPair(
   db: DatabaseAdapter,
   clientId: string,
   tenantId: string,
-  scopes: string | null
+  scopes: string | null,
+  userId?: string
 ): Promise<TokenPair> {
   const accessToken = generateSecureToken();
   const refreshToken = generateSecureToken();
   const accessHash = await hashToken(accessToken);
   const refreshHash = await hashToken(refreshToken);
+
+  // Try with user_id column first; fall back to without
+  if (userId) {
+    try {
+      await db.batch([
+        {
+          sql: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, tenant_id, scopes, expires_at, user_id)
+                VALUES (?, 'access', ?, ?, ?, ?, ?)`,
+          params: [accessHash, clientId, tenantId, scopes, Date.now() + ACCESS_TOKEN_TTL_MS, userId],
+        },
+        {
+          sql: `INSERT INTO oauth_tokens (token_hash, token_type, client_id, tenant_id, scopes, expires_at, user_id)
+                VALUES (?, 'refresh', ?, ?, ?, ?, ?)`,
+          params: [refreshHash, clientId, tenantId, scopes, Date.now() + REFRESH_TOKEN_TTL_MS, userId],
+        },
+      ]);
+      return {
+        access_token: accessToken,
+        token_type: "bearer",
+        expires_in: ACCESS_TOKEN_TTL_MS / 1000,
+        refresh_token: refreshToken,
+      };
+    } catch {
+      // user_id column might not exist — fall through
+    }
+  }
 
   await db.batch([
     {

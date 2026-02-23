@@ -14,7 +14,7 @@ import { handleMcpRequest, getSessionCount } from "./mcp-endpoint";
 import { api } from "./api/routes";
 import { authRoutes } from "./auth/routes";
 import { corsMiddleware } from "./api/middleware";
-import { rateLimiter } from "./api/rate-limit";
+import { PersistentRateLimiter, rateLimiter } from "./api/rate-limit";
 import { metricsMiddleware, formatMetrics, dbPoolSize, activeMcpSessions } from "./lib/metrics";
 import { generateRequestId } from "./lib/errors";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
@@ -31,6 +31,7 @@ type AppEnv = {
 const app = new Hono<AppEnv>();
 
 const startTime = Date.now();
+const limiter = new PersistentRateLimiter();
 
 // ============================================================================
 // Global Middleware
@@ -78,6 +79,9 @@ app.get("/health", async (c) => {
   // MCP sessions
   const sessionCount = getSessionCount();
   checks.mcpSessions = sessionCount;
+
+  // Rate limiter
+  checks.rateLimiter = limiter.getStats();
 
   // Update gauges
   dbPoolSize.setDirect(pool.size);
@@ -159,7 +163,7 @@ app.use("/mcp", async (c, next) => {
 });
 
 // Rate limit by tenantId (set by auth middleware above)
-app.use("/mcp", rateLimiter());
+app.use("/mcp", rateLimiter(limiter));
 
 app.all("/mcp", async (c) => {
   const authInfo = c.get("authInfo") as AuthInfo;
@@ -241,6 +245,10 @@ app.post("/webhooks/stripe", async (c) => {
 
 app.route("/auth", authRoutes);
 
+// SSO Routes (SAML ACS + metadata, no auth required)
+import { ssoRoutes } from "./sso/routes";
+app.route("/auth/sso", ssoRoutes);
+
 // ============================================================================
 // API Routes
 // ============================================================================
@@ -260,6 +268,10 @@ async function start(): Promise<void> {
   const mgmtDb = await getManagementDb();
   setManagementDb(mgmtDb);
   console.log("[muninn-cloud] Management database ready");
+
+  // Start persistent rate limiter sync
+  limiter.startSync(mgmtDb);
+  console.log("[muninn-cloud] Rate limiter sync started");
 
   console.log(`[muninn-cloud] Starting server on port ${PORT}...`);
 
@@ -285,6 +297,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
   if (server) {
     server.stop(true); // close idle connections immediately
   }
+
+  // Flush rate limiter state
+  await limiter.stopSync();
 
   // Close all MCP sessions
   const { closeAllSessions } = await import("./mcp-endpoint");
