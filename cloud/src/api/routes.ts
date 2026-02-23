@@ -287,6 +287,51 @@ authed.route("/sso", ssoAdminRoutes);
 // Mount knowledge/memory routes (v6 — knowledge explorer API)
 authed.route("/knowledge", knowledgeRoutes);
 
+// Webhook settings
+const WebhookInput = z.object({
+  webhookUrl: z.string().url().max(500),
+  webhookSecret: z.string().min(1).max(256),
+});
+
+authed.get("/settings/webhook", requirePermission("manage_keys"), async (c) => {
+  const tenantId = c.get("tenantId");
+  const mgmtDb = await getManagementDb();
+  const url = await mgmtDb.get<{ value: string | null }>(
+    "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = 'webhook_url'",
+    [tenantId],
+  );
+  const secret = await mgmtDb.get<{ value: string | null }>(
+    "SELECT value FROM tenant_settings WHERE tenant_id = ? AND key = 'webhook_secret'",
+    [tenantId],
+  );
+  return c.json({
+    webhookUrl: url?.value ?? "",
+    webhookSecret: secret?.value ? "****" + secret.value.slice(-4) : "",
+  });
+});
+
+authed.put("/settings/webhook", requirePermission("manage_keys"), async (c) => {
+  const tenantId = c.get("tenantId");
+  const body = await c.req.json();
+  const parsed = WebhookInput.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.errors[0]?.message ?? "Validation failed" }, 400);
+  }
+
+  const mgmtDb = await getManagementDb();
+  await mgmtDb.run(
+    `INSERT INTO tenant_settings (tenant_id, key, value, updated_at) VALUES (?, 'webhook_url', ?, datetime('now'))
+     ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    [tenantId, parsed.data.webhookUrl],
+  );
+  await mgmtDb.run(
+    `INSERT INTO tenant_settings (tenant_id, key, value, updated_at) VALUES (?, 'webhook_secret', ?, datetime('now'))
+     ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    [tenantId, parsed.data.webhookSecret],
+  );
+  return c.json({ success: true });
+});
+
 // Mount protected routes
 api.route("/", authed);
 

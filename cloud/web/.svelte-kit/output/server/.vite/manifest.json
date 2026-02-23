@@ -45,6 +45,13 @@
       "_index2.js"
     ]
   },
+  "_Header.js": {
+    "file": "chunks/Header.js",
+    "name": "Header",
+    "imports": [
+      "_index2.js"
+    ]
+  },
   "_Input.js": {
     "file": "chunks/Input.js",
     "name": "Input",
@@ -55,6 +62,13 @@
   "_Modal.js": {
     "file": "chunks/Modal.js",
     "name": "Modal",
+    "imports": [
+      "_index2.js"
+    ]
+  },
+  "_Spinner.js": {
+    "file": "chunks/Spinner.js",
+    "name": "Spinner",
     "imports": [
       "_index2.js"
     ]
@@ -281,7 +295,7 @@
       "_index2.js"
     ],
     "css": [
-      "_app/immutable/assets/_layout.LR2wJt5T.css"
+      "_app/immutable/assets/_layout.DbLR6jsC.css"
     ]
   },
   "src/routes/dashboard/+layout.svelte": {
@@ -297,7 +311,8 @@
       "_auth.svelte.js",
       "_index2.js",
       "_stores.js",
-      "_Badge.js"
+      "_Badge.js",
+      "_Spinner.js"
     ]
   },
   "src/routes/dashboard/+layout.ts": {
@@ -314,6 +329,7 @@
     "imports": [
       "_index2.js",
       "_auth.svelte.js",
+      "_Header.js",
       "_Card.js",
       "_CodeBlock.js"
     ]
@@ -327,9 +343,10 @@
       "_index2.js",
       "_api.js",
       "_DataTable.js",
-      "_Card.js",
+      "_Header.js",
       "_Button.js",
       "_Input.js",
+      "_Card.js",
       "_Modal.js"
     ]
   },
@@ -346,9 +363,63 @@
       "_state.svelte.js",
       "_api.js",
       "_auth.svelte.js",
+      "_Header.js",
       "_Card.js",
       "_Button.js",
       "_Badge.js"
+    ]
+  },
+  "src/routes/dashboard/knowledge/+layout.svelte": {
+    "file": "entries/pages/dashboard/knowledge/_layout.svelte.js",
+    "name": "entries/pages/dashboard/knowledge/_layout.svelte",
+    "src": "src/routes/dashboard/knowledge/+layout.svelte",
+    "isEntry": true,
+    "imports": [
+      "_index2.js",
+      "_stores.js"
+    ]
+  },
+  "src/routes/dashboard/knowledge/+page.svelte": {
+    "file": "entries/pages/dashboard/knowledge/_page.svelte.js",
+    "name": "entries/pages/dashboard/knowledge/_page.svelte",
+    "src": "src/routes/dashboard/knowledge/+page.svelte",
+    "isEntry": true,
+    "imports": [
+      "_Header.js",
+      "_Spinner.js"
+    ]
+  },
+  "src/routes/dashboard/knowledge/graph/+page.svelte": {
+    "file": "entries/pages/dashboard/knowledge/graph/_page.svelte.js",
+    "name": "entries/pages/dashboard/knowledge/graph/_page.svelte",
+    "src": "src/routes/dashboard/knowledge/graph/+page.svelte",
+    "isEntry": true,
+    "imports": [
+      "_Header.js",
+      "_Spinner.js"
+    ]
+  },
+  "src/routes/dashboard/knowledge/reports/+page.svelte": {
+    "file": "entries/pages/dashboard/knowledge/reports/_page.svelte.js",
+    "name": "entries/pages/dashboard/knowledge/reports/_page.svelte",
+    "src": "src/routes/dashboard/knowledge/reports/+page.svelte",
+    "isEntry": true,
+    "imports": [
+      "_Header.js",
+      "_Spinner.js"
+    ]
+  },
+  "src/routes/dashboard/knowledge/timeline/+page.svelte": {
+    "file": "entries/pages/dashboard/knowledge/timeline/_page.svelte.js",
+    "name": "entries/pages/dashboard/knowledge/timeline/_page.svelte",
+    "src": "src/routes/dashboard/knowledge/timeline/+page.svelte",
+    "isEntry": true,
+    "imports": [
+      "_Header.js",
+      "_Spinner.js"
+    ],
+    "css": [
+      "_app/immutable/assets/_page.Ytdp_c55.css"
     ]
   },
   "src/routes/dashboard/settings/+page.svelte": {
@@ -360,6 +431,7 @@
       "_index2.js",
       "_api.js",
       "_auth.svelte.js",
+      "_Header.js",
       "_Card.js",
       "_Button.js",
       "_Input.js",
@@ -375,6 +447,7 @@
       "_index2.js",
       "_api.js",
       "_DataTable.js",
+      "_Header.js",
       "_Card.js",
       "_Button.js",
       "_Input.js",
@@ -388,6 +461,7 @@
     "src": "src/routes/dashboard/usage/+page.svelte",
     "isEntry": true,
     "imports": [
+      "_Header.js",
       "_Card.js"
     ]
   }

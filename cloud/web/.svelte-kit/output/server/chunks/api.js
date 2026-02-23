@@ -112,6 +112,29 @@ const api = {
   deleteSsoConfig: () => request("/api/sso/config", { method: "DELETE" }),
   testSso: () => request("/api/sso/test", {
     method: "POST"
+  }),
+  // Knowledge Explorer
+  getProjects: () => request("/api/knowledge/projects"),
+  getProjectMemory: (projectId) => request(`/api/knowledge/projects/${projectId}/memory`),
+  getProjectSessions: (projectId, limit = 50) => request(`/api/knowledge/projects/${projectId}/sessions?limit=${limit}`),
+  getProjectGraph: (projectId) => request(`/api/knowledge/projects/${projectId}/graph`),
+  getHealthScore: (projectId) => request(`/api/knowledge/health-score?project_id=${projectId}`),
+  getRoiMetrics: (projectId) => request(`/api/knowledge/metrics/roi?project_id=${projectId}`),
+  searchKnowledge: (projectId, query) => request(
+    `/api/knowledge/projects/${projectId}/search?q=${encodeURIComponent(query)}`
+  ),
+  // Wave 3: Risk Alerts, Export, Archive
+  getRiskAlerts: (projectId) => request(`/api/knowledge/risk-alerts?projectId=${projectId}`),
+  exportMemory: (projectId) => request(`/api/knowledge/export/memory?projectId=${projectId}`),
+  // v6 polish
+  getProjectBriefing: (projectId, refresh = false) => request(`/api/knowledge/projects/${projectId}/briefing${refresh ? "?refresh=true" : ""}`),
+  getHealthHistory: (projectId, limit = 30) => request(`/api/knowledge/health-score/history?project_id=${projectId}&limit=${limit}`),
+  getArchivedKnowledge: (projectId) => request(`/api/knowledge/projects/${projectId}/archived`),
+  restoreArchivedItem: (projectId, archivedId) => request(`/api/knowledge/projects/${projectId}/archived/${archivedId}/restore`, { method: "POST" }),
+  getWebhookSettings: () => request("/api/settings/webhook"),
+  setWebhookSettings: (webhookUrl, webhookSecret) => request("/api/settings/webhook", {
+    method: "PUT",
+    body: JSON.stringify({ webhookUrl, webhookSecret })
   })
 };
 export {

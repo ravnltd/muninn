@@ -8,7 +8,8 @@ import "../../../../chunks/root.js";
 import "../../../../chunks/state.svelte.js";
 import { a as api, A as ApiError } from "../../../../chunks/api.js";
 import { g as getAuth } from "../../../../chunks/auth.svelte.js";
-import { H as Header, C as Card } from "../../../../chunks/Card.js";
+import { H as Header } from "../../../../chunks/Header.js";
+import { C as Card } from "../../../../chunks/Card.js";
 import { B as Button } from "../../../../chunks/Button.js";
 import { B as Badge } from "../../../../chunks/Badge.js";
 function _page($$renderer, $$props) {

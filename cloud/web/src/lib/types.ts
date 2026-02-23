@@ -117,6 +117,7 @@ export interface DecisionInfo {
   status: string;
   outcome: string | null;
   temperature: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -129,6 +130,7 @@ export interface LearningInfo {
   context: string | null;
   confidence: number;
   temperature: string | null;
+  archived_at: string | null;
   auto_reinforcement_count: number;
   created_at: string;
   updated_at: string;
@@ -228,6 +230,32 @@ export interface ExportedMemory {
   issues: Array<Record<string, unknown>>;
   sessions: Array<Record<string, unknown>>;
   archived: Array<Record<string, unknown>>;
+}
+
+export interface ArchivedItem {
+  id: number;
+  source_table: string;
+  source_id: number;
+  title: string;
+  content: string | null;
+  reason: string | null;
+  archived_at: string;
+}
+
+export interface HealthScoreHistoryPoint {
+  score: number;
+  computed_at: string;
+}
+
+export interface ProjectBriefing {
+  briefing: string;
+  generatedAt: string;
+  sections: Array<{ section: string; content: string }>;
+}
+
+export interface WebhookSettings {
+  webhookUrl: string;
+  webhookSecret: string;
 }
 
 export interface MonthlyReport {

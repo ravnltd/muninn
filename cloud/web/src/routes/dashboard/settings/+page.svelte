@@ -17,6 +17,13 @@
   let savingDb = $state(false);
   let dbMsg = $state('');
 
+  // Webhook
+  let webhookUrl = $state('');
+  let webhookSecret = $state('');
+  let savingWebhook = $state(false);
+  let webhookMsg = $state('');
+  let webhookLoaded = $state(false);
+
   // Export
   let exporting = $state(false);
 
@@ -25,6 +32,34 @@
   let deleteConfirm = $state('');
   let deleting = $state(false);
   let error = $state('');
+
+  async function loadWebhookSettings() {
+    try {
+      const settings = await api.getWebhookSettings();
+      webhookUrl = settings.webhookUrl;
+      webhookSecret = settings.webhookSecret;
+      webhookLoaded = true;
+    } catch { /* ignore */ }
+  }
+
+  async function saveWebhook() {
+    savingWebhook = true;
+    webhookMsg = '';
+    try {
+      await api.setWebhookSettings(webhookUrl, webhookSecret);
+      webhookMsg = 'Webhook configuration saved.';
+      webhookSecret = '';
+      await loadWebhookSettings();
+    } catch (err) {
+      webhookMsg = err instanceof ApiError ? err.message : 'Failed to save';
+    } finally {
+      savingWebhook = false;
+    }
+  }
+
+  onMount(() => {
+    loadWebhookSettings();
+  });
 
   async function saveDatabase() {
     savingDb = true;
@@ -115,6 +150,31 @@
       <Input type="password" label="Auth Token" placeholder="Your Turso auth token" bind:value={dbToken} />
       <Button type="submit" variant="secondary" loading={savingDb} disabled={savingDb || !dbUrl || !dbToken}>
         Save configuration
+      </Button>
+    </form>
+  </Card>
+
+  <!-- Webhook -->
+  <Card>
+    <h3 class="font-semibold mb-1">Webhook notifications</h3>
+    <p class="text-sm text-zinc-400 mb-4">Receive HTTP POST notifications for memory events (new learnings, decisions, alerts).</p>
+
+    {#if webhookMsg}
+      <div class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-2 rounded-lg text-sm mb-4">
+        {webhookMsg}
+      </div>
+    {/if}
+
+    <form onsubmit={(e) => { e.preventDefault(); saveWebhook(); }} class="space-y-3">
+      <Input label="Webhook URL" placeholder="https://your-server.com/webhook" bind:value={webhookUrl} />
+      <Input
+        type="password"
+        label="Webhook Secret"
+        placeholder={webhookLoaded && webhookSecret ? webhookSecret : 'Shared secret for signature verification'}
+        bind:value={webhookSecret}
+      />
+      <Button type="submit" variant="secondary" loading={savingWebhook} disabled={savingWebhook || !webhookUrl || !webhookSecret}>
+        Save webhook
       </Button>
     </form>
   </Card>

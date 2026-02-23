@@ -9,6 +9,7 @@ import { g as getAuth } from "../../../chunks/auth.svelte.js";
 import { a as ensure_array_like, b as attr, c as attr_class, d as stringify, e as escape_html, f as store_get, u as unsubscribe_stores } from "../../../chunks/index2.js";
 import { p as page } from "../../../chunks/stores.js";
 import { B as Badge } from "../../../chunks/Badge.js";
+import { S as Spinner } from "../../../chunks/Spinner.js";
 function Sidebar($$renderer, $$props) {
   $$renderer.component(($$renderer2) => {
     var $$store_subs;
@@ -28,6 +29,11 @@ function Sidebar($$renderer, $$props) {
         href: "/dashboard/usage",
         label: "Usage",
         icon: "M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z"
+      },
+      {
+        href: "/dashboard/knowledge",
+        label: "Knowledge",
+        icon: "M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25"
       },
       {
         href: "/dashboard/team",
@@ -72,11 +78,6 @@ function Sidebar($$renderer, $$props) {
     $$renderer2.push(`<!--]--> <button class="flex items-center gap-3 px-3 py-2 w-full text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 rounded-lg transition-colors mt-1"><svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"></path></svg> Log out</button></div></aside>`);
     if ($$store_subs) unsubscribe_stores($$store_subs);
   });
-}
-function Spinner($$renderer, $$props) {
-  let { size = "md" } = $$props;
-  const sizes = { sm: "w-4 h-4", md: "w-6 h-6", lg: "w-8 h-8" };
-  $$renderer.push(`<svg${attr_class(`${stringify(sizes[size])} animate-spin text-emerald-400`)} fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`);
 }
 function _layout($$renderer, $$props) {
   $$renderer.component(($$renderer2) => {

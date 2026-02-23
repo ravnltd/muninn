@@ -17,6 +17,19 @@
 	"/dashboard/billing": [
 		"src/routes/dashboard/+layout.ts"
 	],
+	"/dashboard/knowledge": [
+		"src/routes/dashboard/+layout.ts",
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/knowledge/graph": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/knowledge/reports": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/knowledge/timeline": [
+		"src/routes/dashboard/+layout.ts"
+	],
 	"/dashboard/settings": [
 		"src/routes/dashboard/+layout.ts"
 	],

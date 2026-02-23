@@ -2,7 +2,8 @@ import { e as escape_html } from "../../../../chunks/index2.js";
 import "clsx";
 import { a as api, A as ApiError } from "../../../../chunks/api.js";
 import { g as getAuth } from "../../../../chunks/auth.svelte.js";
-import { H as Header, C as Card } from "../../../../chunks/Card.js";
+import { H as Header } from "../../../../chunks/Header.js";
+import { C as Card } from "../../../../chunks/Card.js";
 import { B as Button } from "../../../../chunks/Button.js";
 import { I as Input } from "../../../../chunks/Input.js";
 import { M as Modal } from "../../../../chunks/Modal.js";
@@ -12,6 +13,9 @@ function _page($$renderer, $$props) {
     let dbUrl = "";
     let dbToken = "";
     let savingDb = false;
+    let webhookUrl = "";
+    let webhookSecret = "";
+    let savingWebhook = false;
     let exporting = false;
     let deleteModal = false;
     let deleteConfirm = "";
@@ -105,6 +109,51 @@ function _page($$renderer, $$props) {
             disabled: !dbUrl || !dbToken,
             children: ($$renderer5) => {
               $$renderer5.push(`<!---->Save configuration`);
+            }
+          });
+          $$renderer4.push(`<!----></form>`);
+        }
+      });
+      $$renderer3.push(`<!----> `);
+      Card($$renderer3, {
+        children: ($$renderer4) => {
+          $$renderer4.push(`<h3 class="font-semibold mb-1">Webhook notifications</h3> <p class="text-sm text-zinc-400 mb-4">Receive HTTP POST notifications for memory events (new learnings, decisions, alerts).</p> `);
+          {
+            $$renderer4.push("<!--[!-->");
+          }
+          $$renderer4.push(`<!--]--> <form class="space-y-3">`);
+          Input($$renderer4, {
+            label: "Webhook URL",
+            placeholder: "https://your-server.com/webhook",
+            get value() {
+              return webhookUrl;
+            },
+            set value($$value) {
+              webhookUrl = $$value;
+              $$settled = false;
+            }
+          });
+          $$renderer4.push(`<!----> `);
+          Input($$renderer4, {
+            type: "password",
+            label: "Webhook Secret",
+            placeholder: "Shared secret for signature verification",
+            get value() {
+              return webhookSecret;
+            },
+            set value($$value) {
+              webhookSecret = $$value;
+              $$settled = false;
+            }
+          });
+          $$renderer4.push(`<!----> `);
+          Button($$renderer4, {
+            type: "submit",
+            variant: "secondary",
+            loading: savingWebhook,
+            disabled: !webhookUrl || !webhookSecret,
+            children: ($$renderer5) => {
+              $$renderer5.push(`<!---->Save webhook`);
             }
           });
           $$renderer4.push(`<!----></form>`);

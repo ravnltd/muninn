@@ -190,6 +190,24 @@ async function applyMigrations(adapter: DatabaseAdapter): Promise<void> {
     // Non-fatal
   }
 
+  // Tenant settings (webhook config, etc.)
+  try {
+    await adapter.exec(`
+      CREATE TABLE IF NOT EXISTS tenant_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(tenant_id, key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_tenant_settings_tenant ON tenant_settings(tenant_id);
+    `);
+  } catch {
+    // Non-fatal
+  }
+
   // Data migration: Create owner user for each existing tenant
   try {
     const tenants = await adapter.all<{ id: string; email: string; name: string | null; password_hash: string }>(

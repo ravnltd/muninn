@@ -1,7 +1,8 @@
 import { a as ensure_array_like, e as escape_html } from "../../../../chunks/index2.js";
 import { a as api, A as ApiError } from "../../../../chunks/api.js";
 import { D as DataTable, a as formatDate } from "../../../../chunks/DataTable.js";
-import { H as Header, C as Card } from "../../../../chunks/Card.js";
+import { H as Header } from "../../../../chunks/Header.js";
+import { C as Card } from "../../../../chunks/Card.js";
 import { B as Button } from "../../../../chunks/Button.js";
 import { I as Input } from "../../../../chunks/Input.js";
 import { B as Badge } from "../../../../chunks/Badge.js";

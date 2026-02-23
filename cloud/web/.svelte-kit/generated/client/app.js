@@ -16,23 +16,32 @@ export const nodes = [
 	() => import('./nodes/12'),
 	() => import('./nodes/13'),
 	() => import('./nodes/14'),
-	() => import('./nodes/15')
+	() => import('./nodes/15'),
+	() => import('./nodes/16'),
+	() => import('./nodes/17'),
+	() => import('./nodes/18'),
+	() => import('./nodes/19'),
+	() => import('./nodes/20')
 ];
 
 export const server_loads = [];
 
 export const dictionary = {
-		"/(marketing)": [7,[3]],
-		"/dashboard": [10,[4]],
-		"/dashboard/api-keys": [11,[4]],
-		"/dashboard/billing": [12,[4]],
-		"/dashboard/settings": [13,[4]],
-		"/dashboard/team": [14,[4]],
-		"/dashboard/usage": [15,[4]],
-		"/(marketing)/docs": [8,[3]],
-		"/(auth)/login": [5,[2]],
-		"/(marketing)/pricing": [9,[3]],
-		"/(auth)/signup": [6,[2]]
+		"/(marketing)": [8,[3]],
+		"/dashboard": [11,[4]],
+		"/dashboard/api-keys": [12,[4]],
+		"/dashboard/billing": [13,[4]],
+		"/dashboard/knowledge": [14,[4,5]],
+		"/dashboard/knowledge/graph": [15,[4,5]],
+		"/dashboard/knowledge/reports": [16,[4,5]],
+		"/dashboard/knowledge/timeline": [17,[4,5]],
+		"/dashboard/settings": [18,[4]],
+		"/dashboard/team": [19,[4]],
+		"/dashboard/usage": [20,[4]],
+		"/(marketing)/docs": [9,[3]],
+		"/(auth)/login": [6,[2]],
+		"/(marketing)/pricing": [10,[3]],
+		"/(auth)/signup": [7,[2]]
 	};
 
 export const hooks = {

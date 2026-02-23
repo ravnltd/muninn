@@ -298,7 +298,7 @@ knowledgeRoutes.get("/projects/:id/memory", async (c) => {
         [projectId, limit, offset],
       ),
       safeAll(db,
-        "SELECT id, title, decision, status, outcome, outcome_notes, temperature, archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "SELECT id, title, decision, status, outcome, outcome_notes, temperature, archived_at, created_at FROM decisions WHERE project_id = ? AND (archived_at IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?",
         "SELECT id, title, decision, status, NULL as outcome, NULL as outcome_notes, NULL as temperature, NULL as archived_at, created_at FROM decisions WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
         [projectId, limit, offset],
       ),
@@ -308,7 +308,7 @@ knowledgeRoutes.get("/projects/:id/memory", async (c) => {
         [projectId, limit, offset],
       ),
       safeAll(db,
-        "SELECT id, title, content, category, confidence, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "SELECT id, title, content, category, confidence, temperature, archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) AND (archived_at IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?",
         "SELECT id, title, content, NULL as category, NULL as confidence, NULL as temperature, NULL as archived_at, created_at FROM learnings WHERE (project_id = ? OR project_id IS NULL) ORDER BY created_at DESC LIMIT ? OFFSET ?",
         [projectId, limit, offset],
       ),
@@ -470,6 +470,122 @@ knowledgeRoutes.get("/metrics/roi", async (c) => {
 });
 
 // ============================================================================
+// Health Score History (v6 polish)
+// ============================================================================
+
+knowledgeRoutes.get("/health-score/history", async (c) => {
+  const tenantId = c.get("tenantId");
+  const projectIdParam = c.req.query("project_id");
+  if (!projectIdParam) return c.json({ error: "project_id required" }, 400);
+
+  const projectId = parseProjectId(projectIdParam);
+  if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
+
+  const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "30", 10) || 30, 1), 90);
+
+  try {
+    const db = await getTenantDb(tenantId);
+    const history = await safeAll<{ score: number; computed_at: string }>(
+      db,
+      `SELECT score, computed_at FROM health_score_history WHERE project_id = ? ORDER BY computed_at DESC LIMIT ?`,
+      `SELECT 0 as score, '' as computed_at WHERE 0`,
+      [projectId, limit],
+    );
+    return c.json({ history });
+  } catch (e) {
+    console.error("Knowledge API error:", e);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ============================================================================
+// Project Briefing (v6 polish)
+// ============================================================================
+
+knowledgeRoutes.get("/projects/:id/briefing", async (c) => {
+  const projectId = parseProjectId(c.req.param("id"));
+  if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
+
+  const tenantId = c.get("tenantId");
+  const refresh = c.req.query("refresh") === "true";
+
+  try {
+    const db = await getTenantDb(tenantId);
+    const { generateOnboardingContext, formatOnboardingContext } = await import(
+      "../../src/team/onboarding.js"
+    );
+    const context = await generateOnboardingContext(db, projectId, refresh);
+    const briefing = formatOnboardingContext(context);
+    return c.json({
+      briefing,
+      generatedAt: context.generatedAt,
+      sections: context.sections,
+    });
+  } catch (e) {
+    console.error("Knowledge API error:", e);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ============================================================================
+// Archived Knowledge (v6 polish)
+// ============================================================================
+
+knowledgeRoutes.get("/projects/:id/archived", async (c) => {
+  const projectId = parseProjectId(c.req.param("id"));
+  if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
+
+  const tenantId = c.get("tenantId");
+  try {
+    const db = await getTenantDb(tenantId);
+    const archived = await safeAll<{
+      id: number;
+      source_table: string;
+      source_id: number;
+      title: string;
+      content: string | null;
+      reason: string | null;
+      archived_at: string;
+    }>(
+      db,
+      `SELECT id, source_table, source_id, title, content, reason, archived_at
+       FROM archived_knowledge WHERE project_id = ?
+       ORDER BY archived_at DESC LIMIT 100`,
+      `SELECT 0 as id, '' as source_table, 0 as source_id, '' as title, NULL as content, NULL as reason, '' as archived_at WHERE 0`,
+      [projectId],
+    );
+    return c.json({ archived });
+  } catch (e) {
+    console.error("Knowledge API error:", e);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+knowledgeRoutes.post("/projects/:id/archived/:archivedId/restore", async (c) => {
+  const projectId = parseProjectId(c.req.param("id"));
+  if (!projectId) return c.json({ error: "Invalid project ID" }, 400);
+
+  const archivedId = parseInt(c.req.param("archivedId"), 10);
+  if (!Number.isFinite(archivedId) || archivedId <= 0) {
+    return c.json({ error: "Invalid archived ID" }, 400);
+  }
+
+  const tenantId = c.get("tenantId");
+  try {
+    const db = await getTenantDb(tenantId);
+    const { restoreArchivedItem } = await import(
+      "../../src/outcomes/knowledge-archiver.js"
+    );
+    await restoreArchivedItem(db, projectId, archivedId);
+    return c.json({ restored: true });
+  } catch (e) {
+    console.error("Knowledge API error:", e);
+    const msg = e instanceof Error ? e.message : "Internal server error";
+    return c.json({ error: msg }, msg === "Archived item not found" ? 404 : 500);
+  }
+});
+
+// ============================================================================
 // Memory Export (Wave 3H)
 // ============================================================================
 
@@ -518,8 +634,8 @@ knowledgeRoutes.get("/risk-alerts", async (c) => {
        FROM risk_alerts WHERE project_id = ? AND dismissed = 0
        ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC
        LIMIT 20`,
-      [projectId],
       `SELECT 0 as id, '' as alert_type, '' as severity, '' as title, NULL as details, NULL as source_file, '' as created_at WHERE 0`,
+      [projectId],
     );
     return c.json({ alerts });
   } catch (e) {

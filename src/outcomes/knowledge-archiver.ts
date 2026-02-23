@@ -168,6 +168,39 @@ export async function archiveStaleKnowledge(
   };
 }
 
+/** Restore a previously archived item back to active status */
+export async function restoreArchivedItem(
+  db: DatabaseAdapter,
+  projectId: number,
+  archivedId: number,
+): Promise<void> {
+  const row = await db.get<{
+    id: number;
+    source_table: string;
+    source_id: number;
+  }>(
+    `SELECT id, source_table, source_id FROM archived_knowledge
+     WHERE id = ? AND project_id = ?`,
+    [archivedId, projectId],
+  );
+
+  if (!row) {
+    throw new Error("Archived item not found");
+  }
+
+  if (row.source_table === "learnings" || row.source_table === "decisions") {
+    await db.run(
+      `UPDATE ${row.source_table} SET archived_at = NULL WHERE id = ?`,
+      [row.source_id],
+    );
+  }
+
+  await db.run(
+    `DELETE FROM archived_knowledge WHERE id = ?`,
+    [archivedId],
+  );
+}
+
 /** Export all memory for a project (active + archived) */
 export async function exportMemory(
   db: DatabaseAdapter,

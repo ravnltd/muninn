@@ -2,20 +2,24 @@ import type {
   AccountResponse,
   ApiKeyCreated,
   ApiKeyRecord,
+  ArchivedItem,
   ExportedMemory,
   GraphData,
   HealthScore,
+  HealthScoreHistoryPoint,
   Invitation,
   KnowledgeMemory,
   LoginResponse,
   Project,
+  ProjectBriefing,
   RiskAlert,
   RoiMetrics,
   SessionInfo,
   SignupResponse,
   SsoConfig,
   TeamMember,
-  UsageInfo
+  UsageInfo,
+  WebhookSettings
 } from './types';
 
 const API_BASE = import.meta.env.DEV ? '' : 'https://api.muninn.pro';
@@ -205,10 +209,10 @@ export const api = {
     request<GraphData>(`/api/knowledge/projects/${projectId}/graph`),
 
   getHealthScore: (projectId: number) =>
-    request<HealthScore>(`/api/knowledge/health-score?projectId=${projectId}`),
+    request<HealthScore>(`/api/knowledge/health-score?project_id=${projectId}`),
 
   getRoiMetrics: (projectId: number) =>
-    request<RoiMetrics>(`/api/knowledge/metrics/roi?projectId=${projectId}`),
+    request<RoiMetrics>(`/api/knowledge/metrics/roi?project_id=${projectId}`),
 
   searchKnowledge: (projectId: number, query: string) =>
     request<{ results: Array<{ type: string; id: number; title: string; snippet: string; score: number }> }>(
@@ -220,7 +224,29 @@ export const api = {
     request<{ alerts: RiskAlert[] }>(`/api/knowledge/risk-alerts?projectId=${projectId}`),
 
   exportMemory: (projectId: number) =>
-    request<ExportedMemory>(`/api/knowledge/export/memory?projectId=${projectId}`)
+    request<ExportedMemory>(`/api/knowledge/export/memory?projectId=${projectId}`),
+
+  // v6 polish
+  getProjectBriefing: (projectId: number, refresh = false) =>
+    request<ProjectBriefing>(`/api/knowledge/projects/${projectId}/briefing${refresh ? '?refresh=true' : ''}`),
+
+  getHealthHistory: (projectId: number, limit = 30) =>
+    request<{ history: HealthScoreHistoryPoint[] }>(`/api/knowledge/health-score/history?project_id=${projectId}&limit=${limit}`),
+
+  getArchivedKnowledge: (projectId: number) =>
+    request<{ archived: ArchivedItem[] }>(`/api/knowledge/projects/${projectId}/archived`),
+
+  restoreArchivedItem: (projectId: number, archivedId: number) =>
+    request<{ restored: boolean }>(`/api/knowledge/projects/${projectId}/archived/${archivedId}/restore`, { method: 'POST' }),
+
+  getWebhookSettings: () =>
+    request<WebhookSettings>('/api/settings/webhook'),
+
+  setWebhookSettings: (webhookUrl: string, webhookSecret: string) =>
+    request<{ success: boolean }>('/api/settings/webhook', {
+      method: 'PUT',
+      body: JSON.stringify({ webhookUrl, webhookSecret })
+    })
 };
 
 export { ApiError };

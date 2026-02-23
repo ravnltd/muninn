@@ -1,7 +1,8 @@
 import { e as escape_html, i as derived } from "../../../chunks/index2.js";
 import { g as getAuth } from "../../../chunks/auth.svelte.js";
-import { H as Header, C as Card } from "../../../chunks/Card.js";
+import { H as Header } from "../../../chunks/Header.js";
 import "clsx";
+import { C as Card } from "../../../chunks/Card.js";
 import { C as CodeBlock } from "../../../chunks/CodeBlock.js";
 function StatCard($$renderer, $$props) {
   let { label, value, subtitle } = $$props;
@@ -37,6 +38,14 @@ function _page($$renderer, $$props) {
     $$renderer2.push(`<!----> `);
     StatCard($$renderer2, { label: "Period", value: "..." });
     $$renderer2.push(`<!----></div> `);
+    {
+      $$renderer2.push("<!--[!-->");
+    }
+    $$renderer2.push(`<!--]--> `);
+    {
+      $$renderer2.push("<!--[!-->");
+    }
+    $$renderer2.push(`<!--]--> `);
     {
       $$renderer2.push("<!--[!-->");
     }

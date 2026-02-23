@@ -1,0 +1,1 @@
+import{w as f,x as u,H as _,E as o,y as t,C as g,z as i,A as l,B as d,D as p,F as m}from"./DEIXV2yr.js";function C(n,r){let s=null,E=t;var a;if(t){s=p;for(var e=m(document.head);e!==null&&(e.nodeType!==g||e.data!==n);)e=i(e);if(e===null)l(!1);else{var y=i(e);e.remove(),d(y)}}t||(a=document.head.appendChild(f()));try{u(()=>r(a),_|o)}finally{E&&(l(!0),d(s))}}export{C as h};

@@ -13,10 +13,11 @@
     LearningInfo,
     IssueInfo,
     HealthScore,
-    KnowledgeMemory
+    KnowledgeMemory,
+    ArchivedItem
   } from '$lib/types';
 
-  type Tab = 'files' | 'decisions' | 'learnings' | 'issues';
+  type Tab = 'files' | 'decisions' | 'learnings' | 'issues' | 'archived';
   type SelectedItem = FileInfo | DecisionInfo | LearningInfo | IssueInfo;
 
   let projects = $state<Project[]>([]);
@@ -27,8 +28,10 @@
   let searchQuery = $state('');
   let debouncedQuery = $state('');
   let selectedItem = $state<SelectedItem | null>(null);
+  let archivedItems = $state<ArchivedItem[]>([]);
   let loading = $state(true);
   let loadingMemory = $state(false);
+  let restoringId = $state<number | null>(null);
 
   // Debounce search input (300ms)
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -46,6 +49,7 @@
   const decisionCt = $derived(memory?.decisions.length ?? 0);
   const learningCt = $derived(memory?.learnings.length ?? 0);
   const issueCt = $derived(memory?.issues.length ?? 0);
+  const archivedCt = $derived(archivedItems.length);
 
   // Filtered items per tab
   const filteredFiles = $derived(filterItems(memory?.files ?? [], debouncedQuery, fileSearchText));
@@ -97,13 +101,16 @@
 
     Promise.all([
       api.getProjectMemory(projectId),
-      api.getHealthScore(projectId)
-    ]).then(([mem, hs]) => {
+      api.getHealthScore(projectId),
+      api.getArchivedKnowledge(projectId).then(r => r.archived).catch(() => [])
+    ]).then(([mem, hs, arch]) => {
       memory = mem;
       healthScore = hs;
+      archivedItems = arch;
     }).catch(() => {
       memory = null;
       healthScore = null;
+      archivedItems = [];
     }).finally(() => {
       loadingMemory = false;
     });
@@ -180,6 +187,29 @@
   function fileName(path: string): string {
     const parts = path.split('/');
     return parts[parts.length - 1] ?? path;
+  }
+
+  function sourceLabel(table: string): string {
+    if (table === 'learnings') return 'Learning';
+    if (table === 'decisions') return 'Decision';
+    if (table === 'issues') return 'Issue';
+    return table;
+  }
+
+  function sourceVariant(table: string): 'default' | 'warning' | 'success' {
+    if (table === 'learnings') return 'success';
+    if (table === 'decisions') return 'warning';
+    return 'default';
+  }
+
+  async function restoreArchived(item: ArchivedItem) {
+    if (!selectedProjectId) return;
+    restoringId = item.id;
+    try {
+      await api.restoreArchivedItem(selectedProjectId, item.id);
+      archivedItems = archivedItems.filter(a => a.id !== item.id);
+    } catch { /* ignore */ }
+    restoringId = null;
   }
 
   function fileDir(path: string): string {
@@ -272,7 +302,8 @@
             { key: 'files' as Tab, label: 'Files', count: fileCt },
             { key: 'decisions' as Tab, label: 'Decisions', count: decisionCt },
             { key: 'learnings' as Tab, label: 'Learnings', count: learningCt },
-            { key: 'issues' as Tab, label: 'Issues', count: issueCt }
+            { key: 'issues' as Tab, label: 'Issues', count: issueCt },
+            { key: 'archived' as Tab, label: 'Archived', count: archivedCt }
           ] as tab}
             <button
               role="tab"
@@ -401,6 +432,33 @@
             {:else}
               <div class="text-center py-8 text-sm text-zinc-500">
                 {debouncedQuery ? 'No issues match your search.' : 'No issues tracked yet.'}
+              </div>
+            {/each}
+
+          {:else if activeTab === 'archived'}
+            {#each archivedItems as item (item.id)}
+              <div class="px-3 py-2.5 rounded-lg border border-transparent hover:bg-zinc-800/50">
+                <div class="flex items-center gap-2">
+                  <Badge variant={sourceVariant(item.source_table)}>{sourceLabel(item.source_table)}</Badge>
+                  <span class="text-sm text-zinc-200 truncate flex-1">{item.title}</span>
+                </div>
+                {#if item.reason}
+                  <p class="text-xs text-zinc-500 mt-0.5 truncate">{item.reason}</p>
+                {/if}
+                <div class="flex items-center justify-between mt-1">
+                  <span class="text-xs text-zinc-600">{formatDate(item.archived_at)}</span>
+                  <button
+                    onclick={() => restoreArchived(item)}
+                    disabled={restoringId === item.id}
+                    class="text-xs text-emerald-400 hover:text-emerald-300 transition-colors disabled:opacity-50"
+                  >
+                    {restoringId === item.id ? 'Restoring...' : 'Restore'}
+                  </button>
+                </div>
+              </div>
+            {:else}
+              <div class="text-center py-8 text-sm text-zinc-500">
+                No archived items.
               </div>
             {/each}
           {/if}

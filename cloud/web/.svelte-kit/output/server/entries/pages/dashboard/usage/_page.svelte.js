@@ -1,5 +1,6 @@
 import "clsx";
-import { H as Header, C as Card } from "../../../../chunks/Card.js";
+import { H as Header } from "../../../../chunks/Header.js";
+import { C as Card } from "../../../../chunks/Card.js";
 function _page($$renderer, $$props) {
   $$renderer.component(($$renderer2) => {
     $$renderer2.push(`<div class="max-w-4xl space-y-8">`);
