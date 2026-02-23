@@ -22,8 +22,8 @@ let consecutiveSlowCalls = 0;
 
 // Rate-limited exception tracking: survive sporadic exceptions, die on systemic failure
 const exceptionWindow: number[] = [];
-const EXCEPTION_WINDOW_MS = 60_000;
-const MAX_EXCEPTIONS_IN_WINDOW = 10;
+const EXCEPTION_WINDOW_MS = 120_000;
+const MAX_EXCEPTIONS_IN_WINDOW = 30;
 
 // Track whether session has been auto-started for this process lifetime
 let sessionAutoStarted = false;
@@ -129,14 +129,31 @@ export function setBudgetWeightsLoaded(v: boolean): void {
 // Exception Classification
 // ============================================================================
 
-/** Exceptions that don't count toward the crash threshold */
+/** Exceptions that don't count toward the crash threshold.
+ *  Broadly classify to avoid killing the server over transient errors.
+ *  The server should only die for truly systemic failures. */
 export function isExpectedException(error: Error): boolean {
   const msg = error.message.toLowerCase();
   return msg.includes("validation") ||
     msg.includes("invalid params") ||
     msg.includes("not found") ||
     msg.includes("circuit breaker open") ||
-    msg.includes("must be called before");
+    msg.includes("must be called before") ||
+    msg.includes("timeout") ||
+    msg.includes("abort") ||
+    msg.includes("econnrefused") ||
+    msg.includes("econnreset") ||
+    msg.includes("epipe") ||
+    msg.includes("fetch failed") ||
+    msg.includes("network") ||
+    msg.includes("socket") ||
+    msg.includes("sql") ||
+    msg.includes("sqlite") ||
+    msg.includes("no such table") ||
+    msg.includes("no such column") ||
+    msg.includes("database") ||
+    msg.includes("busy") ||
+    msg.includes("locked");
 }
 
 // ============================================================================

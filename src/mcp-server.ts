@@ -531,15 +531,31 @@ async function main(): Promise<void> {
   // --- MCP server error/close handlers (set BEFORE connect to avoid race) ---
   server.onerror = (error) => {
     log.error(`MCP server error: ${error instanceof Error ? error.message : String(error)}`);
+    // Don't crash on server errors — they're recoverable
   };
   server.onclose = () => {
-    log.info("MCP server connection closed");
-    shutdown(0);
+    log.info("MCP server connection closed — checking if stdin is still open");
+    // Only shutdown if stdin is truly dead. The MCP SDK may fire onclose
+    // transiently during reconnection.
+    if (process.stdin.destroyed || process.stdin.readableEnded) {
+      log.info("stdin is dead — shutting down");
+      shutdown(0);
+    } else {
+      log.warn("onclose fired but stdin still alive — staying up for potential reconnect");
+    }
   };
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log.info("MCP-native session ready — session auto-start/end works for any MCP client");
+
+  // Write PID file for watchdog detection
+  try {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync("/tmp/muninn-mcp.pid", String(process.pid));
+  } catch {
+    // Non-critical
+  }
 
   // --- Database keepalive: prevent connection staleness ---
   // Ping every 5 minutes. Monitor-only — the adapter's circuit breaker
