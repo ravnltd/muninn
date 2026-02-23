@@ -59,8 +59,8 @@ export async function createCheckoutSession(
     customer: customerId,
     mode: "subscription",
     line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `https://muninn.pro/billing?success=true`,
-    cancel_url: `https://muninn.pro/billing?canceled=true`,
+    success_url: `https://muninn.pro/dashboard/billing?success=true`,
+    cancel_url: `https://muninn.pro/dashboard/billing?canceled=true`,
     metadata: { tenantId },
   });
 
@@ -91,7 +91,7 @@ export async function createBillingPortalSession(
 
   const session = await stripe.billingPortal.sessions.create({
     customer: tenant.stripe_customer_id,
-    return_url: "https://muninn.pro/billing",
+    return_url: "https://muninn.pro/dashboard/billing",
   });
 
   return { url: session.url };

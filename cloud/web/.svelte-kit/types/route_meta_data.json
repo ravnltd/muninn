@@ -1,0 +1,41 @@
+{
+	"/(marketing)": [
+		"src/routes/(marketing)/+layout.ts",
+		"src/routes/(marketing)/+layout.ts"
+	],
+	"/(auth)": [
+		"src/routes/(auth)/+layout.ts"
+	],
+	"/": [],
+	"/dashboard": [
+		"src/routes/dashboard/+layout.ts",
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/api-keys": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/billing": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/settings": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/team": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/dashboard/usage": [
+		"src/routes/dashboard/+layout.ts"
+	],
+	"/(marketing)/docs": [
+		"src/routes/(marketing)/+layout.ts"
+	],
+	"/(auth)/login": [
+		"src/routes/(auth)/+layout.ts"
+	],
+	"/(marketing)/pricing": [
+		"src/routes/(marketing)/+layout.ts"
+	],
+	"/(auth)/signup": [
+		"src/routes/(auth)/+layout.ts"
+	]
+}

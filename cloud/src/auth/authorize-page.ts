@@ -124,7 +124,7 @@ export function renderAuthorizePage(params: AuthorizePageParams): string {
       ` : ""}
 
       <p class="text-center text-xs text-zinc-500 mt-4">
-        Don't have an account? <a href="https://muninn.pro" class="text-emerald-400 hover:underline">Sign up</a>
+        Don't have an account? <a href="https://muninn.pro/signup" class="text-emerald-400 hover:underline">Sign up</a>
       </p>
     </div>
   </div>

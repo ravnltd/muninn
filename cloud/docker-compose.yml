@@ -49,7 +49,7 @@ services:
       - "80:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./pages:/srv/pages:ro
+      - ./web/build:/srv/web:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
