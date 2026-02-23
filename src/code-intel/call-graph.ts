@@ -9,9 +9,12 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { createLogger } from "../lib/logger";
 import type { ExtractedSymbol } from "./ast-parser";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
+
+const log = createLogger("call-graph");
 
 // ============================================================================
 // Types
@@ -292,8 +295,8 @@ export async function buildAndPersistCallGraph(
         );
         totalEdges++;
       }
-    } catch {
-      // Skip files that fail to parse
+    } catch (e) {
+      log.debug("Failed to build call graph for file", { file: filePath, error: e instanceof Error ? e.message : String(e) });
     }
   }
 

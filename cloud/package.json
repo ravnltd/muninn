@@ -7,6 +7,8 @@
     "dev": "bun run --watch src/server.ts",
     "start": "bun run src/server.ts",
     "build": "bun build ./src/server.ts --compile --outfile=muninn-cloud",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
     "typecheck": "bun x tsc --noEmit"
   },
   "dependencies": {

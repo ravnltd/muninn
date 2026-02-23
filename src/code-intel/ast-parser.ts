@@ -9,8 +9,11 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { createLogger } from "../lib/logger";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
+
+const log = createLogger("ast-parser");
 
 // ============================================================================
 // Types
@@ -285,7 +288,8 @@ export function parseFile(filePath: string, projectPath: string): ParsedFile | n
     const symbols = extractSymbols(content, filePath);
 
     return { path: filePath, symbols, contentHash };
-  } catch {
+  } catch (e) {
+    log.debug("Failed to parse file", { file: fullPath, error: e instanceof Error ? e.message : String(e) });
     return null;
   }
 }
@@ -395,7 +399,7 @@ export async function reindexProject(
           files.push(relativeFn(projectPath, fullPath));
         }
       }
-    } catch { /* skip inaccessible dirs */ }
+    } catch (e) { log.debug("Skipping inaccessible directory", { dir, error: e instanceof Error ? e.message : String(e) }); }
   }
 
   walk(projectPath);

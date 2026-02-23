@@ -12,6 +12,8 @@ import { generateApiKey, revokeApiKey, listApiKeys } from "../auth/keys";
 import { getUsage } from "../billing/metering";
 import { createCheckoutSession, createBillingPortalSession } from "../billing/stripe";
 import { bearerAuth, type AuthedEnv } from "./middleware";
+import { sanitizeError, generateRequestId } from "../lib/errors";
+import { logAudit } from "../compliance/audit-log";
 
 const api = new Hono<AuthedEnv>();
 
@@ -39,25 +41,28 @@ api.post("/signup", async (c) => {
     // Auto-generate first API key
     const { key } = await generateApiKey(mgmtDb, tenant.id, "Default");
 
+    await logAudit(tenant.id, "signup", "account", tenant.id, {
+      ip: c.req.header("X-Real-IP") ?? c.req.header("X-Forwarded-For"),
+    });
+
     return c.json({
       tenant: { id: tenant.id, email: tenant.email, name: tenant.name, plan: tenant.plan },
       apiKey: key,
       setup: {
-        command: `claude mcp add --transport http muninn https://api.muninn.pro/mcp --header "Authorization: Bearer ${key}"`,
+        command: `claude mcp add --transport http muninn https://api.muninn.pro/mcp --header "Authorization: Bearer YOUR_API_KEY"`,
+        note: "Replace YOUR_API_KEY with the apiKey value above. This key is shown once — save it now.",
       },
     }, 201);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Signup failed";
-    if (message.includes("already registered")) {
-      return c.json({ error: message }, 409);
-    }
-    return c.json({ error: message }, 500);
+    const requestId = generateRequestId();
+    const safe = sanitizeError(error, "signup", requestId, 500);
+    return c.json({ error: safe.message, requestId: safe.requestId }, safe.status as 500);
   }
 });
 
 const LoginInput = z.object({
   email: z.string().email(),
-  password: z.string().min(1),
+  password: z.string().min(6),
 });
 
 api.post("/login", async (c) => {
@@ -198,8 +203,9 @@ authed.post("/billing/checkout", async (c) => {
     const { url } = await createCheckoutSession(mgmtDb, tenantId, parsed.data.plan);
     return c.json({ url });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Checkout failed";
-    return c.json({ error: message }, 500);
+    const requestId = generateRequestId();
+    const safe = sanitizeError(error, "checkout", requestId, 500);
+    return c.json({ error: safe.message, requestId: safe.requestId }, safe.status as 500);
   }
 });
 
@@ -211,9 +217,36 @@ authed.post("/billing/portal", async (c) => {
     const { url } = await createBillingPortalSession(mgmtDb, tenantId);
     return c.json({ url });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Portal unavailable";
-    return c.json({ error: message }, 400);
+    const requestId = generateRequestId();
+    const safe = sanitizeError(error, "billing-portal", requestId, 400);
+    return c.json({ error: safe.message, requestId: safe.requestId }, safe.status as 400);
   }
+});
+
+// Data export (GDPR Article 20)
+authed.get("/export", async (c) => {
+  const tenantId = c.get("tenantId");
+  const { exportTenantData } = await import("../compliance/data-export");
+  const data = await exportTenantData(tenantId);
+  return c.json(data);
+});
+
+// Data deletion (GDPR Article 17)
+authed.post("/delete-my-data", async (c) => {
+  const tenantId = c.get("tenantId");
+  const { eraseTenantData } = await import("../compliance/data-export");
+  await eraseTenantData(tenantId);
+  return c.json({ success: true, message: "All data has been permanently deleted" });
+});
+
+// Audit log
+authed.get("/audit-log", async (c) => {
+  const tenantId = c.get("tenantId");
+  const limit = Math.min(Number(c.req.query("limit")) || 50, 100);
+  const offset = Math.max(Number(c.req.query("offset")) || 0, 0);
+  const { getAuditLog } = await import("../compliance/audit-log");
+  const result = await getAuditLog(tenantId, limit, offset);
+  return c.json(result);
 });
 
 // Export token (for data portability)

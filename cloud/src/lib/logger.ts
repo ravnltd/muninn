@@ -14,6 +14,7 @@ interface LogEntry {
   path: string;
   status: number;
   duration: number;
+  requestId?: string;
   tenantId?: string;
   error?: string;
 }
@@ -37,6 +38,7 @@ export function structuredLogger() {
     const duration = Date.now() - start;
     const status = c.res.status;
     const tenantId = c.get("tenantId") as string | undefined;
+    const requestId = c.get("requestId") as string | undefined;
 
     const level = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
 
@@ -49,6 +51,7 @@ export function structuredLogger() {
       duration,
     };
 
+    if (requestId) entry.requestId = requestId;
     if (tenantId) entry.tenantId = tenantId;
 
     // Use stderr for errors, stdout for info
@@ -61,15 +64,16 @@ export function structuredLogger() {
 }
 
 /**
- * Log an error with context.
+ * Log an error with context and optional request ID.
  */
-export function logError(context: string, error: unknown): void {
-  const entry = {
+export function logError(context: string, error: unknown, requestId?: string): void {
+  const entry: Record<string, unknown> = {
     timestamp: new Date().toISOString(),
     level: "error",
     context,
     message: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined,
   };
+  if (requestId) entry.requestId = requestId;
   process.stderr.write(JSON.stringify(entry) + "\n");
 }

@@ -13,6 +13,9 @@
 
 import type { DatabaseAdapter, QueryResult } from "../adapter";
 import type { NetworkHealth } from "../health";
+import { createLogger } from "../../lib/logger.js";
+
+const log = createLogger("http-adapter");
 
 // Hrana protocol types (v3/pipeline format)
 // See: https://github.com/libsql/sqld/blob/main/docs/HRANA_3_SPEC.md
@@ -240,7 +243,6 @@ export class HttpAdapter implements DatabaseAdapter {
    */
   private maybeOpenCircuit(): void {
     if (this._circuitState === "half-open") {
-      // Test request failed — reopen with longer cooldown
       this._circuitOpens++;
       const cooldown = Math.min(
         this.CIRCUIT_BASE_MS * 2 ** this._circuitOpens,
@@ -249,6 +251,11 @@ export class HttpAdapter implements DatabaseAdapter {
       this._circuitOpenUntil = Date.now() + cooldown;
       this._circuitState = "open";
       this._lastCircuitOpenAt = Date.now();
+      log.warn("Circuit breaker reopened from half-open", {
+        failures: this._consecutiveFailures,
+        cooldownMs: cooldown,
+        opens: this._circuitOpens,
+      });
       return;
     }
 
@@ -261,6 +268,11 @@ export class HttpAdapter implements DatabaseAdapter {
       this._circuitOpenUntil = Date.now() + cooldown;
       this._circuitState = "open";
       this._lastCircuitOpenAt = Date.now();
+      log.warn("Circuit breaker opened", {
+        failures: this._consecutiveFailures,
+        cooldownMs: cooldown,
+        opens: this._circuitOpens,
+      });
     }
   }
 
@@ -289,8 +301,8 @@ export class HttpAdapter implements DatabaseAdapter {
           `Retry in ${Math.ceil((this._circuitOpenUntil - now) / 1000)}s. Last error: ${this._lastSyncError}`
         );
       }
-      // Cooldown expired — enter half-open: allow exactly 1 test request
       this._circuitState = "half-open";
+      log.warn("Circuit breaker half-open, allowing test request");
     }
 
     const url = `${this.config.primaryUrl}/v3/pipeline`;
@@ -353,15 +365,15 @@ export class HttpAdapter implements DatabaseAdapter {
         this._connected = true;
         this._consecutiveFailures = 0;
 
-        // Half-open success → close circuit
         if (this._circuitState === "half-open") {
           this._circuitState = "closed";
+          log.warn("Circuit breaker closed after successful test request");
         }
 
-        // Reset exponential backoff after 60s of sustained success since last circuit open
         if (this._circuitOpens > 0 && this._lastCircuitOpenAt > 0 &&
             Date.now() - this._lastCircuitOpenAt > this.CIRCUIT_RESET_OPENS_MS) {
           this._circuitOpens = 0;
+          log.info("Circuit breaker backoff counter reset after sustained success");
         }
 
         // SQL-level errors are checked AFTER marking connection healthy.

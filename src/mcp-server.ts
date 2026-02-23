@@ -75,10 +75,9 @@ import {
   handlePassthrough,
 } from "./mcp-handlers.js";
 import { SessionState } from "./session-state.js";
+import { createLogger } from "./lib/logger.js";
 
-function log(msg: string): void {
-  process.stderr.write(`[muninn-mcp] ${msg}\n`);
-}
+const log = createLogger("mcp-server");
 
 // ============================================================================
 // Shared State (initialized once at server startup)
@@ -482,7 +481,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const typedArgs = args as Record<string, unknown>;
   const cwd = (typedArgs.cwd as string) || process.cwd();
 
-  log(`Tool: ${name} args: ${JSON.stringify(args)}`);
+  log.debug(`Tool: ${name}`, { tool: name, args });
 
   // --- v4: Timer created early so catch block can access it ---
   let timer: ReturnType<typeof createToolCallTimer> | null = null;
@@ -780,7 +779,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: "text", text: result }] };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    log(`Error: ${errMsg}`);
+    log.error(errMsg, { tool: name });
 
     // --- v4: Log failed tool call (if timer was created) ---
     timer?.finish(false, errMsg);
@@ -903,9 +902,9 @@ function spawnWorkerIfNeeded(): void {
     });
     // Detach from parent — let worker run independently
     proc.unref();
-    log("Spawned background worker");
+    log.info("Spawned background worker");
   } catch (err) {
-    log(`Failed to spawn worker: ${err instanceof Error ? err.message : String(err)}`);
+    log.error(`Failed to spawn worker: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -921,7 +920,7 @@ async function autoStartSession(db: DatabaseAdapter, projectId: number): Promise
     const mod = await import("./commands/session.js");
     const { captureOutput } = await import("./mcp-handlers.js");
     await captureOutput(async () => { await mod.sessionStart(db, projectId, "Auto-started session"); });
-    log("Auto-started session");
+    log.info("Auto-started session");
   } catch {
     // Non-critical — session tracking is best-effort
   }
@@ -1010,7 +1009,7 @@ async function autoEndSession(): Promise<void> {
     // Spawn worker to process queued jobs
     spawnWorkerIfNeeded();
 
-    log("Auto-ended session");
+    log.info("Auto-ended session");
   } catch {
     // Best-effort — process is exiting
   }
@@ -1021,18 +1020,18 @@ async function autoEndSession(): Promise<void> {
 // ============================================================================
 
 async function main(): Promise<void> {
-  log("Starting Muninn MCP Server v4 (in-process)...");
+  log.info("Starting Muninn MCP Server v4 (in-process)...");
 
   // --- Global error handlers: prevent silent crashes ---
   process.on("unhandledRejection", (reason) => {
-    log(`Unhandled rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+    log.error(`Unhandled rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
   });
   process.on("uncaughtException", (error) => {
-    log(`Uncaught exception: ${error.stack || error.message}`);
+    log.error(`Uncaught exception: ${error.stack || error.message}`);
 
     // Skip expected errors (validation, tool errors) — they don't indicate systemic failure
     if (isExpectedException(error)) {
-      log("Expected exception (not counted toward crash threshold)");
+      log.warn("Expected exception (not counted toward crash threshold)");
       return;
     }
 
@@ -1045,55 +1044,55 @@ async function main(): Promise<void> {
     }
 
     if (exceptionWindow.length >= MAX_EXCEPTIONS_IN_WINDOW) {
-      log(`${exceptionWindow.length} exceptions in ${EXCEPTION_WINDOW_MS / 1000}s — systemic failure, exiting`);
+      log.error(`${exceptionWindow.length} exceptions in ${EXCEPTION_WINDOW_MS / 1000}s — systemic failure, exiting`);
       shutdown(1);
     } else {
-      log(`Exception survived (${exceptionWindow.length}/${MAX_EXCEPTIONS_IN_WINDOW} in window)`);
+      log.warn(`Exception survived (${exceptionWindow.length}/${MAX_EXCEPTIONS_IN_WINDOW} in window)`);
     }
   });
 
   // --- Stdio pipe monitoring: detect broken pipes ---
   process.stdin.on("error", (err) => {
-    log(`stdin error: ${err.message}`);
+    log.error(`stdin error: ${err.message}`);
   });
   process.stdout.on("error", (err) => {
     if (err && "code" in err && err.code === "EPIPE") {
-      log("stdout pipe broken (parent disconnected)");
+      log.warn("stdout pipe broken (parent disconnected)");
       shutdown(0);
     } else {
-      log(`stdout error: ${err.message}`);
+      log.error(`stdout error: ${err.message}`);
     }
   });
   process.stdin.on("end", () => {
-    log("stdin ended (parent disconnected)");
+    log.info("stdin ended (parent disconnected)");
     shutdown(0);
   });
 
   // Pre-warm the DB connection at startup
   try {
     const db = await getDb();
-    log("Database adapter initialized");
+    log.info("Database adapter initialized");
 
     // Pre-warm a default project ID if we have a cwd
     const defaultCwd = process.cwd();
     await getProjectId(db, defaultCwd);
-    log(`Project ID cached for ${defaultCwd}`);
+    log.info("Project ID cached", { cwd: defaultCwd });
   } catch (error) {
-    log(`Warning: DB pre-warm failed (will retry on first tool call): ${error}`);
+    log.warn(`DB pre-warm failed (will retry on first tool call): ${error}`);
   }
 
   // --- MCP server error/close handlers (set BEFORE connect to avoid race) ---
   server.onerror = (error) => {
-    log(`MCP server error: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`MCP server error: ${error instanceof Error ? error.message : String(error)}`);
   };
   server.onclose = () => {
-    log("MCP server connection closed");
+    log.info("MCP server connection closed");
     shutdown(0);
   };
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  log("Server connected via stdio");
+  log.info("Server connected via stdio");
 
   // --- Database keepalive: prevent connection staleness ---
   // Ping every 5 minutes. Monitor-only — the adapter's circuit breaker
@@ -1104,12 +1103,12 @@ async function main(): Promise<void> {
     try {
       await dbAdapter.get("SELECT 1");
       if (consecutiveKeepaliveFailures > 0) {
-        log(`Keepalive recovered after ${consecutiveKeepaliveFailures} failure(s)`);
+        log.info(`Keepalive recovered after ${consecutiveKeepaliveFailures} failure(s)`);
       }
       consecutiveKeepaliveFailures = 0;
     } catch (err) {
       consecutiveKeepaliveFailures++;
-      log(`Keepalive ping failed (${consecutiveKeepaliveFailures}): ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(`Keepalive ping failed`, { consecutive: consecutiveKeepaliveFailures, error: err instanceof Error ? err.message : String(err) });
     }
   }, KEEPALIVE_INTERVAL_MS);
 
@@ -1125,7 +1124,7 @@ async function main(): Promise<void> {
         []
       );
       if (staleJob && staleJob.cnt > 0) {
-        log(`${staleJob.cnt} stale job(s) in queue, spawning worker`);
+        log.info(`${staleJob.cnt} stale job(s) in queue, spawning worker`);
         spawnWorkerIfNeeded();
       }
     } catch {
@@ -1139,6 +1138,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
-  log(`Fatal error: ${error}`);
+  log.error(`Fatal error: ${error}`);
   process.exit(1);
 });

@@ -456,6 +456,27 @@ function createServer(tenantId: string, db: DatabaseAdapter): Server {
   return server;
 }
 
+/**
+ * Get the number of active MCP sessions.
+ */
+export function getSessionCount(): number {
+  return sessions.size;
+}
+
+/**
+ * Close all active MCP sessions (for graceful shutdown).
+ */
+export async function closeAllSessions(): Promise<void> {
+  for (const [id, session] of sessions) {
+    try {
+      session.transport.close();
+    } catch {
+      // Best effort
+    }
+    sessions.delete(id);
+  }
+}
+
 // ============================================================================
 // Request Handler (called from Hono route)
 // ============================================================================

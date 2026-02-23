@@ -24,7 +24,7 @@ export async function createAuthorizationCode(
   clientId: string,
   tenantId: string,
   redirectUri: string,
-  codeChallenge: string,
+  codeChallenge: string | null,
   scopes: string[] | null
 ): Promise<string> {
   const code = generateSecureToken();
@@ -73,8 +73,8 @@ export async function exchangeAuthorizationCode(
     throw new Error("redirect_uri mismatch");
   }
 
-  // PKCE verification
-  if (codeRecord.code_challenge) {
+  // PKCE verification (check both null and empty string)
+  if (codeRecord.code_challenge !== null && codeRecord.code_challenge !== "") {
     if (!codeVerifier) throw new Error("code_verifier required for PKCE");
     const computed = await computeS256Challenge(codeVerifier);
     if (computed !== codeRecord.code_challenge) {

@@ -25,7 +25,7 @@ const auth = new Hono();
 // ============================================================================
 
 const CSRF_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const csrfTokens = new Map<string, number>(); // token -> createdAt
+const CSRF_SECRET = process.env.CSRF_SECRET || crypto.randomUUID();
 
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
@@ -35,12 +35,52 @@ const REGISTER_MAX_PER_HOUR = 10;
 const REGISTER_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const registerAttempts = new Map<string, { count: number; windowStart: number }>();
 
+/**
+ * Generate an HMAC-signed stateless CSRF token.
+ * Format: timestamp:nonce:signature (survives restarts, zero storage).
+ */
+async function generateCsrfToken(): Promise<string> {
+  const timestamp = String(Date.now());
+  const nonce = crypto.randomUUID().slice(0, 8);
+  const data = `${timestamp}:${nonce}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(CSRF_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  const signature = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  return `${data}:${signature}`;
+}
+
+/**
+ * Verify and consume a stateless CSRF token.
+ */
+async function verifyCsrfToken(token: string): Promise<boolean> {
+  const parts = token.split(":");
+  if (parts.length !== 3) return false;
+  const [timestamp, nonce, signature] = parts;
+  const age = Date.now() - Number(timestamp);
+  if (age > CSRF_TTL_MS || age < 0) return false;
+
+  const data = `${timestamp}:${nonce}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(CSRF_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  const expected = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  return signature === expected;
+}
+
 // Periodic cleanup every 30 minutes
 setInterval(() => {
   const now = Date.now();
-  for (const [token, createdAt] of csrfTokens) {
-    if (now - createdAt > CSRF_TTL_MS) csrfTokens.delete(token);
-  }
   for (const [key, val] of loginAttempts) {
     if (now - val.windowStart > LOGIN_WINDOW_MS) loginAttempts.delete(key);
   }
@@ -134,8 +174,7 @@ auth.get("/authorize", async (c) => {
     return c.html(renderAuthorizeError("redirect_uri not registered for this client"), 400);
   }
 
-  const csrfToken = crypto.randomUUID();
-  csrfTokens.set(csrfToken, Date.now());
+  const csrfToken = await generateCsrfToken();
 
   return c.html(renderAuthorizePage({
     clientId,
@@ -163,14 +202,9 @@ auth.post("/authorize", async (c) => {
     return c.html(renderAuthorizeError("Missing required fields"), 400);
   }
 
-  // CSRF validation
-  if (!csrf || !csrfTokens.has(csrf)) {
+  // CSRF validation (stateless HMAC-signed tokens)
+  if (!csrf || !(await verifyCsrfToken(csrf))) {
     return c.html(renderAuthorizeError("Invalid or expired form. Please try again."), 403);
-  }
-  const csrfCreated = csrfTokens.get(csrf)!;
-  csrfTokens.delete(csrf);
-  if (Date.now() - csrfCreated > CSRF_TTL_MS) {
-    return c.html(renderAuthorizeError("Form expired. Please try again."), 403);
   }
 
   const mgmtDb = await getManagementDb();
@@ -186,8 +220,7 @@ auth.post("/authorize", async (c) => {
   const attemptKey = email.toLowerCase();
   const attempts = loginAttempts.get(attemptKey);
   if (attempts && attempts.count >= LOGIN_MAX_ATTEMPTS && Date.now() - attempts.windowStart < LOGIN_WINDOW_MS) {
-    const retryCsrf = crypto.randomUUID();
-    csrfTokens.set(retryCsrf, Date.now());
+    const retryCsrf = await generateCsrfToken();
     return c.html(renderAuthorizePage({
       clientId,
       redirectUri,
@@ -209,8 +242,7 @@ auth.post("/authorize", async (c) => {
     } else {
       loginAttempts.set(attemptKey, { count: 1, windowStart: now });
     }
-    const failCsrf = crypto.randomUUID();
-    csrfTokens.set(failCsrf, Date.now());
+    const failCsrf = await generateCsrfToken();
     return c.html(renderAuthorizePage({
       clientId,
       redirectUri,
@@ -236,7 +268,7 @@ auth.post("/authorize", async (c) => {
     clientId,
     tenant.id,
     redirectUri,
-    codeChallenge || "",
+    codeChallenge || null,
     scopes
   );
 

@@ -8,6 +8,9 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("error-detector");
 
 // ============================================================================
 // Types
@@ -220,7 +223,7 @@ export function recordErrors(
         ]
       );
     })
-  ).catch(() => {
-    // Swallow — error detection must never break tool calls
+  ).catch((e: unknown) => {
+    log.debug("Failed to record error events", { error: e instanceof Error ? e.message : String(e) });
   });
 }

@@ -5,39 +5,118 @@
  */
 
 import { Hono } from "hono";
+import { secureHeaders } from "hono/secure-headers";
 import { structuredLogger, logError } from "./lib/logger";
 import { getManagementDb } from "./db/management";
-import { setManagementDb } from "./tenants/pool";
+import { setManagementDb, getPoolStats } from "./tenants/pool";
 import { verifyAccessToken, AuthError } from "./auth/verifier";
-import { handleMcpRequest } from "./mcp-endpoint";
+import { handleMcpRequest, getSessionCount } from "./mcp-endpoint";
 import { api } from "./api/routes";
 import { authRoutes } from "./auth/routes";
 import { corsMiddleware } from "./api/middleware";
 import { rateLimiter } from "./api/rate-limit";
+import { metricsMiddleware, formatMetrics, dbPoolSize, activeMcpSessions } from "./lib/metrics";
+import { generateRequestId } from "./lib/errors";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 type AppEnv = {
   Variables: {
     authInfo: AuthInfo;
     tenantId: string;
+    requestId: string;
     plan?: string;
   };
 };
 
 const app = new Hono<AppEnv>();
 
+const startTime = Date.now();
+
 // ============================================================================
 // Global Middleware
 // ============================================================================
 
+// Request ID propagation
+app.use("*", async (c, next) => {
+  const requestId = c.req.header("X-Request-Id") ?? generateRequestId();
+  c.set("requestId", requestId);
+  await next();
+  c.header("X-Request-Id", requestId);
+});
+
 app.use("*", structuredLogger());
+app.use("*", metricsMiddleware());
 app.use("*", corsMiddleware());
+app.use("*", secureHeaders({
+  strictTransportSecurity: "max-age=63072000; includeSubDomains; preload",
+  xContentTypeOptions: "nosniff",
+  xFrameOptions: "DENY",
+}));
 
 // ============================================================================
-// Health Check
+// Health Check (with dependency verification)
 // ============================================================================
 
-app.get("/health", (c) => c.json({ status: "ok", version: "0.1.0" }));
+app.get("/health", async (c) => {
+  const checks: Record<string, unknown> = {};
+  let healthy = true;
+
+  // Management DB
+  try {
+    const mgmtDb = await getManagementDb();
+    await mgmtDb.get("SELECT 1");
+    checks.managementDb = "ok";
+  } catch {
+    checks.managementDb = "error";
+    healthy = false;
+  }
+
+  // Pool stats
+  const pool = getPoolStats();
+  checks.pool = pool;
+
+  // MCP sessions
+  const sessionCount = getSessionCount();
+  checks.mcpSessions = sessionCount;
+
+  // Update gauges
+  dbPoolSize.setDirect(pool.size);
+  activeMcpSessions.setDirect(sessionCount);
+
+  const status = healthy ? "ok" : "degraded";
+  const statusCode = healthy ? 200 : 503;
+
+  return c.json({
+    status,
+    version: "0.1.0",
+    uptime: Math.floor((Date.now() - startTime) / 1000),
+    checks,
+  }, statusCode);
+});
+
+app.get("/ready", async (c) => {
+  try {
+    const mgmtDb = await getManagementDb();
+    await mgmtDb.get("SELECT 1");
+    return c.json({ ready: true });
+  } catch {
+    return c.json({ ready: false }, 503);
+  }
+});
+
+// ============================================================================
+// Metrics Endpoint
+// ============================================================================
+
+app.get("/metrics", (c) => {
+  // Update gauges before serving
+  const pool = getPoolStats();
+  dbPoolSize.setDirect(pool.size);
+  activeMcpSessions.setDirect(getSessionCount());
+
+  c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+  return c.text(formatMetrics());
+});
 
 // ============================================================================
 // MCP Endpoint (auth → rate limit → plan limits → handler)
@@ -141,9 +220,8 @@ app.post("/webhooks/stripe", async (c) => {
     await handleStripeWebhook(mgmtDb, rawBody, signature);
     return c.json({ received: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Webhook failed";
     logError("stripe-webhook", error);
-    return c.json({ error: message }, 400);
+    return c.json({ error: "Webhook processing failed" }, 400);
   }
 });
 
@@ -165,6 +243,8 @@ app.route("/api", api);
 
 const PORT = Number(process.env.PORT) || 3000;
 
+let server: ReturnType<typeof Bun.serve> | null = null;
+
 async function start(): Promise<void> {
   console.log("[muninn-cloud] Initializing management database...");
   const mgmtDb = await getManagementDb();
@@ -173,7 +253,7 @@ async function start(): Promise<void> {
 
   console.log(`[muninn-cloud] Starting server on port ${PORT}...`);
 
-  Bun.serve({
+  server = Bun.serve({
     port: PORT,
     fetch: app.fetch,
     idleTimeout: 120,
@@ -183,6 +263,32 @@ async function start(): Promise<void> {
   console.log(`[muninn-cloud] MCP endpoint: http://localhost:${PORT}/mcp`);
   console.log(`[muninn-cloud] API endpoint: http://localhost:${PORT}/api`);
 }
+
+// ============================================================================
+// Graceful Shutdown
+// ============================================================================
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  console.log(`[muninn-cloud] ${signal} received, shutting down gracefully...`);
+
+  // Stop accepting new connections
+  if (server) {
+    server.stop(true); // close idle connections immediately
+  }
+
+  // Close all MCP sessions
+  const { closeAllSessions } = await import("./mcp-endpoint");
+  await closeAllSessions();
+
+  // Give in-flight requests 5s to drain
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  console.log("[muninn-cloud] Shutdown complete");
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 start().catch((error) => {
   logError("startup", error);

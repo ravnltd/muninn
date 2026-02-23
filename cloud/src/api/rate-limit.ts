@@ -37,7 +37,7 @@ if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) cleanupTimer.un
 export function rateLimiter() {
   return async (c: Context, next: Next) => {
     const tenantId = c.get("tenantId") as string | undefined;
-    const key = tenantId ?? c.req.header("X-Forwarded-For") ?? "unknown";
+    const key = tenantId ?? c.req.header("X-Real-IP") ?? c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ?? "unknown";
     const plan = (c.get("plan") as string | undefined) ?? "free";
     const limit = PLAN_RATES[plan] ?? PLAN_RATES.free;
 
