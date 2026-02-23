@@ -187,6 +187,42 @@ const JOB_HANDLERS: Record<string, JobHandler> = {
     await generateOnboardingContext(db, projectId, forceRefresh);
   },
 
+  // v6 Wave 1B: Compute and store health score
+  async compute_health_score(db, payload) {
+    const { computeHealthScore } = await import("./outcomes/value-metrics");
+    const projectId = payload.projectId as number;
+    const healthScore = await computeHealthScore(db, projectId);
+    await db.run(
+      `INSERT INTO health_score_history (project_id, score, components, computed_at)
+       VALUES (?, ?, ?, ?)`,
+      [projectId, healthScore.overall, JSON.stringify(healthScore.components), healthScore.computedAt]
+    );
+  },
+
+  // v6 Wave 1B: Aggregate monthly value metrics
+  async aggregate_value_metrics(db, payload) {
+    const { aggregateMonthlyMetrics } = await import("./outcomes/value-metrics");
+    const projectId = payload.projectId as number;
+    await aggregateMonthlyMetrics(db, projectId);
+  },
+
+  // v6 Wave 3H: Archive stale knowledge
+  async archive_stale_knowledge(db, payload) {
+    const { archiveStaleKnowledge } = await import("./outcomes/knowledge-archiver");
+    const projectId = payload.projectId as number;
+    await archiveStaleKnowledge(db, projectId);
+  },
+
+  // v6 Wave 3I: Compute risk alerts
+  async compute_risk_alerts(db, payload) {
+    const { computeRiskAlerts, persistRiskAlerts } = await import("./outcomes/risk-alerts");
+    const projectId = payload.projectId as number;
+    const alerts = await computeRiskAlerts(db, projectId);
+    if (alerts.length > 0) {
+      await persistRiskAlerts(db, projectId, alerts);
+    }
+  },
+
   async update_file(db, payload) {
     const projectId = payload.projectId as number;
     const filePath = payload.filePath as string;

@@ -2,8 +2,16 @@ import type {
   AccountResponse,
   ApiKeyCreated,
   ApiKeyRecord,
+  ExportedMemory,
+  GraphData,
+  HealthScore,
   Invitation,
+  KnowledgeMemory,
   LoginResponse,
+  Project,
+  RiskAlert,
+  RoiMetrics,
+  SessionInfo,
   SignupResponse,
   SsoConfig,
   TeamMember,
@@ -181,7 +189,38 @@ export const api = {
   testSso: () =>
     request<{ valid: boolean; issues: string[]; provider: string }>('/api/sso/test', {
       method: 'POST'
-    })
+    }),
+
+  // Knowledge Explorer
+  getProjects: () =>
+    request<{ projects: Project[] }>('/api/knowledge/projects'),
+
+  getProjectMemory: (projectId: number) =>
+    request<KnowledgeMemory>(`/api/knowledge/projects/${projectId}/memory`),
+
+  getProjectSessions: (projectId: number, limit = 50) =>
+    request<{ sessions: SessionInfo[] }>(`/api/knowledge/projects/${projectId}/sessions?limit=${limit}`),
+
+  getProjectGraph: (projectId: number) =>
+    request<GraphData>(`/api/knowledge/projects/${projectId}/graph`),
+
+  getHealthScore: (projectId: number) =>
+    request<HealthScore>(`/api/knowledge/health-score?projectId=${projectId}`),
+
+  getRoiMetrics: (projectId: number) =>
+    request<RoiMetrics>(`/api/knowledge/metrics/roi?projectId=${projectId}`),
+
+  searchKnowledge: (projectId: number, query: string) =>
+    request<{ results: Array<{ type: string; id: number; title: string; snippet: string; score: number }> }>(
+      `/api/knowledge/projects/${projectId}/search?q=${encodeURIComponent(query)}`
+    ),
+
+  // Wave 3: Risk Alerts, Export, Archive
+  getRiskAlerts: (projectId: number) =>
+    request<{ alerts: RiskAlert[] }>(`/api/knowledge/risk-alerts?projectId=${projectId}`),
+
+  exportMemory: (projectId: number) =>
+    request<ExportedMemory>(`/api/knowledge/export/memory?projectId=${projectId}`)
 };
 
 export { ApiError };

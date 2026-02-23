@@ -2,9 +2,15 @@
 
 [![CI](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml/badge.svg)](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml)
 
-A semantic memory system for AI-assisted development. Persistent, queryable project knowledge across sessions via MCP tools and CLI.
+Persistent memory for AI coding agents.
 
-**The more you use it, the smarter it gets** — Muninn learns your codebase patterns, tracks which files change together, remembers what worked (and what didn't), and adapts to your individual coding preferences over time.
+AI agents have no memory between sessions and no awareness of what's dangerous. They'll happily refactor a critical file, contradict a decision made last week, or re-introduce a bug that was already fixed — because they don't know any better.
+
+Muninn fixes this by giving the agent institutional knowledge. Before touching any file, the agent checks: how fragile is this? what decisions were made here? are there open issues? what files usually change together? If something is high-risk, the agent stops and explains its approach instead of plowing ahead. If a pattern was learned from a past mistake, it surfaces automatically so the same mistake doesn't happen twice.
+
+There's a subtler problem too. As a codebase grows across dozens of AI sessions, each session makes locally reasonable decisions that drift from the original vision. Session 15 picks a different pattern than session 3. Two parts of the codebase solve the same problem differently. Nobody remembers *why* something was done a certain way, so the next session reinvents it. Muninn records every significant decision with its reasoning, so when the agent is about to make a choice, past decisions surface automatically. The agent can still diverge, but it does so knowingly, not accidentally. Patterns and conventions accumulate across sessions, so session 50 has access to the same architectural intent as session 1.
+
+Unlike a typical RAG system that just retrieves documents, Muninn is a read-write memory loop: the AI queries context before making changes, then writes back what it learned — turning a stateless, amnesiac coding agent into one that accumulates project wisdom over time.
 
 ## How It Works
 

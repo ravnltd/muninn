@@ -117,7 +117,7 @@ const log = createLogger("mcp-server");
 // ============================================================================
 
 const server = new Server(
-  { name: "muninn", version: "4.0.0" },
+  { name: "muninn", version: "6.0.0" },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -466,7 +466,7 @@ registerResourceHandlers(server);
 // ============================================================================
 
 async function main(): Promise<void> {
-  log.info("Starting Muninn MCP Server v4 (in-process)...");
+  log.info("Starting Muninn MCP Server v6 (in-process)...");
 
   // --- Global error handlers: prevent silent crashes ---
   process.on("unhandledRejection", (reason) => {
@@ -539,7 +539,7 @@ async function main(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  log.info("Server connected via stdio");
+  log.info("MCP-native session ready — session auto-start/end works for any MCP client");
 
   // --- Database keepalive: prevent connection staleness ---
   // Ping every 5 minutes. Monitor-only — the adapter's circuit breaker

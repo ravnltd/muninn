@@ -18,6 +18,8 @@ import { requirePermission } from "../rbac/permissions";
 import { teamRoutes } from "./team-routes";
 import { inviteAcceptRoutes } from "./team-routes";
 import { ssoAdminRoutes } from "./sso-routes";
+import { knowledgeRoutes } from "./knowledge-routes";
+import { webhookRoutes } from "./webhook-routes";
 
 const api = new Hono<AuthedEnv>();
 
@@ -282,10 +284,16 @@ authed.route("/team", teamRoutes);
 // Mount SSO admin routes (protected by bearerAuth + manage_sso permission)
 authed.route("/sso", ssoAdminRoutes);
 
+// Mount knowledge/memory routes (v6 — knowledge explorer API)
+authed.route("/knowledge", knowledgeRoutes);
+
 // Mount protected routes
 api.route("/", authed);
 
 // Public invite acceptance (no auth required)
 api.route("/invite", inviteAcceptRoutes);
+
+// GitHub webhooks (public, signature-verified)
+api.route("/webhooks", webhookRoutes);
 
 export { api };

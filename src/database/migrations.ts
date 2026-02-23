@@ -1863,6 +1863,93 @@ export const MIGRATIONS: Migration[] = [
       return !!table;
     },
   },
+
+  // ========================================================================
+  // v6 Wave 1B: Value Metrics & Health Score
+  // ========================================================================
+  {
+    version: 34,
+    name: "v6_value_metrics",
+    description: "Value metrics and health score tracking tables",
+    up: `
+      CREATE TABLE IF NOT EXISTS value_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        month TEXT NOT NULL,
+        contradictions_prevented INTEGER DEFAULT 0,
+        context_injections INTEGER DEFAULT 0,
+        context_hit_rate REAL DEFAULT 0,
+        decisions_recalled INTEGER DEFAULT 0,
+        learnings_applied INTEGER DEFAULT 0,
+        sessions_with_context INTEGER DEFAULT 0,
+        total_sessions INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, month)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_value_metrics_project_month ON value_metrics(project_id, month);
+
+      CREATE TABLE IF NOT EXISTS health_score_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        score INTEGER NOT NULL,
+        components TEXT NOT NULL,
+        computed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_health_score_project ON health_score_history(project_id);
+      CREATE INDEX IF NOT EXISTS idx_health_score_date ON health_score_history(computed_at);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='value_metrics'")
+        .get();
+      return !!table;
+    },
+  },
+
+  // ===== v6 Wave 3 =====
+  {
+    version: 35,
+    name: "v6_wave3_archival_risk",
+    description: "Intelligent forgetting (archived_knowledge) and risk alerts tables",
+    up: `
+      CREATE TABLE IF NOT EXISTS archived_knowledge (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        source_table TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT,
+        reason TEXT NOT NULL,
+        archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_archived_project ON archived_knowledge(project_id);
+      CREATE INDEX IF NOT EXISTS idx_archived_source ON archived_knowledge(source_table, source_id);
+
+      CREATE TABLE IF NOT EXISTS risk_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        alert_type TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'warning',
+        title TEXT NOT NULL,
+        details TEXT,
+        source_file TEXT,
+        dismissed INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_risk_alerts_project ON risk_alerts(project_id);
+      CREATE INDEX IF NOT EXISTS idx_risk_alerts_active ON risk_alerts(project_id, dismissed);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='archived_knowledge'")
+        .get();
+      return !!table;
+    },
+  },
 ];
 
 // ============================================================================
@@ -2048,6 +2135,10 @@ const REQUIRED_PROJECT_TABLES = [
   "onboarding_contexts",
   "budget_recommendations",
   "contradiction_alerts",
+  "value_metrics",
+  "health_score_history",
+  "archived_knowledge",
+  "risk_alerts",
 ];
 
 // Combined for reference
