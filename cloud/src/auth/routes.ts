@@ -26,6 +26,9 @@ const auth = new Hono();
 
 const CSRF_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const CSRF_SECRET = process.env.CSRF_SECRET || crypto.randomUUID();
+if (!process.env.CSRF_SECRET) {
+  console.warn("[muninn-cloud] WARNING: CSRF_SECRET not set — using random value. OAuth forms will break on restart. Set CSRF_SECRET in .env.");
+}
 
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes

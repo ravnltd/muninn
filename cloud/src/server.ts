@@ -109,6 +109,16 @@ app.get("/ready", async (c) => {
 // ============================================================================
 
 app.get("/metrics", (c) => {
+  // Restrict to local/Docker-internal networks or bearer token
+  const metricsToken = process.env.METRICS_TOKEN;
+  const ip = c.req.header("X-Real-IP") ?? c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ?? "";
+  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip === "" || ip.startsWith("172.") || ip.startsWith("10.");
+  const hasToken = metricsToken && c.req.header("Authorization") === `Bearer ${metricsToken}`;
+
+  if (!isLocal && !hasToken) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+
   // Update gauges before serving
   const pool = getPoolStats();
   dbPoolSize.setDirect(pool.size);
