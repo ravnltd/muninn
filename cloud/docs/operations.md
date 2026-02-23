@@ -700,16 +700,106 @@ const TENANT_LIMITS = {
 
 ---
 
+## Deployment Guide
+
+### Quick Start
+
+```bash
+cd cloud
+cp .env.example .env
+# Edit .env with your values (see Environment Variables below)
+docker compose up -d --build
+```
+
+### Environment Variables
+
+See `.env.example` for the full list. Critical ones for first deploy:
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `MGMT_DB_URL` | Yes | Turso management database URL |
+| `MGMT_DB_TOKEN` | Yes | Turso auth token |
+| `TURSO_ORG` | Yes | Turso org for tenant DB provisioning |
+| `TURSO_API_TOKEN` | Yes | Turso API token |
+| `STRIPE_SECRET_KEY` | Yes | Stripe API key |
+| `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret |
+| `STRIPE_PRO_PRICE_ID` | Yes | Stripe price ID for pro plan |
+| `CSRF_SECRET` | Recommended | Persists OAuth forms across restarts. Generate: `openssl rand -hex 32` |
+| `METRICS_TOKEN` | Recommended | Secures `/metrics` endpoint from external access |
+| `SSO_ENCRYPTION_KEY` | If SSO | Encrypts OIDC secrets. Generate: `openssl rand -base64 32` |
+| `BASE_URL` | If not muninn.pro | Public URL for OAuth/SAML callbacks |
+
+### Database Initialization
+
+On first startup, the server automatically:
+1. Creates all management DB tables from `schema.sql`
+2. Runs idempotent migrations (RBAC, SSO, rate limiting tables)
+3. Creates owner users for any existing tenants
+
+No manual migration step needed.
+
+### Verifying Deployment
+
+```bash
+# Health check
+curl -s http://localhost:3000/health | jq .
+
+# Readiness
+curl -s http://localhost:3000/ready | jq .
+
+# OAuth discovery (used by Claude Code)
+curl -s http://localhost:3000/.well-known/oauth-authorization-server | jq .
+
+# Metrics (from localhost)
+curl -s http://localhost:3000/metrics | head -20
+```
+
+### Capacity Planning (~100 Users)
+
+**Recommended server spec:**
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 1 vCPU | 2 vCPU |
+| RAM | 512 MB | 1 GB |
+| Disk | 10 GB | 20 GB (logs + Caddy certs) |
+| Network | 10 Mbps | 100 Mbps |
+
+**Why this is enough:**
+- Bun + Hono handles ~50k req/s on a single core (hello world). Real workload with DB is ~2-5k req/s
+- 100 users doing ~10 MCP tool calls/min = ~17 req/s peak — well under capacity
+- Each MCP SSE session holds ~2 KB memory. 100 concurrent = ~200 KB
+- Turso handles the DB load externally (no local disk I/O for queries)
+- Rate limiting: in-memory token buckets use ~500 bytes/tenant = ~50 KB for 100 tenants
+- Connection pool: default 100 max connections, 5 per free tenant
+
+**Bottlenecks to watch at scale:**
+- DB pool exhaustion: monitor `db_pool_available` via `/metrics`
+- MCP session count: if users leave sessions open indefinitely
+- Rate limit sync: background DB sync every 10s adds ~1 write/sec per instance
+
+**Cost estimate (Turso):**
+- Free tier: 500 databases, 9 GB storage, 25M row reads/month
+- 100 tenants = 101 databases (1 mgmt + 100 tenant) — fits free tier
+- ~10 tool calls/user/min * 100 users * ~5 queries/call = ~3M reads/day = ~90M/month → Pro tier ($29/mo)
+
+**VPS options at this scale:**
+- Hetzner CX22: 2 vCPU, 4 GB RAM, 40 GB — ~$4.50/mo
+- DigitalOcean Basic: 2 vCPU, 2 GB RAM, 50 GB — ~$18/mo
+- AWS t3.small: 2 vCPU, 2 GB RAM — ~$15/mo
+
+---
+
 ## Deployment Checklist
 
+- [ ] `.env` created from `.env.example` with all required values
+- [ ] `CSRF_SECRET` set (prevents OAuth breakage on restart)
+- [ ] `METRICS_TOKEN` set (secures metrics endpoint)
 - [ ] Backup strategy configured (cron jobs running)
 - [ ] Health checks integrated into monitoring
 - [ ] Alerting thresholds set in Prometheus/AlertManager
 - [ ] Metrics exposed and scraped by Prometheus
 - [ ] Load balancer health check pointing to `/health`
-- [ ] MGMT_DB_URL and MGMT_DB_TOKEN in .env
-- [ ] STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET configured
-- [ ] METRICS_TOKEN set for secure metrics access
 - [ ] Log aggregation configured (e.g., ELK, Datadog, CloudWatch)
 - [ ] Incident response runbook reviewed (see runbook.md)
 

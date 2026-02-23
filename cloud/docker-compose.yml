@@ -7,7 +7,8 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      - BASE_URL=https://api.muninn.pro
+      - BASE_URL=${BASE_URL:-https://api.muninn.pro}
+      - NODE_ENV=${NODE_ENV:-production}
       - MGMT_DB_URL=${MGMT_DB_URL}
       - MGMT_DB_TOKEN=${MGMT_DB_TOKEN}
       - TURSO_ORG=${TURSO_ORG}
@@ -15,6 +16,11 @@ services:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID}
+      - CSRF_SECRET=${CSRF_SECRET}
+      - METRICS_TOKEN=${METRICS_TOKEN}
+      - SSO_ENCRYPTION_KEY=${SSO_ENCRYPTION_KEY}
+      - SP_ENTITY_ID=${SP_ENTITY_ID}
+      - CORS_ORIGINS=${CORS_ORIGINS}
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
