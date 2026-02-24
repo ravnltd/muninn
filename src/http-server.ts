@@ -77,13 +77,44 @@ export function createApp(db: DatabaseAdapter, projectId: number, cwd: string): 
     await next();
   });
 
-  // Health check
+  // Health check — enhanced with worker stats and metrics
   app.get("/api/v1/health", async (c) => {
+    const startMs = Date.now();
     try {
       await db.get("SELECT 1");
-      return c.json({ status: "ok", version: "7.0.0" });
+      const dbLatency = Date.now() - startMs;
+
+      // Worker queue stats (last 24h)
+      const workerStats = { pending: 0, failed: 0, completed: 0 };
+      try {
+        const rows = await db.all<{ status: string; cnt: number }>(
+          `SELECT status, COUNT(*) as cnt FROM work_queue
+           WHERE created_at > datetime('now', '-1 day')
+           GROUP BY status`,
+        );
+        for (const row of rows) {
+          if (row.status === "pending") workerStats.pending = row.cnt;
+          else if (row.status === "failed") workerStats.failed = row.cnt;
+          else if (row.status === "completed") workerStats.completed = row.cnt;
+        }
+      } catch { /* table may not exist */ }
+
+      // In-memory metrics
+      let metrics = {};
+      try {
+        const { getMetrics } = await import("./observability/metrics.js");
+        metrics = getMetrics();
+      } catch { /* module may not load */ }
+
+      return c.json({
+        status: "ok",
+        version: "8.0.0",
+        dbLatencyMs: dbLatency,
+        worker: workerStats,
+        metrics,
+      });
     } catch {
-      return c.json({ status: "degraded", version: "7.0.0" }, 503);
+      return c.json({ status: "degraded", version: "8.0.0" }, 503);
     }
   });
 

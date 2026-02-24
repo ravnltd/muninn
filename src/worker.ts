@@ -364,15 +364,18 @@ async function processJobs(db: DatabaseAdapter, jobType?: string): Promise<numbe
     );
 
     try {
+      const startMs = Date.now();
       const payload = JSON.parse(job.payload) as Record<string, unknown>;
       await handler(db, payload);
+      const durationMs = Date.now() - startMs;
 
-      // Mark completed
+      // Mark completed with duration
       await db.run(
-        `UPDATE work_queue SET status = 'completed', completed_at = datetime('now') WHERE id = ?`,
-        [job.id]
+        `UPDATE work_queue SET status = 'completed', completed_at = datetime('now'), duration_ms = ? WHERE id = ?`,
+        [durationMs, job.id]
       );
       processed++;
+      process.stderr.write(`[muninn-worker] ${job.job_type} completed in ${durationMs}ms\n`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const newAttempts = job.attempts + 1;

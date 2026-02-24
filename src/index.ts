@@ -205,6 +205,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Handle setup command (editor-agnostic, no DB needed)
+  if (command === "setup") {
+    const { handleSetup } = await import("./commands/setup.js");
+    handleSetup(subArgs);
+    return;
+  }
+
   // All other commands need project DB
   let db: DatabaseAdapter;
   const dbPath = getProjectDbPath();

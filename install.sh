@@ -135,25 +135,13 @@ if [ "$PATH_OK" = false ]; then
     echo ""
 fi
 
-# Check for Claude Code and offer to register
-if command -v claude &> /dev/null; then
-    echo ""
-    # Check if already registered
-    if claude mcp list 2>/dev/null | grep -q "muninn"; then
-        echo "✓ MCP server already registered with Claude Code"
-        echo ""
-        echo "To update the registration (if needed):"
-        echo "  claude mcp remove muninn"
-        echo "  claude mcp add --scope user muninn -- muninn-mcp"
-    else
-        echo "Register MCP server with Claude Code:"
-        echo "  claude mcp add --scope user muninn -- muninn-mcp"
-    fi
-else
-    echo ""
-    echo "Claude Code not found in PATH."
-    echo "After installing Claude Code, register the MCP server:"
-    echo "  claude mcp add --scope user muninn -- muninn-mcp"
+# Auto-detect and configure editors
+echo ""
+echo "Detecting editors..."
+if [ "$PATH_OK" = true ] && command -v muninn &> /dev/null; then
+    muninn setup --all 2>/dev/null || echo "  (run 'muninn setup' manually after adding to PATH)"
+elif [ -f "$INSTALL_DIR/muninn" ]; then
+    "$INSTALL_DIR/muninn" setup --all 2>/dev/null || echo "  (run 'muninn setup' manually)"
 fi
 
 # Final verification
@@ -163,10 +151,11 @@ if [ "$PATH_OK" = true ] && command -v muninn &> /dev/null; then
     echo ""
     echo "Verify with:"
     echo "  muninn --help"
-    echo "  claude mcp list"
+    echo "  muninn setup --list"
 else
     echo "Installation complete."
     echo ""
     echo "After updating your PATH, verify with:"
     echo "  muninn --help"
+    echo "  muninn setup --list"
 fi

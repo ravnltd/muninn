@@ -8,6 +8,7 @@
 
 import type { TaskContext, RelevantFile, RelevantDecision, RelevantLearning, RelevantIssue, ErrorFix } from "./task-analyzer";
 import { estimateTokens } from "../enrichment/formatter";
+import { serializeContradictions } from "./contradiction-detector";
 
 // ============================================================================
 // Types
@@ -284,7 +285,6 @@ export function buildContextOutput(
 
   // 0. Contradictions (highest priority — goes at TOP)
   if (taskContext.contradictions && taskContext.contradictions.length > 0) {
-    const { serializeContradictions } = require("./contradiction-detector") as typeof import("./contradiction-detector");
     const content = serializeContradictions(taskContext.contradictions);
     if (content) {
       sections.push({ type: "contradictions", content, tokens: estimateTokens(content) });

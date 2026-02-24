@@ -118,11 +118,77 @@ import { autoStartSession, autoEndSession, spawnWorkerIfNeeded } from "./mcp-lif
 const log = createLogger("mcp-server");
 
 // ============================================================================
+// v8: Unified Analysis + Intelligence Collection
+// ============================================================================
+
+/** Cached intelligence signals for the current session */
+let cachedStrategies: Array<{ name: string; description: string; successRate: number; timesUsed: number }> = [];
+
+/**
+ * Run task analysis then collect intelligence signals in parallel.
+ * Strategies flow into buildCalibratedContext, dynamic budget
+ * adjustments apply via intelligence signals.
+ */
+async function analyzeAndEnhance(
+  db: import("./database/adapter").DatabaseAdapter,
+  projectId: number,
+  name: string,
+  typedArgs: Record<string, unknown>,
+  cwd: string,
+): Promise<void> {
+  const ctx = await analyzeTask(db, projectId, name, typedArgs);
+  setTaskContext(ctx);
+
+  // Persist task_type to session row (fire-and-forget, first-write-wins)
+  if (ctx.taskType !== "unknown") {
+    getActiveSessionId(db, projectId)
+      .then((sid) => {
+        if (sid) db.run(
+          "UPDATE sessions SET task_type = ? WHERE id = ? AND task_type IS NULL",
+          [ctx.taskType, sid],
+        ).catch(() => {});
+      })
+      .catch(() => {});
+  }
+
+  // Track context files for quality monitoring
+  setContextFiles(ctx.relevantFiles.map((f) => f.path));
+
+  // v8: Collect intelligence signals (strategies, impact, trajectory, etc.)
+  try {
+    const { getRecentToolNames } = await import("./context/shifter.js");
+    const { collectIntelligence } = await import("./context/intelligence-collector.js");
+    const { computeDynamicBudget } = await import("./context/dynamic-budget.js");
+
+    const recentTools = getRecentToolNames();
+    const keywords = ctx.relevantLearnings.map((l) => l.title).slice(0, 5);
+    const signals = await collectIntelligence(db, projectId, keywords, recentTools);
+
+    // Cache strategies for context output (Loop 1)
+    if (signals.strategies.length > 0) {
+      cachedStrategies = signals.strategies;
+    }
+
+    // Apply dynamic budget (Loops 3, 4, 5, 7)
+    const dynamicAlloc = computeDynamicBudget(signals, signals.budgetOverrides, signals.impactStats);
+    setCachedBudgetOverrides(dynamicAlloc);
+  } catch {
+    // Intelligence collection is non-critical
+  }
+
+  // Build and cache context output with strategies (Loop 1)
+  const output = buildCalibratedContext(ctx, 800, cachedStrategies);
+  if (output) {
+    getSessionState(cwd)?.writeContext(output);
+  }
+}
+
+// ============================================================================
 // Server Instance
 // ============================================================================
 
 const server = new Server(
-  { name: "muninn", version: "7.0.0" },
+  { name: "muninn", version: "8.0.0" },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -166,7 +232,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (typeof val === "string") recordFileAccess(val);
     }
 
-    // --- v5 Phase 3/5: Task analyzer — run on first tool call + quality-driven refresh ---
+    // --- v8: Unified analysis + intelligence collection ---
+    // Combines task analysis, intelligence gathering, and dynamic budget allocation
     const taskAnalyzed = getTaskAnalyzed();
     const needsAnalysis = (!taskAnalyzed && name !== "muninn_session") || shouldRefreshContext();
     if (needsAnalysis) {
@@ -174,28 +241,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       setTaskAnalyzed(true);
       if (isRefresh) resetQuality();
       try {
-        analyzeTask(db, projectId, name, typedArgs)
-          .then((ctx) => {
-            setTaskContext(ctx);
-            // Persist task_type to session row (fire-and-forget, first-write-wins)
-            if (ctx.taskType !== "unknown") {
-              getActiveSessionId(db, projectId)
-                .then((sid) => {
-                  if (sid) db.run(
-                    "UPDATE sessions SET task_type = ? WHERE id = ? AND task_type IS NULL",
-                    [ctx.taskType, sid],
-                  ).catch(() => {});
-                })
-                .catch(() => {});
-            }
-            // Track context files for quality monitoring
-            setContextFiles(ctx.relevantFiles.map((f) => f.path));
-            const output = buildCalibratedContext(ctx, 800);
-            if (output) {
-              getSessionState(cwd).writeContext(output);
-            }
-          })
-          .catch(() => {});
+        analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(() => {});
       } catch { /* guard sync throw */ }
     }
 
@@ -206,24 +252,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (shifted) {
             resetQuality();
             try {
-              analyzeTask(db, projectId, name, typedArgs)
-                .then((ctx) => {
-                  setTaskContext(ctx);
-                  setContextFiles(ctx.relevantFiles.map((f) => f.path));
-                  const output = buildCalibratedContext(ctx, 800);
-                  if (output) {
-                    getSessionState(cwd).writeContext(output);
-                  }
-                })
-                .catch(() => {});
+              analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(() => {});
             } catch { /* guard sync throw */ }
           }
         })
         .catch(() => {});
     } catch { /* guard sync throw */ }
 
-    // --- v7 Loop Closure: Trajectory-driven context refresh ---
-    // When stuck/failing pattern detected, force a context refresh
+    // --- v8: Trajectory-driven context refresh (uses intelligence collector) ---
     try {
       const { getRecentToolNames } = await import("./context/shifter.js");
       const recentTools = getRecentToolNames();
@@ -233,7 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const trajectory = analyzeTrajectory(callData);
         if ((trajectory.pattern === "stuck" || trajectory.pattern === "failing") &&
             trajectory.confidence > 0.6 && !shouldRefreshContext()) {
-          resetQuality(); // Force a refresh on next tool call
+          resetQuality();
         }
       }
     } catch { /* guard sync throw */ }
@@ -242,13 +278,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (!getSessionAutoStarted()) {
       setSessionAutoStarted(true);
       const state = getSessionState(cwd);
-      state.clear();
+      state?.clear();
       // Check if project has any file knowledge — skip enforcement for new projects
       const fileCount = await db.get<{ cnt: number }>(
         "SELECT COUNT(*) as cnt FROM files WHERE project_id = ?",
         [projectId]
       );
-      state.writeDiscoveryFile({ hasFileData: (fileCount?.cnt ?? 0) > 0 });
+      state?.writeDiscoveryFile({ hasFileData: (fileCount?.cnt ?? 0) > 0 });
       try {
         autoStartSession(db, projectId).catch(() => {});
       } catch { /* guard sync throw */ }
@@ -295,7 +331,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         validation.data.files = normalizePaths(cwd, validation.data.files);
         result = await handleCheck(db, projectId, validation.data.cwd || cwd, validation.data);
         // Track checked files for enforcement hook
-        getSessionState(cwd).markChecked(validation.data.files);
+        getSessionState(cwd)?.markChecked(validation.data.files);
         break;
       }
 
@@ -398,7 +434,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await handleContext(db, projectId, validation.data.cwd || cwd, validation.data);
         // Track checked files for enforcement hook (edit intent)
         if (validation.data.intent === "edit" && validation.data.files) {
-          getSessionState(cwd).markChecked(validation.data.files);
+          getSessionState(cwd)?.markChecked(validation.data.files);
         }
         break;
       }
@@ -472,7 +508,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (READ_TOOLS.has(name)) {
       const taskCtx = getTaskContext();
       if (taskCtx) {
-        const contextBlock = buildCalibratedContext(taskCtx, 800);
+        const contextBlock = buildCalibratedContext(taskCtx, 800, cachedStrategies);
         if (contextBlock && contextBlock.length < 4000) {
           result += `\n\n--- Task Context ---\n${contextBlock}`;
         }

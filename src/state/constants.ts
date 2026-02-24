@@ -1,0 +1,37 @@
+/**
+ * Server Constants — Command whitelist and configuration
+ */
+
+export const ALLOWED_PASSTHROUGH_COMMANDS = new Set([
+  "status",
+  "fragile",
+  "brief",
+  "resume",
+  "outcome",
+  "insights",
+  "bookmark",
+  "bm",
+  "focus",
+  "observe",
+  "obs",
+  "debt",
+  "pattern",
+  "stack",
+  "temporal",
+  "profile",
+  "workflow",
+  "wf",
+  "foundational",
+  "correlations",
+  "git-info",
+  "sync-hashes",
+  "drift",
+  "conflicts",
+  "deps",
+  "blast",
+  "db",
+  "smart-status",
+  "ss",
+  "ingest",
+  "install-hook",
+]);

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml/badge.svg)](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml)
 
-Persistent memory for AI coding agents.
+Universal persistent memory for AI coding agents.
 
 AI agents have no memory between sessions and no awareness of what's dangerous. They'll happily refactor a critical file, contradict a decision made last week, or re-introduce a bug that was already fixed — because they don't know any better.
 

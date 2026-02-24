@@ -34,6 +34,10 @@ export interface BudgetAllocation {
   reserve: number;
 }
 
+export interface ImpactStats {
+  [contextType: string]: { helped: number; irrelevant: number; harmful: number; total: number };
+}
+
 export interface IntelligenceSignals {
   strategies: StrategyEntry[];
   staleItemIds: Set<string>;
@@ -41,6 +45,7 @@ export interface IntelligenceSignals {
   prediction: { tool: string; confidence: number } | null;
   trajectory: TrajectoryAnalysis;
   profile: AgentProfile | null;
+  impactStats: ImpactStats | null;
 }
 
 // ============================================================================
@@ -57,7 +62,7 @@ export async function collectIntelligence(
   keywords: string[],
   recentToolNames: string[],
 ): Promise<IntelligenceSignals> {
-  const [strategiesResult, staleResult, budgetResult, predictionResult, trajectoryResult, profileResult] =
+  const [strategiesResult, staleResult, budgetResult, predictionResult, trajectoryResult, profileResult, impactResult] =
     await Promise.allSettled([
       import("../learning/strategy-distiller.js").then((mod) =>
         mod.getMatchingStrategies(db, projectId, keywords),
@@ -71,13 +76,15 @@ export async function collectIntelligence(
       import("./workflow-predictor.js").then((mod) =>
         mod.predictNextAction(db, projectId, recentToolNames),
       ),
-      Promise.resolve().then(() => {
-        const { analyzeTrajectory } = require("./trajectory-analyzer") as typeof import("./trajectory-analyzer");
+      import("./trajectory-analyzer.js").then((mod) => {
         const callData = recentToolNames.map((toolName) => ({ toolName, files: [] }));
-        return analyzeTrajectory(callData);
+        return mod.analyzeTrajectory(callData);
       }),
       import("../outcomes/agent-profile.js").then((mod) =>
         mod.getAgentProfile(db, projectId),
+      ),
+      import("../outcomes/impact-classifier.js").then((mod) =>
+        mod.getImpactStats(db, projectId),
       ),
     ]);
 
@@ -131,5 +138,9 @@ export async function collectIntelligence(
   const profile: AgentProfile | null =
     profileResult.status === "fulfilled" ? profileResult.value : null;
 
-  return { strategies, staleItemIds, budgetOverrides, prediction, trajectory, profile };
+  // Extract impact stats (Loop 4)
+  const impactStats: ImpactStats | null =
+    impactResult.status === "fulfilled" ? impactResult.value : null;
+
+  return { strategies, staleItemIds, budgetOverrides, prediction, trajectory, profile, impactStats };
 }

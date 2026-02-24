@@ -181,9 +181,13 @@ async function loadConnectionModule() {
   return connModule;
 }
 
-export function getSessionState(cwd: string): SessionState {
+export function getSessionState(cwd: string): SessionState | null {
   if (!sessionState) {
-    sessionState = new SessionState(cwd);
+    try {
+      sessionState = new SessionState(cwd);
+    } catch {
+      return null;
+    }
   }
   return sessionState;
 }
@@ -292,7 +296,11 @@ export function parseCommandArgs(command: string): string[] {
 // ============================================================================
 
 /** Build context output with calibrated budget weights applied */
-export function buildCalibratedContext(ctx: TaskContext, budget?: number): string {
+export function buildCalibratedContext(
+  ctx: TaskContext,
+  budget?: number,
+  strategies?: Array<{ name: string; description: string; successRate: number; timesUsed: number }>,
+): string {
   const defaultAlloc = {
     contradictions: 250, criticalWarnings: 300, strategies: 200, decisions: 300,
     learnings: 300, fileContext: 300, errorFixes: 150, reserve: 200,
@@ -300,5 +308,5 @@ export function buildCalibratedContext(ctx: TaskContext, budget?: number): strin
   // Use budget overrides from context feedback if available
   const baseAlloc = cachedBudgetOverrides ?? defaultAlloc;
   const adjusted = applyWeightAdjustments(baseAlloc, cachedBudgetWeights);
-  return buildContextOutput(ctx, budget, adjusted);
+  return buildContextOutput(ctx, budget, adjusted, strategies ?? []);
 }

@@ -24,6 +24,7 @@ import type {
   ToolType,
 } from "./types";
 import { DEFAULT_CONFIG } from "./types";
+import { randomBytes } from "node:crypto";
 
 // Maximum allowed raw input length (1MB)
 const MAX_RAW_INPUT_LENGTH = 1_000_000;
@@ -290,7 +291,6 @@ export class EnrichmentEngine {
  */
 function generateOperationId(): string {
   const timestamp = Date.now().toString(36);
-  const { randomBytes } = require("node:crypto");
   const random = randomBytes(12).toString("hex");
   return `op_${timestamp}_${random}`;
 }

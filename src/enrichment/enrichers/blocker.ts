@@ -9,6 +9,7 @@ import { BaseEnricher } from "../registry";
 import type { BlockLevel, EnricherOutput, EnrichmentContext, EnrichmentInput } from "../types";
 import { fileKey } from "../cache";
 import { formatBlocked } from "../formatter";
+import { randomBytes } from "node:crypto";
 
 export class BlockerEnricher extends BaseEnricher {
   constructor() {
@@ -133,7 +134,6 @@ function buildBlockReason(fragility: number, fragilityReason: string | null): st
 
 function generateOperationId(): string {
   const timestamp = Date.now().toString(36);
-  const { randomBytes } = require("node:crypto");
   const random = randomBytes(12).toString("hex");
   return `op_${timestamp}_${random}`;
 }
