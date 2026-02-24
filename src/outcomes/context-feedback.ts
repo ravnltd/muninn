@@ -187,7 +187,7 @@ async function computeSuccessCorrelation(
 ): Promise<number> {
   try {
     const result = await db.get<{ success_rate: number }>(
-      `SELECT AVG(CASE WHEN s.outcome = 'success' THEN 1.0 ELSE 0.0 END) as success_rate
+      `SELECT AVG(CASE WHEN s.success = 2 THEN 1.0 ELSE 0.0 END) as success_rate
        FROM context_injections ci
        JOIN sessions s ON ci.session_id = s.id
        WHERE ci.project_id = ? AND ci.context_type = ?

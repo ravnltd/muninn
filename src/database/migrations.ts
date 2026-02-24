@@ -2239,6 +2239,25 @@ export const MIGRATIONS: Migration[] = [
       return !!intents && !!profiles;
     },
   },
+
+  // ============================================================================
+  // v42 — Agent Self-Awareness: Persist task_type on sessions
+  // ============================================================================
+  {
+    version: 42,
+    name: "sessions_task_type",
+    description: "Add task_type column to sessions for agent self-awareness profiling",
+    up: `
+      ALTER TABLE sessions ADD COLUMN task_type TEXT;
+      CREATE INDEX IF NOT EXISTS idx_sessions_task_type ON sessions(task_type);
+    `,
+    validate: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(sessions)")
+        .all();
+      return cols.some((c) => c.name === "task_type");
+    },
+  },
 ];
 
 // ============================================================================

@@ -177,6 +177,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         analyzeTask(db, projectId, name, typedArgs)
           .then((ctx) => {
             setTaskContext(ctx);
+            // Persist task_type to session row (fire-and-forget, first-write-wins)
+            if (ctx.taskType !== "unknown") {
+              getActiveSessionId(db, projectId)
+                .then((sid) => {
+                  if (sid) db.run(
+                    "UPDATE sessions SET task_type = ? WHERE id = ? AND task_type IS NULL",
+                    [ctx.taskType, sid],
+                  ).catch(() => {});
+                })
+                .catch(() => {});
+            }
             // Track context files for quality monitoring
             setContextFiles(ctx.relevantFiles.map((f) => f.path));
             const output = buildCalibratedContext(ctx, 800);

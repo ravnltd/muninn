@@ -473,7 +473,7 @@ async function getPerformanceStats(
 ): Promise<string[]> {
   const lines: string[] = [];
 
-  const [sessionStats, hitRates, topStrategies, staleCount] = await Promise.allSettled([
+  const [sessionStats, hitRates, topStrategies, staleCount, taskTypeStats] = await Promise.allSettled([
     db.all<{ success: number; cnt: number }>(
       `SELECT success, COUNT(*) as cnt FROM sessions
        WHERE project_id = ? AND ended_at IS NOT NULL AND success IS NOT NULL
@@ -494,6 +494,14 @@ async function getPerformanceStats(
     db.get<{ cnt: number }>(
       `SELECT COUNT(*) as cnt FROM knowledge_freshness
        WHERE project_id = ? AND staleness_score > 0.7`,
+      [projectId],
+    ),
+    db.all<{ task_type: string; cnt: number; success_rate: number }>(
+      `SELECT task_type, COUNT(*) as cnt,
+        AVG(CASE WHEN success = 2 THEN 1.0 ELSE 0.0 END) as success_rate
+       FROM sessions
+       WHERE project_id = ? AND task_type IS NOT NULL AND ended_at IS NOT NULL
+       GROUP BY task_type HAVING COUNT(*) >= 2`,
       [projectId],
     ),
   ]);
@@ -528,6 +536,14 @@ async function getPerformanceStats(
   // Stale items
   if (staleCount.status === "fulfilled" && staleCount.value && staleCount.value.cnt > 0) {
     lines.push(`Freshness: ${staleCount.value.cnt} items flagged stale`);
+  }
+
+  // Task type breakdown
+  if (taskTypeStats.status === "fulfilled" && taskTypeStats.value.length > 0) {
+    const parts = taskTypeStats.value.map(
+      (r) => `${r.task_type} ${Math.round(r.success_rate * 100)}% (n=${r.cnt})`,
+    );
+    lines.push(`By task type: ${parts.join(", ")}`);
   }
 
   return lines;

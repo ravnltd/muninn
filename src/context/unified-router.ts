@@ -181,6 +181,24 @@ async function injectIntelligence(
       });
     }
 
+    // Agent self-awareness: warn on low-success task types
+    if (signals.profile?.worstTaskType) {
+      const { getTaskContext: getCtx } = await import("./task-analyzer.js");
+      const currentCtx = getCtx();
+      const currentType = currentCtx?.taskType;
+      const worst = signals.profile.worstTaskType;
+      // Only warn if current task type matches a struggling type
+      if (currentType && currentType === worst.type && worst.successRate < 0.5 && worst.total >= 3) {
+        const pct = Math.round(worst.successRate * 100);
+        let msg = `${worst.type}: ${pct}% success across ${worst.total} sessions`;
+        if (signals.profile.bestStrategy && signals.profile.bestStrategy.taskType === worst.type) {
+          const s = signals.profile.bestStrategy;
+          msg += `. Best strategy: ${s.name} (${Math.round(s.successRate * 100)}%)`;
+        }
+        result.warnings.push({ type: "stale", severity: "warning", message: msg });
+      }
+    }
+
     result.meta.sourcesQueried.push("intelligence");
   } catch {
     // Intelligence collection is best-effort

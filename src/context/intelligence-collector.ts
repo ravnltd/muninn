@@ -10,6 +10,7 @@
 
 import type { DatabaseAdapter } from "../database/adapter";
 import type { TrajectoryAnalysis } from "./trajectory-analyzer";
+import type { AgentProfile } from "../outcomes/agent-profile";
 
 // ============================================================================
 // Types
@@ -39,6 +40,7 @@ export interface IntelligenceSignals {
   budgetOverrides: BudgetAllocation | null;
   prediction: { tool: string; confidence: number } | null;
   trajectory: TrajectoryAnalysis;
+  profile: AgentProfile | null;
 }
 
 // ============================================================================
@@ -55,7 +57,7 @@ export async function collectIntelligence(
   keywords: string[],
   recentToolNames: string[],
 ): Promise<IntelligenceSignals> {
-  const [strategiesResult, staleResult, budgetResult, predictionResult, trajectoryResult] =
+  const [strategiesResult, staleResult, budgetResult, predictionResult, trajectoryResult, profileResult] =
     await Promise.allSettled([
       import("../learning/strategy-distiller.js").then((mod) =>
         mod.getMatchingStrategies(db, projectId, keywords),
@@ -74,6 +76,9 @@ export async function collectIntelligence(
         const callData = recentToolNames.map((toolName) => ({ toolName, files: [] }));
         return analyzeTrajectory(callData);
       }),
+      import("../outcomes/agent-profile.js").then((mod) =>
+        mod.getAgentProfile(db, projectId),
+      ),
     ]);
 
   // Extract strategies with timesUsed (re-query for full data)
@@ -122,5 +127,9 @@ export async function collectIntelligence(
       ? trajectoryResult.value
       : { pattern: "normal", message: "Analysis unavailable", confidence: 0 };
 
-  return { strategies, staleItemIds, budgetOverrides, prediction, trajectory };
+  // Extract agent profile
+  const profile: AgentProfile | null =
+    profileResult.status === "fulfilled" ? profileResult.value : null;
+
+  return { strategies, staleItemIds, budgetOverrides, prediction, trajectory, profile };
 }

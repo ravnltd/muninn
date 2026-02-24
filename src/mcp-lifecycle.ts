@@ -211,6 +211,14 @@ export async function autoEndSession(): Promise<void> {
       // work_queue or sessions might not exist yet
     }
 
+    // Clear per-session caches
+    try {
+      const { clearProfileCache } = await import("./outcomes/agent-profile.js");
+      clearProfileCache();
+    } catch {
+      // Module may not be loaded yet
+    }
+
     // Spawn worker to process queued jobs
     spawnWorkerIfNeeded();
 
