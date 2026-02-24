@@ -80,7 +80,12 @@ async function verifyCsrfToken(token: string): Promise<boolean> {
   );
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
   const expected = Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
-  return signature === expected;
+  // Constant-time comparison to prevent timing oracle attacks
+  if (signature.length !== expected.length) return false;
+  const a = new TextEncoder().encode(signature);
+  const b = new TextEncoder().encode(expected);
+  const { timingSafeEqual } = await import("node:crypto");
+  return timingSafeEqual(a, b);
 }
 
 // Periodic cleanup every 30 minutes

@@ -82,6 +82,7 @@ import {
   handlePassthrough,
 } from "./mcp-handlers.js";
 import { createLogger } from "./lib/logger.js";
+import { silentCatch } from "./utils/silent-catch.js";
 
 // --- Extracted modules ---
 import {
@@ -146,9 +147,9 @@ async function analyzeAndEnhance(
         if (sid) db.run(
           "UPDATE sessions SET task_type = ? WHERE id = ? AND task_type IS NULL",
           [ctx.taskType, sid],
-        ).catch(() => {});
+        ).catch(silentCatch("mcp:session-task-type-update"));
       })
-      .catch(() => {});
+      .catch(silentCatch("mcp:session-id-lookup"));
   }
 
   // Track context files for quality monitoring
@@ -172,8 +173,8 @@ async function analyzeAndEnhance(
     // Apply dynamic budget (Loops 3, 4, 5, 7)
     const dynamicAlloc = computeDynamicBudget(signals, signals.budgetOverrides, signals.impactStats);
     setCachedBudgetOverrides(dynamicAlloc);
-  } catch {
-    // Intelligence collection is non-critical
+  } catch (e) {
+    silentCatch("mcp:intelligence-collect")(e);
   }
 
   // Build and cache context output with strategies (Loop 1)
@@ -241,8 +242,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       setTaskAnalyzed(true);
       if (isRefresh) resetQuality();
       try {
-        analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(() => {});
-      } catch { /* guard sync throw */ }
+        analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(silentCatch("mcp:analyze-enhance"));
+      } catch (e) { silentCatch("mcp:analyze-enhance-sync")(e); }
     }
 
     // --- v4 Phase 3: Context shifter — auto-update focus if topic shifted ---
@@ -252,12 +253,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (shifted) {
             resetQuality();
             try {
-              analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(() => {});
-            } catch { /* guard sync throw */ }
+              analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(silentCatch("mcp:analyze-enhance-shift"));
+            } catch (e) { silentCatch("mcp:analyze-enhance-shift-sync")(e); }
           }
         })
-        .catch(() => {});
-    } catch { /* guard sync throw */ }
+        .catch(silentCatch("mcp:focus-update"));
+    } catch (e) { silentCatch("mcp:focus-update-sync")(e); }
 
     // --- v8: Trajectory-driven context refresh (uses intelligence collector) ---
     try {
@@ -272,7 +273,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           resetQuality();
         }
       }
-    } catch { /* guard sync throw */ }
+    } catch (e) { silentCatch("mcp:trajectory-refresh")(e); }
 
     // --- v4: Session auto-start on first tool call ---
     if (!getSessionAutoStarted()) {
@@ -286,8 +287,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       );
       state?.writeDiscoveryFile({ hasFileData: (fileCount?.cnt ?? 0) > 0 });
       try {
-        autoStartSession(db, projectId).catch(() => {});
-      } catch { /* guard sync throw */ }
+        autoStartSession(db, projectId).catch(silentCatch("mcp:auto-start-session"));
+      } catch (e) { silentCatch("mcp:auto-start-session-sync")(e); }
       // Load budget weights and overrides for this session
       if (!getBudgetWeightsLoaded()) {
         setBudgetWeightsLoaded(true);
@@ -295,21 +296,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           import("./outcomes/confidence-calibrator.js")
             .then((mod) => mod.getWeightAdjustments(db, projectId))
             .then((weights) => { setCachedBudgetWeights(weights); })
-            .catch(() => {});
-        } catch { /* guard sync throw */ }
+            .catch(silentCatch("mcp:load-budget-weights"));
+        } catch (e) { silentCatch("mcp:load-budget-weights-sync")(e); }
         try {
           import("./context/budget-manager.js")
             .then((mod) => mod.loadBudgetOverrides(db, projectId))
             .then((overrides) => { setCachedBudgetOverrides(overrides); })
-            .catch(() => {});
-        } catch { /* guard sync throw */ }
+            .catch(silentCatch("mcp:load-budget-overrides"));
+        } catch (e) { silentCatch("mcp:load-budget-overrides-sync")(e); }
       }
       // v5 Phase 3: Warm embedding cache for hybrid semantic retrieval
       if (!getEmbeddingCacheWarmed()) {
         setEmbeddingCacheWarmed(true);
         try {
-          warmCache(db, projectId).catch(() => {});
-        } catch { /* guard sync throw */ }
+          warmCache(db, projectId).catch(silentCatch("mcp:warm-embedding-cache"));
+        } catch (e) { silentCatch("mcp:warm-embedding-cache-sync")(e); }
       }
     }
 
@@ -409,8 +410,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             parsed.file_path = normalizePath(cwd, parsed.file_path);
             validation.data.input = JSON.stringify(parsed);
           }
-        } catch {
-          // Not valid JSON or no file_path — pass through unchanged
+        } catch (e) {
+          silentCatch("mcp:enrich-json-parse")(e);
         }
         result = await handleEnrich(db, projectId, validation.data.cwd || cwd, validation.data);
         break;
@@ -527,9 +528,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (errors.length > 0) {
           getActiveSessionId(db, projectId)
             .then((sessionId) => recordErrors(db, projectId, sessionId, null, errors))
-            .catch(() => {});
+            .catch(silentCatch("mcp:record-errors"));
         }
-      } catch { /* guard sync throw */ }
+      } catch (e) { silentCatch("mcp:error-detect")(e); }
     }
 
     // --- v4: Prepend slow-call warning if consecutive threshold exceeded ---
@@ -652,12 +653,12 @@ async function main(): Promise<void> {
   await server.connect(transport);
   log.info("MCP-native session ready — session auto-start/end works for any MCP client");
 
-  // Write PID file for watchdog detection
+  // Write PID file for watchdog detection (restrictive permissions to prevent symlink attacks)
   try {
     const { writeFileSync } = await import("node:fs");
-    writeFileSync("/tmp/muninn-mcp.pid", String(process.pid));
-  } catch {
-    // Non-critical
+    writeFileSync("/tmp/muninn-mcp.pid", String(process.pid), { mode: 0o600 });
+  } catch (e) {
+    silentCatch("mcp:pid-file-write")(e);
   }
 
   // --- Database keepalive: prevent connection staleness ---
@@ -688,8 +689,8 @@ async function main(): Promise<void> {
       const defaultProject = await getProjectId(db, process.cwd());
       const { expireIntents } = await import("./agents/intent-manager.js");
       await expireIntents(db, defaultProject);
-    } catch {
-      // Best-effort — tables may not exist
+    } catch (e) {
+      silentCatch("mcp:expire-intents")(e);
     }
   }, INTENT_EXPIRE_MS);
 
@@ -708,8 +709,8 @@ async function main(): Promise<void> {
         log.info(`${staleJob.cnt} stale job(s) in queue, spawning worker`);
         spawnWorkerIfNeeded();
       }
-    } catch {
-      // Best-effort — work_queue might not exist
+    } catch (e) {
+      silentCatch("mcp:stale-job-check")(e);
     }
   }, STALE_JOB_CHECK_MS);
 

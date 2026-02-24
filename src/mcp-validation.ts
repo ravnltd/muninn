@@ -98,8 +98,14 @@ export const ContentText = z
 export const SafeCwd = z
   .string()
   .max(500)
+  .refine((s) => s.startsWith("/"), {
+    message: "Working directory must be an absolute path",
+  })
   .refine((s) => !PATH_TRAVERSAL.test(s), {
     message: "Path traversal (..) not allowed in cwd",
+  })
+  .refine((s) => !s.includes("\0"), {
+    message: "Null bytes not allowed in path",
   })
   .optional();
 

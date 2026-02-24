@@ -11,6 +11,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { silentCatch } from "../utils/silent-catch.js";
 import type { TaskContext } from "./task-analyzer";
 import type { SemanticMatch } from "./embedding-cache";
 
@@ -158,8 +159,8 @@ export async function detectDeepContradictions(
         });
       }
     }
-  } catch {
-    // Tables might not exist
+  } catch (e) {
+    silentCatch("contradiction:deep-detect")(e);
   }
 
   return contradictions.slice(0, MAX_CONTRADICTIONS);
@@ -190,8 +191,8 @@ export async function persistContradiction(
         contradiction.severity,
       ]
     );
-  } catch {
-    // Table might not exist
+  } catch (e) {
+    silentCatch("contradiction:persist")(e);
   }
 }
 

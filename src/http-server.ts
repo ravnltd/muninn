@@ -68,8 +68,25 @@ type AppEnv = {
 export function createApp(db: DatabaseAdapter, projectId: number, cwd: string): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
-  // Global middleware
-  app.use("*", cors());
+  // Global middleware — restrict CORS to localhost origins
+  app.use("*", cors({
+    origin: ["http://localhost:3001", "http://127.0.0.1:3001", "http://localhost:3000", "http://127.0.0.1:3000"],
+  }));
+
+  // Bearer token auth — required when MUNINN_API_TOKEN is set
+  const apiToken = process.env.MUNINN_API_TOKEN;
+  app.use("/api/*", async (c, next) => {
+    // Health endpoint is always public
+    if (c.req.path === "/api/v1/health") return next();
+    if (apiToken) {
+      const auth = c.req.header("Authorization");
+      if (!auth || auth !== `Bearer ${apiToken}`) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+    }
+    await next();
+  });
+
   app.use("*", async (c, next) => {
     c.set("db", db);
     c.set("projectId", projectId);

@@ -9,6 +9,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { silentCatch } from "../utils/silent-catch.js";
 import type { TrajectoryAnalysis } from "./trajectory-analyzer";
 import type { AgentProfile } from "../outcomes/agent-profile";
 
@@ -104,8 +105,8 @@ export async function collectIntelligence(
         );
         if (row) strategy.timesUsed = row.times_used;
       }
-    } catch {
-      // Table may not exist
+    } catch (e) {
+      silentCatch("intel-collector:enrich-times-used")(e);
     }
   }
 

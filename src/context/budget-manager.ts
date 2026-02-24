@@ -7,6 +7,7 @@
  */
 
 import type { TaskContext, RelevantFile, RelevantDecision, RelevantLearning, RelevantIssue, ErrorFix } from "./task-analyzer";
+import { silentCatch } from "../utils/silent-catch.js";
 import { estimateTokens } from "../enrichment/formatter";
 import { serializeContradictions } from "./contradiction-detector";
 
@@ -231,8 +232,8 @@ export async function loadBudgetOverrides(
         allocation[category] = clampBudget(override.recommended_budget);
       }
     }
-  } catch {
-    // Table might not exist yet
+  } catch (e) {
+    silentCatch("budget:load-overrides")(e);
   }
 
   return allocation;

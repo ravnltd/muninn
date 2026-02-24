@@ -7,6 +7,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { silentCatch } from "../utils/silent-catch.js";
 import { extractFiles, extractKeywords, extractDomains } from "./task-analyzer";
 
 // ============================================================================
@@ -184,7 +185,8 @@ export async function checkAndUpdateFocus(
     initialFocus = current;
 
     return true;
-  } catch {
+  } catch (e) {
+    silentCatch("shifter:update-focus")(e);
     return false;
   }
 }

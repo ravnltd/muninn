@@ -9,6 +9,7 @@ import type { DatabaseAdapter } from "../types";
 
 const KEY_PREFIX = "mk_";
 const KEY_BYTES = 32;
+const API_KEY_TTL_MS = 90 * 24 * 3600 * 1000; // 90 days
 
 export interface ApiKeyRecord {
   id: string;
@@ -19,6 +20,7 @@ export interface ApiKeyRecord {
   scopes: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  expires_at: string | null;
   created_at: string;
 }
 
@@ -37,6 +39,7 @@ export async function generateApiKey(
   const id = crypto.randomUUID();
   const keyHash = await hashKey(key);
   const keyPrefixDisplay = `${KEY_PREFIX}${hex.slice(0, 8)}...`;
+  const expiresAt = new Date(Date.now() + API_KEY_TTL_MS).toISOString();
 
   const record: ApiKeyRecord = {
     id,
@@ -47,13 +50,14 @@ export async function generateApiKey(
     scopes: '["mcp:tools"]',
     last_used_at: null,
     revoked_at: null,
+    expires_at: expiresAt,
     created_at: new Date().toISOString(),
   };
 
   await db.run(
-    `INSERT INTO api_keys (id, tenant_id, key_prefix, key_hash, name, scopes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [record.id, record.tenant_id, record.key_prefix, record.key_hash, record.name, record.scopes, record.created_at]
+    `INSERT INTO api_keys (id, tenant_id, key_prefix, key_hash, name, scopes, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [record.id, record.tenant_id, record.key_prefix, record.key_hash, record.name, record.scopes, record.expires_at, record.created_at]
   );
 
   return { key, record };
@@ -72,6 +76,9 @@ export async function verifyApiKey(db: DatabaseAdapter, key: string): Promise<Ap
   );
 
   if (!record) return null;
+
+  // Check if key has expired
+  if (record.expires_at && new Date(record.expires_at) < new Date()) return null;
 
   // Update last_used_at (fire and forget)
   db.run("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?", [record.id]).catch(() => {});
@@ -98,7 +105,7 @@ export async function listApiKeys(
   tenantId: string
 ): Promise<Array<Omit<ApiKeyRecord, "key_hash">>> {
   return db.all(
-    "SELECT id, tenant_id, key_prefix, name, scopes, last_used_at, revoked_at, created_at FROM api_keys WHERE tenant_id = ? ORDER BY created_at DESC",
+    "SELECT id, tenant_id, key_prefix, name, scopes, last_used_at, revoked_at, expires_at, created_at FROM api_keys WHERE tenant_id = ? ORDER BY created_at DESC",
     [tenantId]
   );
 }

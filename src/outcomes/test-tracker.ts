@@ -66,6 +66,21 @@ export function discoverTestCommand(projectPath: string): string | null {
 // Test Runner
 // ============================================================================
 
+/** Validate test command against known-safe patterns */
+function isAllowedTestCommand(cmd: string): boolean {
+  // Allow only known test runner patterns — no shell metacharacters
+  const ALLOWED_PREFIXES = [
+    "bun test", "bun run test", "bunx vitest",
+    "npm test", "npm run test", "npx vitest", "npx jest",
+    "pnpm test", "pnpm run test", "pnpm exec vitest",
+    "yarn test", "yarn run test",
+    "vitest", "jest", "mocha", "ava", "tap",
+    "cargo test", "go test", "pytest", "python -m pytest",
+  ];
+  const trimmed = cmd.trim();
+  return ALLOWED_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
 /** Run the test command and parse results */
 export async function runTests(
   projectPath: string,
@@ -73,8 +88,20 @@ export async function runTests(
 ): Promise<TestResult> {
   const start = Date.now();
 
+  // Reject commands with shell metacharacters or unknown patterns
+  if (!isAllowedTestCommand(testCommand)) {
+    return {
+      status: "skipped",
+      totalTests: 0, passed: 0, failed: 0, skipped: 0,
+      durationMs: 0,
+      outputSummary: "Test command rejected: not a recognized test runner pattern",
+    };
+  }
+
   try {
-    const proc = Bun.spawn(["sh", "-c", testCommand], {
+    // Split command into args instead of using sh -c to prevent injection
+    const parts = testCommand.trim().split(/\s+/);
+    const proc = Bun.spawn(parts, {
       cwd: projectPath,
       stdout: "pipe",
       stderr: "pipe",

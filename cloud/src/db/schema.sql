@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   scopes TEXT NOT NULL DEFAULT '["mcp:tools"]',
   last_used_at TEXT,
   revoked_at TEXT,
+  expires_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

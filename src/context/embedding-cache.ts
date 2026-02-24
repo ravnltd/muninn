@@ -7,6 +7,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { silentCatch } from "../utils/silent-catch.js";
 import {
   cosineSimilarity,
   deserializeEmbedding,
@@ -100,8 +101,8 @@ export async function warmCache(
             embedding,
           });
         }
-      } catch {
-        // Skip malformed embeddings
+      } catch (e) {
+        silentCatch("embedding:deserialize-learning")(e);
       }
     }
 
@@ -132,16 +133,16 @@ export async function warmCache(
             embedding,
           });
         }
-      } catch {
-        // Skip malformed embeddings
+      } catch (e) {
+        silentCatch("embedding:deserialize-decision")(e);
       }
     }
 
     cache = items;
     cacheWarmed = true;
     return items.length;
-  } catch {
-    // Tables/columns might not exist
+  } catch (e) {
+    silentCatch("embedding:warm-cache")(e);
     return 0;
   } finally {
     warmingInProgress = false;

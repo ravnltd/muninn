@@ -2197,4 +2197,30 @@ export const MIGRATIONS: Migration[] = [
       return cols.some((c) => c.name === "duration_ms");
     },
   },
+
+  // Version 44: v8 — Clean up failed jobs in work queue + add API key expiry
+  {
+    version: 44,
+    name: "work_queue_failed_cleanup_and_key_expiry",
+    description: "Extend work queue cleanup to failed jobs (30 days) and add API key expiry",
+    up: `
+      -- Replace trigger to also clean failed jobs
+      DROP TRIGGER IF EXISTS work_queue_cleanup;
+      CREATE TRIGGER IF NOT EXISTS work_queue_cleanup
+      AFTER INSERT ON work_queue
+      BEGIN
+        DELETE FROM work_queue
+        WHERE (status = 'completed' AND completed_at < datetime('now', '-7 days'))
+           OR (status = 'failed' AND completed_at < datetime('now', '-30 days'));
+      END;
+    `,
+    validate: (db) => {
+      const trigger = db
+        .query<{ sql: string }, []>(
+          "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'work_queue_cleanup'",
+        )
+        .get();
+      return trigger?.sql?.includes("failed") ?? false;
+    },
+  },
 ];

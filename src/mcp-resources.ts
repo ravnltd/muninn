@@ -13,6 +13,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { DatabaseAdapter } from "./database/adapter.js";
+import { silentCatch } from "./utils/silent-catch.js";
 import { getTaskContext } from "./context/task-analyzer.js";
 import { getDb, getProjectId, buildCalibratedContext } from "./mcp-state.js";
 
@@ -185,8 +186,8 @@ async function collectFragileFiles(
         sections.push(`  [${f.fragility}] ${f.path}${signals}`);
       }
     }
-  } catch {
-    // fragility_signals column may not exist in older schemas
+  } catch (e) {
+    silentCatch("resources:fragile-files")(e);
   }
 }
 
@@ -215,8 +216,8 @@ async function collectCriticalIssues(
         sections.push(`  [sev:${i.severity}]${typeStr} ${i.title}`);
       }
     }
-  } catch {
-    // issues table may not exist in older schemas
+  } catch (e) {
+    silentCatch("resources:critical-issues")(e);
   }
 }
 
@@ -244,8 +245,8 @@ async function collectContradictions(
         sections.push(`  [${c.severity}] ${c.source_type}: ${c.contradiction_summary.slice(0, 80)}`);
       }
     }
-  } catch {
-    // contradiction_alerts table may not exist in older schemas
+  } catch (e) {
+    silentCatch("resources:contradictions")(e);
   }
 }
 
@@ -282,8 +283,8 @@ async function readSharedContext(
         sections.push(`  [${a.severity}] ${a.title}`);
       }
     }
-  } catch {
-    // risk_alerts table may not exist
+  } catch (e) {
+    silentCatch("resources:risk-alerts")(e);
   }
 
   // 2. High-confidence team learnings
@@ -306,8 +307,8 @@ async function readSharedContext(
         sections.push(`  [conf:${l.confidence}] ${l.title}: ${l.content.slice(0, 60)}`);
       }
     }
-  } catch {
-    // team_learnings table may not exist
+  } catch (e) {
+    silentCatch("resources:team-learnings")(e);
   }
 
   // 3. Current session state (what other agents might need)
@@ -326,8 +327,8 @@ async function readSharedContext(
       sections.push("");
       sections.push(`ACTIVE SESSION: #${session.session_number ?? '?'} — ${session.goal}`);
     }
-  } catch {
-    // sessions table may not exist
+  } catch (e) {
+    silentCatch("resources:session-state")(e);
   }
 
   // 4. Recently modified fragile files (hot spots)
@@ -350,8 +351,8 @@ async function readSharedContext(
         sections.push(`  [${f.fragility}/10] ${f.path}`);
       }
     }
-  } catch {
-    // files table may lack expected columns
+  } catch (e) {
+    silentCatch("resources:hot-fragile-files")(e);
   }
 
   if (sections.length === 0) {
@@ -381,8 +382,8 @@ async function readBriefing(
       sections.push("=== CODEBASE DNA ===");
       sections.push(dnaResult.formatted);
     }
-  } catch {
-    // codebase_dna table may not exist
+  } catch (e) {
+    silentCatch("resources:codebase-dna")(e);
   }
 
   // 2. Resume context (last session)
@@ -407,8 +408,8 @@ async function readBriefing(
         sections.push(`Result: ${labels[lastSession.success] ?? "unknown"}`);
       }
     }
-  } catch {
-    // sessions table may not exist
+  } catch (e) {
+    silentCatch("resources:last-session")(e);
   }
 
   // 3. Session trajectory (v7 Phase 3B)
@@ -432,8 +433,8 @@ async function readBriefing(
         if (trajectory.suggestion) sections.push(`Suggestion: ${trajectory.suggestion}`);
       }
     }
-  } catch {
-    // trajectory analyzer may fail on older schemas
+  } catch (e) {
+    silentCatch("resources:trajectory-analysis")(e);
   }
 
   // 4. Performance self-observation
@@ -572,7 +573,7 @@ async function collectFailedDecisions(
         sections.push(`  [${d.outcome}] ${d.title}`);
       }
     }
-  } catch {
-    // decisions table may not exist in older schemas
+  } catch (e) {
+    silentCatch("resources:failed-decisions")(e);
   }
 }

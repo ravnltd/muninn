@@ -8,6 +8,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { silentCatch } from "../utils/silent-catch.js";
 
 // ============================================================================
 // Types
@@ -161,8 +162,8 @@ export function extractFiles(args: Record<string, unknown>): string[] {
     try {
       const parsed = JSON.parse(args.input) as Record<string, unknown>;
       if (typeof parsed.file_path === "string") files.push(parsed.file_path);
-    } catch {
-      // Not valid JSON
+    } catch (e) {
+      silentCatch("task-analyzer:json-parse")(e);
     }
   }
 
@@ -290,7 +291,8 @@ async function getProfileHints(db: DatabaseAdapter, projectId: number): Promise<
     }
 
     return [...new Set(hints)].slice(0, 5);
-  } catch {
+  } catch (e) {
+    silentCatch("task-analyzer:profile-hints")(e);
     return [];
   }
 }
@@ -390,13 +392,14 @@ async function findRelevantFiles(
             results.push({ ...r, score: 0.6 });
           }
         }
-      } catch {
-        // FTS might not be available
+      } catch (e) {
+        silentCatch("task-analyzer:fts-files")(e);
       }
     }
 
     return results.slice(0, 8);
-  } catch {
+  } catch (e) {
+    silentCatch("task-analyzer:find-relevant-files")(e);
     return [];
   }
 }
@@ -460,13 +463,14 @@ async function findRelevantDecisions(
             });
           }
         }
-      } catch {
-        // FTS might not be available
+      } catch (e) {
+        silentCatch("task-analyzer:fts-decisions")(e);
       }
     }
 
     return results.slice(0, 5);
-  } catch {
+  } catch (e) {
+    silentCatch("task-analyzer:find-relevant-decisions")(e);
     return [];
   }
 }
@@ -491,7 +495,8 @@ async function findRelevantLearnings(
         [query, projectId]
       );
       return results.map((r) => ({ ...r, score: 0.6 }));
-    } catch {
+    } catch (e) {
+      silentCatch("task-analyzer:fts-learnings")(e);
       // FTS fallback
       const results = await db.all<{
         id: number; category: string; title: string; content: string; confidence: number;
@@ -504,7 +509,8 @@ async function findRelevantLearnings(
       );
       return results.map((r) => ({ ...r, score: 0.4 }));
     }
-  } catch {
+  } catch (e) {
+    silentCatch("task-analyzer:find-relevant-learnings")(e);
     return [];
   }
 }
@@ -528,7 +534,8 @@ async function findRelevantIssues(
         [query, projectId]
       );
       return results.map((r) => ({ ...r, score: 0.7 }));
-    } catch {
+    } catch (e) {
+      silentCatch("task-analyzer:fts-issues")(e);
       // FTS fallback
       const results = await db.all<{
         id: number; title: string; severity: number; type: string;
@@ -541,7 +548,8 @@ async function findRelevantIssues(
       );
       return results.map((r) => ({ ...r, score: 0.5 }));
     }
-  } catch {
+  } catch (e) {
+    silentCatch("task-analyzer:find-relevant-issues")(e);
     return [];
   }
 }
@@ -578,7 +586,8 @@ async function findErrorFixes(
       fixFiles: r.fix_files || "",
       confidence: r.confidence,
     }));
-  } catch {
+  } catch (e) {
+    silentCatch("task-analyzer:find-error-fixes")(e);
     return [];
   }
 }

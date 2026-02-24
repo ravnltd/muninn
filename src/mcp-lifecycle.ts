@@ -6,6 +6,7 @@
 
 import type { DatabaseAdapter } from "./database/adapter";
 import { createLogger } from "./lib/logger.js";
+import { silentCatch } from "./utils/silent-catch.js";
 import { captureOutput } from "./mcp-handlers.js";
 import {
   getDb,
@@ -49,8 +50,8 @@ export async function autoStartSession(db: DatabaseAdapter, projectId: number): 
     const mod = await import("./commands/session.js");
     await captureOutput(async () => { await mod.sessionStart(db, projectId, "Auto-started session"); });
     log.info("Auto-started session");
-  } catch {
-    // Non-critical — session tracking is best-effort
+  } catch (e) {
+    silentCatch("lifecycle:auto-start-session")(e);
   }
 }
 
@@ -90,7 +91,8 @@ export async function autoEndSession(): Promise<void> {
         `UPDATE sessions SET ended_at = datetime('now'), outcome = ?, success = ? WHERE id = ?`,
         [outcomeText, inferred.success, activeSession.id]
       );
-    } catch {
+    } catch (e) {
+      silentCatch("lifecycle:infer-outcome")(e);
       // Fallback: just set the basic outcome
       await db.run(
         `UPDATE sessions SET ended_at = datetime('now'), outcome = ? WHERE id = ?`,
@@ -108,8 +110,8 @@ export async function autoEndSession(): Promise<void> {
         `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
         ["detect_patterns", JSON.stringify({ projectId })]
       );
-    } catch {
-      // work_queue might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-learning-jobs")(e);
     }
 
     // v4 Phase 5: Queue outcome intelligence jobs for this session
@@ -131,8 +133,8 @@ export async function autoEndSession(): Promise<void> {
         `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
         ["reinforce_learnings", JSON.stringify({ projectId, sessionId: activeSession.id })]
       );
-    } catch {
-      // work_queue might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-outcome-jobs")(e);
     }
 
     // v4 Phase 6: Queue team intelligence jobs at session end
@@ -145,8 +147,8 @@ export async function autoEndSession(): Promise<void> {
         `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
         ["promote_reviews", JSON.stringify({ projectId })]
       );
-    } catch {
-      // work_queue might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-team-jobs")(e);
     }
 
     // v7 Phase 2A/4A: Queue reasoning extraction and impact classification
@@ -159,8 +161,8 @@ export async function autoEndSession(): Promise<void> {
         `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
         ["classify_impact", JSON.stringify({ projectId, sessionId: activeSession.id })]
       );
-    } catch {
-      // work_queue might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-reasoning-impact")(e);
     }
 
     // v7 Phase 2B: Distill strategies every 5 sessions
@@ -175,8 +177,8 @@ export async function autoEndSession(): Promise<void> {
           ["distill_strategies", JSON.stringify({ projectId })]
         );
       }
-    } catch {
-      // work_queue or sessions might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-distill-strategies")(e);
     }
 
     // v7 Phase 3A: Build workflow model every 10 sessions
@@ -191,8 +193,8 @@ export async function autoEndSession(): Promise<void> {
           ["build_workflow_model", JSON.stringify({ projectId })]
         );
       }
-    } catch {
-      // work_queue or sessions might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-workflow-model")(e);
     }
 
     // v7 Phase 1C: Regenerate codebase DNA every 20 sessions
@@ -207,23 +209,23 @@ export async function autoEndSession(): Promise<void> {
           ["generate_codebase_dna", JSON.stringify({ projectId })]
         );
       }
-    } catch {
-      // work_queue or sessions might not exist yet
+    } catch (e) {
+      silentCatch("lifecycle:queue-codebase-dna")(e);
     }
 
     // Clear per-session caches
     try {
       const { clearProfileCache } = await import("./outcomes/agent-profile.js");
       clearProfileCache();
-    } catch {
-      // Module may not be loaded yet
+    } catch (e) {
+      silentCatch("lifecycle:clear-profile-cache")(e);
     }
 
     // Spawn worker to process queued jobs
     spawnWorkerIfNeeded();
 
     log.info("Auto-ended session");
-  } catch {
-    // Best-effort — process is exiting
+  } catch (e) {
+    silentCatch("lifecycle:auto-end-session")(e);
   }
 }

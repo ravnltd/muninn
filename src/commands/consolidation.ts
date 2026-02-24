@@ -129,6 +129,8 @@ async function consolidateTable(
   table: ConsolidatableTable,
   currentSessionNumber: number
 ): Promise<ConsolidationResult | null> {
+  // Runtime validation — defense-in-depth against SQL injection via dynamic table name
+  validateTableName(table);
   const coldEntities = await getColdEntities(db, projectId, table, currentSessionNumber);
 
   if (coldEntities.length < MIN_COLD_FOR_CONSOLIDATION) {
@@ -193,6 +195,8 @@ async function consolidateTable(
  */
 export async function reheatEntity(db: DatabaseAdapter, table: ConsolidatableTable, id: number): Promise<void> {
   try {
+    // Runtime validation — ConsolidatableTable is a type alias, not a runtime guard
+    validateTableName(table);
     await db.run(
       `UPDATE ${table} SET archived_at = NULL, temperature = 'warm', last_referenced_at = CURRENT_TIMESTAMP WHERE id = ?`,
       [id]

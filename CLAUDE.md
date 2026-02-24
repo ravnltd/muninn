@@ -34,6 +34,20 @@ You have **native MCP tools** for project memory. Query, don't preload.
 
 **sqld server:** `http://YOUR_SQLD_HOST:8080` (Tailscale)
 
+**Security:** Always run sqld with auth enabled in production:
+```bash
+# Generate a token and start sqld with auth
+export SQLD_AUTH_JWT_KEY="your-secret-key-here"
+docker run -d --name muninn-sqld \
+  -p 8080:8080 \
+  -e SQLD_AUTH_JWT_KEY_FILE=/dev/stdin \
+  -v muninn-sqld-data:/var/lib/sqld \
+  ghcr.io/tursodatabase/libsql-server:latest
+
+# Set MUNINN_AUTH_TOKEN on all spokes to authenticate
+export MUNINN_AUTH_TOKEN="your-bearer-token"
+```
+
 ### Install Claude Code first
 
 ```bash

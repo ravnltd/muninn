@@ -37,7 +37,7 @@ export class SessionState {
   markChecked(files: string[]): void {
     try {
       const entries = files.map((f) => f + "\n").join("");
-      appendFileSync(this.checkedPath, entries);
+      appendFileSync(this.checkedPath, entries, { mode: 0o600 });
       this.trimIfNeeded();
     } catch {
       // fail-silent — enforcement will fail-open
@@ -59,7 +59,7 @@ export class SessionState {
   writeContext(context: string): void {
     try {
       const tmp = this.contextPath + ".tmp";
-      writeFileSync(tmp, context);
+      writeFileSync(tmp, context, { mode: 0o600 });
       renameSync(tmp, this.contextPath);
     } catch {
       // fail-silent
@@ -90,7 +90,8 @@ export class SessionState {
           checkedPath: this.checkedPath,
           contextPath: this.contextPath,
           hasFileData: options?.hasFileData ?? true,
-        })
+        }),
+        { mode: 0o600 }
       );
       renameSync(tmp, this.discoveryPath);
     } catch {

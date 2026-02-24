@@ -81,7 +81,9 @@ function getUntrackedFiles(path: string): string[] {
 
 function getRecentCommits(path: string, count: number = 5): Array<{ hash: string; message: string; date: string }> {
   try {
-    const output = execSync(`git log --pretty=format:"%H|%s|%ai" -${count}`, {
+    // Clamp count to safe integer range to prevent injection via -<value>
+    const safeCount = Math.max(1, Math.min(Math.floor(count), 100));
+    const output = execSync(`git log --pretty=format:"%H|%s|%ai" -${safeCount}`, {
       cwd: path,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],

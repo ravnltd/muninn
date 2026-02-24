@@ -38,7 +38,12 @@ async function verifyGitHubSignature(
     .map(b => b.toString(16).padStart(2, "0"))
     .join("");
 
-  return computed === expected;
+  // Constant-time comparison to prevent timing oracle attacks
+  if (computed.length !== expected.length) return false;
+  const a = new TextEncoder().encode(computed);
+  const b = new TextEncoder().encode(expected);
+  const { timingSafeEqual } = await import("node:crypto");
+  return timingSafeEqual(a, b);
 }
 
 // Schema for the parts of PR review we care about

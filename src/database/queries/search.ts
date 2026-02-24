@@ -660,7 +660,7 @@ export async function searchPatterns(db: DatabaseAdapter, query: string): Promis
 }
 
 export async function getAllPatterns(db: DatabaseAdapter): Promise<Pattern[]> {
-  return await db.all<Pattern>(`SELECT * FROM patterns ORDER BY name`);
+  return await db.all<Pattern>(`SELECT * FROM patterns ORDER BY name LIMIT 1000`);
 }
 
 export async function addPattern(
@@ -725,14 +725,16 @@ export async function listTechDebt(
   if (projectPath) {
     return await db.all<TechDebtRow>(
       `SELECT * FROM tech_debt WHERE project_path = ? AND status = 'open'
-      ORDER BY severity DESC`,
+      ORDER BY severity DESC
+      LIMIT 200`,
       [projectPath]
     );
   }
 
   return await db.all<TechDebtRow>(
     `SELECT * FROM tech_debt WHERE status = 'open'
-    ORDER BY severity DESC`
+    ORDER BY severity DESC
+    LIMIT 200`
   );
 }
 

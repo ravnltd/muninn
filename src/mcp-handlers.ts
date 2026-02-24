@@ -8,6 +8,7 @@
  */
 
 import type { DatabaseAdapter } from "./database/adapter";
+import { silentCatch } from "./utils/silent-catch.js";
 
 // ============================================================================
 // Console Output Capture
@@ -182,8 +183,8 @@ export async function handleSessionStart(
     const { sessionEndEnhanced } = await import("./commands/session");
     try {
       await sessionEndEnhanced(db, projectId, lastSession.id, ["--outcome", "Replaced by new session"]);
-    } catch {
-      // Best effort - continue even if end fails
+    } catch (e) {
+      silentCatch("handlers:session-auto-end")(e);
     }
   }
 
@@ -490,7 +491,7 @@ export async function handlePassthrough(
                   allFiles.push(relativeFn(cwd, full));
                 }
               }
-            } catch { /* skip */ }
+            } catch (e) { silentCatch("handlers:reindex-walk")(e); }
           };
           walkDir(cwd);
           console.error("Building call graph...");

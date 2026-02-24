@@ -25,7 +25,7 @@ import { logError } from "../../utils/errors";
 // ============================================================================
 
 export async function getAllServers(db: DatabaseAdapter): Promise<Server[]> {
-  return await db.all<Server>(`SELECT * FROM servers ORDER BY name`);
+  return await db.all<Server>(`SELECT * FROM servers ORDER BY name LIMIT 500`);
 }
 
 export async function getServerByName(db: DatabaseAdapter, name: string): Promise<Server | null> {
@@ -78,7 +78,8 @@ export async function getAllServicesWithServerName(
     `SELECT sv.*, s.name as server_name
     FROM services sv
     JOIN servers s ON sv.server_id = s.id
-    ORDER BY s.name, sv.name`
+    ORDER BY s.name, sv.name
+    LIMIT 500`
   );
 }
 
@@ -92,7 +93,8 @@ export async function getAllRoutes(db: DatabaseAdapter): Promise<RouteWithServic
     FROM routes r
     JOIN services sv ON r.service_id = sv.id
     JOIN servers s ON sv.server_id = s.id
-    ORDER BY r.domain, r.path`
+    ORDER BY r.domain, r.path
+    LIMIT 1000`
   );
 }
 

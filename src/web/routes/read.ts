@@ -27,7 +27,7 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
     try {
       const db = await getDb();
       const projects = await db.all(
-        "SELECT id, name, path, status, mode FROM projects ORDER BY updated_at DESC",
+        "SELECT id, name, path, status, mode FROM projects ORDER BY updated_at DESC LIMIT 500",
       );
       return c.json(projects);
     } catch (e) {
@@ -289,7 +289,8 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
            OR (r.target_type = 'issue' AND r.target_id IN (SELECT id FROM issues WHERE project_id = ?))
            OR (r.source_type = 'learning' AND r.source_id IN (SELECT id FROM learnings WHERE project_id = ?))
            OR (r.target_type = 'learning' AND r.target_id IN (SELECT id FROM learnings WHERE project_id = ?))
-        ORDER BY r.strength DESC`,
+        ORDER BY r.strength DESC
+        LIMIT 500`,
         [pid, pid, pid, pid, pid, pid, pid, pid],
       );
       return c.json(relationships);
@@ -310,7 +311,7 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
       const nodes: Array<{ id: string; type: string; label: string; size: number; temperature?: string }> = [];
 
       const files = await db.all<{ id: number; path: string; fragility: number; temperature: string | null }>(
-        "SELECT id, path, fragility, temperature FROM files WHERE project_id = ? AND archived_at IS NULL",
+        "SELECT id, path, fragility, temperature FROM files WHERE project_id = ? AND archived_at IS NULL LIMIT 2000",
         [localProjectId],
       );
       for (const f of files) {
@@ -324,7 +325,7 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
       }
 
       const decisions = await db.all<{ id: number; title: string; temperature: string | null }>(
-        "SELECT id, title, temperature FROM decisions WHERE project_id = ? AND archived_at IS NULL",
+        "SELECT id, title, temperature FROM decisions WHERE project_id = ? AND archived_at IS NULL LIMIT 1000",
         [localProjectId],
       );
       for (const d of decisions) {
@@ -338,7 +339,7 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
       }
 
       const learnings = await db.all<{ id: number; title: string; temperature: string | null }>(
-        "SELECT id, title, temperature FROM learnings WHERE (project_id = ? OR project_id IS NULL) AND archived_at IS NULL",
+        "SELECT id, title, temperature FROM learnings WHERE (project_id = ? OR project_id IS NULL) AND archived_at IS NULL LIMIT 1000",
         [localProjectId],
       );
       for (const l of learnings) {
@@ -352,7 +353,7 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
       }
 
       const issues = await db.all<{ id: number; title: string; severity: number; temperature: string | null }>(
-        "SELECT id, title, severity, temperature FROM issues WHERE project_id = ? AND archived_at IS NULL",
+        "SELECT id, title, severity, temperature FROM issues WHERE project_id = ? AND archived_at IS NULL LIMIT 1000",
         [localProjectId],
       );
       for (const i of issues) {
@@ -374,7 +375,7 @@ export function registerReadRoutes(app: Hono, deps: ReadRouteDeps): void {
         target_id: number;
         relationship: string;
         strength: number;
-      }>("SELECT source_type, source_id, target_type, target_id, relationship, strength FROM relationships");
+      }>("SELECT source_type, source_id, target_type, target_id, relationship, strength FROM relationships LIMIT 2000");
 
       const edges = relationships
         .map((r) => ({

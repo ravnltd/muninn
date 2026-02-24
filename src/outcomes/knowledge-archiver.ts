@@ -188,9 +188,12 @@ export async function restoreArchivedItem(
     throw new Error("Archived item not found");
   }
 
-  if (row.source_table === "learnings" || row.source_table === "decisions") {
+  // Validate table name against whitelist to prevent SQL injection
+  const RESTORABLE_TABLES = new Set(["learnings", "decisions"]);
+  if (RESTORABLE_TABLES.has(row.source_table)) {
+    const safeTable = row.source_table as "learnings" | "decisions";
     await db.run(
-      `UPDATE ${row.source_table} SET archived_at = NULL WHERE id = ?`,
+      `UPDATE ${safeTable} SET archived_at = NULL WHERE id = ?`,
       [row.source_id],
     );
   }
