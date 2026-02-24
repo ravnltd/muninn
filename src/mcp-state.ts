@@ -37,6 +37,12 @@ const WORKER_SPAWN_COOLDOWN_MS = 5 * 60_000; // 5 minutes
 // Cached budget weights from confidence calibrator
 let cachedBudgetWeights: Record<string, number> = {};
 let budgetWeightsLoaded = false;
+// Cached budget overrides from context feedback recommendations
+let cachedBudgetOverrides: {
+  contradictions: number; criticalWarnings: number; strategies: number;
+  decisions: number; learnings: number; fileContext: number;
+  errorFixes: number; reserve: number;
+} | null = null;
 
 // Lazily loaded connection module (cached after first import)
 let connModule: typeof import("./database/connection") | null = null;
@@ -123,6 +129,14 @@ export function getBudgetWeightsLoaded(): boolean {
 
 export function setBudgetWeightsLoaded(v: boolean): void {
   budgetWeightsLoaded = v;
+}
+
+export function getCachedBudgetOverrides() {
+  return cachedBudgetOverrides;
+}
+
+export function setCachedBudgetOverrides(overrides: typeof cachedBudgetOverrides): void {
+  cachedBudgetOverrides = overrides;
 }
 
 // ============================================================================
@@ -283,6 +297,8 @@ export function buildCalibratedContext(ctx: TaskContext, budget?: number): strin
     contradictions: 250, criticalWarnings: 300, strategies: 200, decisions: 300,
     learnings: 300, fileContext: 300, errorFixes: 150, reserve: 200,
   };
-  const adjusted = applyWeightAdjustments(defaultAlloc, cachedBudgetWeights);
+  // Use budget overrides from context feedback if available
+  const baseAlloc = cachedBudgetOverrides ?? defaultAlloc;
+  const adjusted = applyWeightAdjustments(baseAlloc, cachedBudgetWeights);
   return buildContextOutput(ctx, budget, adjusted);
 }

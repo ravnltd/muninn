@@ -106,6 +106,7 @@ import {
   getBudgetWeightsLoaded,
   setBudgetWeightsLoaded,
   setCachedBudgetWeights,
+  setCachedBudgetOverrides,
   buildCalibratedContext,
   ALLOWED_PASSTHROUGH_COMMANDS,
   parseCommandArgs,
@@ -210,6 +211,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         .catch(() => {});
     } catch { /* guard sync throw */ }
 
+    // --- v7 Loop Closure: Trajectory-driven context refresh ---
+    // When stuck/failing pattern detected, force a context refresh
+    try {
+      const { getRecentToolNames } = await import("./context/shifter.js");
+      const recentTools = getRecentToolNames();
+      if (recentTools.length >= 5) {
+        const { analyzeTrajectory } = await import("./context/trajectory-analyzer.js");
+        const callData = recentTools.map((t) => ({ toolName: t, files: [] }));
+        const trajectory = analyzeTrajectory(callData);
+        if ((trajectory.pattern === "stuck" || trajectory.pattern === "failing") &&
+            trajectory.confidence > 0.6 && !shouldRefreshContext()) {
+          resetQuality(); // Force a refresh on next tool call
+        }
+      }
+    } catch { /* guard sync throw */ }
+
     // --- v4: Session auto-start on first tool call ---
     if (!getSessionAutoStarted()) {
       setSessionAutoStarted(true);
@@ -224,13 +241,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         autoStartSession(db, projectId).catch(() => {});
       } catch { /* guard sync throw */ }
-      // Load budget weights for this session
+      // Load budget weights and overrides for this session
       if (!getBudgetWeightsLoaded()) {
         setBudgetWeightsLoaded(true);
         try {
           import("./outcomes/confidence-calibrator.js")
             .then((mod) => mod.getWeightAdjustments(db, projectId))
             .then((weights) => { setCachedBudgetWeights(weights); })
+            .catch(() => {});
+        } catch { /* guard sync throw */ }
+        try {
+          import("./context/budget-manager.js")
+            .then((mod) => mod.loadBudgetOverrides(db, projectId))
+            .then((overrides) => { setCachedBudgetOverrides(overrides); })
             .catch(() => {});
         } catch { /* guard sync throw */ }
       }

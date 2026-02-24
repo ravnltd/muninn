@@ -436,7 +436,15 @@ async function readBriefing(
     // trajectory analyzer may fail on older schemas
   }
 
-  // 4. Active warnings (compact)
+  // 4. Performance self-observation
+  const perfLines = await getPerformanceStats(db, projectId);
+  if (perfLines.length > 0) {
+    sections.push("");
+    sections.push("=== PERFORMANCE ===");
+    sections.push(...perfLines);
+  }
+
+  // 5. Active warnings (compact)
   const warningSections: string[] = [];
   await collectFragileFiles(db, projectId, warningSections);
   await collectCriticalIssues(db, projectId, warningSections);
@@ -452,6 +460,77 @@ async function readBriefing(
   }
 
   return { contents: [{ uri, mimeType: "text/plain", text: sections.join("\n") }] };
+}
+
+// ============================================================================
+// Performance Self-Observation (v7 Loop Closure)
+// ============================================================================
+
+/** Compute performance stats from existing tables */
+async function getPerformanceStats(
+  db: DatabaseAdapter,
+  projectId: number,
+): Promise<string[]> {
+  const lines: string[] = [];
+
+  const [sessionStats, hitRates, topStrategies, staleCount] = await Promise.allSettled([
+    db.all<{ success: number; cnt: number }>(
+      `SELECT success, COUNT(*) as cnt FROM sessions
+       WHERE project_id = ? AND ended_at IS NOT NULL AND success IS NOT NULL
+       ORDER BY ended_at DESC LIMIT 20`,
+      [projectId],
+    ),
+    db.all<{ context_type: string; use_rate: number }>(
+      `SELECT context_type, use_rate FROM budget_recommendations
+       WHERE project_id = ?`,
+      [projectId],
+    ),
+    db.all<{ name: string; success_rate: number; times_used: number }>(
+      `SELECT name, success_rate, times_used FROM strategy_catalog
+       WHERE project_id = ? AND times_used >= 3
+       ORDER BY success_rate DESC LIMIT 3`,
+      [projectId],
+    ),
+    db.get<{ cnt: number }>(
+      `SELECT COUNT(*) as cnt FROM knowledge_freshness
+       WHERE project_id = ? AND staleness_score > 0.7`,
+      [projectId],
+    ),
+  ]);
+
+  // Session success rate
+  if (sessionStats.status === "fulfilled" && sessionStats.value.length > 0) {
+    let total = 0;
+    let successes = 0;
+    for (const row of sessionStats.value) {
+      total += row.cnt;
+      if (row.success === 2) successes += row.cnt;
+    }
+    if (total > 0) {
+      lines.push(`Session success: ${Math.round((successes / total) * 100)}% (${successes}/${total} recent)`);
+    }
+  }
+
+  // Context quality hit rates
+  if (hitRates.status === "fulfilled" && hitRates.value.length > 0) {
+    const parts = hitRates.value
+      .map((r) => `${r.context_type} ${Math.round(r.use_rate * 100)}%`)
+      .slice(0, 4);
+    lines.push(`Context quality: ${parts.join(", ")}`);
+  }
+
+  // Top strategies
+  if (topStrategies.status === "fulfilled" && topStrategies.value.length > 0) {
+    const top = topStrategies.value[0];
+    lines.push(`Top strategy: ${top.name} (${Math.round(top.success_rate * 100)}% success, used ${top.times_used}x)`);
+  }
+
+  // Stale items
+  if (staleCount.status === "fulfilled" && staleCount.value && staleCount.value.cnt > 0) {
+    lines.push(`Freshness: ${staleCount.value.cnt} items flagged stale`);
+  }
+
+  return lines;
 }
 
 /** Collect recently failed or revised decisions */

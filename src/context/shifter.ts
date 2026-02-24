@@ -304,6 +304,11 @@ export function getQualityMetrics(): { hitRate: number; misses: number; accesses
   };
 }
 
+/** Get recent tool names for intelligence collection */
+export function getRecentToolNames(): string[] {
+  return recentCalls.map((c) => c.toolName);
+}
+
 /** Reset all state (for testing) */
 export function resetShifter(): void {
   recentCalls.length = 0;

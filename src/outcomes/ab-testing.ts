@@ -200,6 +200,47 @@ async function checkConclusion(
       `UPDATE ab_tests SET status = 'concluded', conclusion = ?, concluded_at = datetime('now') WHERE id = ?`,
       [conclusion, testId],
     );
+
+    // Apply winning config to budget_recommendations
+    const fullTest = await db.get<{
+      project_id: number;
+      control_config: string;
+      variant_config: string;
+    }>(
+      `SELECT project_id, control_config, variant_config FROM ab_tests WHERE id = ?`,
+      [testId],
+    );
+    if (fullTest) {
+      const winningConfig: Record<string, number> = variantMean > controlMean
+        ? JSON.parse(fullTest.variant_config)
+        : JSON.parse(fullTest.control_config);
+      await applyWinningConfig(db, fullTest.project_id, winningConfig);
+    }
+  } catch {
+    // Table may not exist
+  }
+}
+
+/**
+ * Write winning A/B config to budget_recommendations.
+ * Closes the loop: experiments drive actual budget allocation.
+ */
+async function applyWinningConfig(
+  db: DatabaseAdapter,
+  projectId: number,
+  config: Record<string, number>,
+): Promise<void> {
+  try {
+    for (const [contextType, budget] of Object.entries(config)) {
+      await db.run(
+        `INSERT INTO budget_recommendations (project_id, context_type, recommended_budget, use_rate)
+         VALUES (?, ?, ?, 0)
+         ON CONFLICT(project_id, context_type) DO UPDATE SET
+           recommended_budget = excluded.recommended_budget,
+           updated_at = datetime('now')`,
+        [projectId, contextType, budget],
+      );
+    }
   } catch {
     // Table may not exist
   }

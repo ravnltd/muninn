@@ -39,9 +39,21 @@ export function formatUnifiedContext(
     }
   }
 
-  // 2. Context knowledge (decisions, learnings, error fixes, issues)
-  if (result.context.length > 0) {
-    const contextSection = formatKnowledge(result.context, budget - tokensUsed);
+  // 2. Strategies (between warnings and knowledge)
+  const strategies = result.context.filter((k) => k.type === "strategy");
+  if (strategies.length > 0) {
+    const strategySection = formatStrategies(strategies, budget - tokensUsed);
+    if (strategySection) {
+      const tokens = estimateTokens(strategySection);
+      sections.push(strategySection);
+      tokensUsed += tokens;
+    }
+  }
+
+  // 3. Context knowledge (decisions, learnings, error fixes, issues)
+  const nonStrategyContext = result.context.filter((k) => k.type !== "strategy");
+  if (nonStrategyContext.length > 0) {
+    const contextSection = formatKnowledge(nonStrategyContext, budget - tokensUsed);
     if (contextSection) {
       const tokens = estimateTokens(contextSection);
       sections.push(contextSection);
@@ -139,6 +151,24 @@ function formatKnowledge(knowledge: ContextKnowledge[], budget: number): string 
     if (lines.length === 0) lines.push("CONTEXT:");
     const sev = i.confidence !== undefined ? `sev:${i.confidence}|` : "";
     const line = `  I[${sev}${i.title.slice(0, 40)}]`;
+    const tokens = estimateTokens(line);
+    if (tokensUsed + tokens > budget) break;
+    lines.push(line);
+    tokensUsed += tokens;
+  }
+
+  return lines.length > 1 ? lines.join("\n") : null;
+}
+
+function formatStrategies(strategies: ContextKnowledge[], budget: number): string | null {
+  if (budget <= 0 || strategies.length === 0) return null;
+
+  const lines = ["STRATEGIES:"];
+  let tokensUsed = estimateTokens(lines[0]);
+
+  for (const s of strategies.slice(0, 5)) {
+    const rate = s.confidence !== undefined ? `|rate:${s.confidence * 10}%` : "";
+    const line = `  ST[${s.title}|${s.content.slice(0, 50)}${rate}]`;
     const tokens = estimateTokens(line);
     if (tokensUsed + tokens > budget) break;
     lines.push(line);

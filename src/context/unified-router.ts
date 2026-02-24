@@ -9,6 +9,8 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter";
+import { collectIntelligence } from "./intelligence-collector.js";
+import { getRecentToolNames } from "./shifter.js";
 
 // ============================================================================
 // Types
@@ -40,7 +42,7 @@ export interface ContextFileInfo {
 }
 
 export interface ContextKnowledge {
-  type: "decision" | "learning" | "error_fix" | "issue";
+  type: "decision" | "learning" | "error_fix" | "issue" | "strategy";
   title: string;
   content: string;
   confidence?: number;
@@ -101,7 +103,106 @@ export async function routeContext(
       break;
   }
 
+  // --- v7 Loop Closure: Inject intelligence signals ---
+  await injectIntelligence(db, projectId, request, result);
+
   return result;
+}
+
+// ============================================================================
+// Intelligence Injection
+// ============================================================================
+
+/**
+ * Inject intelligence signals into the context result.
+ * Adds strategies, stale tags, trajectory warnings, and predictions.
+ */
+async function injectIntelligence(
+  db: DatabaseAdapter,
+  projectId: number,
+  request: ContextRequest,
+  result: UnifiedContextResult,
+): Promise<void> {
+  try {
+    const keywords = extractRequestKeywords(request);
+    const recentTools = getRecentToolNames();
+    const signals = await collectIntelligence(db, projectId, keywords, recentTools);
+
+    // Add matching strategies as context entries
+    for (const s of signals.strategies) {
+      result.context.push({
+        type: "strategy",
+        title: s.name,
+        content: s.description,
+        confidence: Math.round(s.successRate * 10),
+      });
+    }
+
+    // Tag stale items in existing context
+    for (const item of result.context) {
+      if (item.type === "decision" || item.type === "learning") {
+        // Check if this item is flagged stale (by matching title against DB ids)
+        for (const staleId of signals.staleItemIds) {
+          const [table] = staleId.split(":");
+          if ((table === "decisions" && item.type === "decision") ||
+              (table === "learnings" && item.type === "learning")) {
+            // Mark in title since we lack direct ID mapping in context
+            if (!item.title.includes("[stale]")) {
+              item.title = `${item.title} [stale]`;
+            }
+          }
+        }
+      }
+    }
+
+    // Add trajectory warning if stuck or failing
+    if ((signals.trajectory.pattern === "stuck" || signals.trajectory.pattern === "failing") &&
+        signals.trajectory.confidence > 0.5) {
+      result.warnings.push({
+        type: "stale",
+        severity: signals.trajectory.pattern === "failing" ? "warning" : "info",
+        message: `Trajectory: ${signals.trajectory.message}`,
+      });
+      if (signals.trajectory.suggestion) {
+        result.warnings.push({
+          type: "stale",
+          severity: "info",
+          message: signals.trajectory.suggestion,
+        });
+      }
+    }
+
+    // Add prediction if high confidence
+    if (signals.prediction && signals.prediction.confidence > 0.7) {
+      result.warnings.push({
+        type: "stale",
+        severity: "info",
+        message: `Predicted next: ${signals.prediction.tool} (${Math.round(signals.prediction.confidence * 100)}%)`,
+      });
+    }
+
+    result.meta.sourcesQueried.push("intelligence");
+  } catch {
+    // Intelligence collection is best-effort
+  }
+}
+
+/** Extract keywords from a context request */
+function extractRequestKeywords(request: ContextRequest): string[] {
+  const keywords: string[] = [];
+  if (request.query) {
+    keywords.push(...request.query.split(/\s+/).filter((w) => w.length >= 3).slice(0, 5));
+  }
+  if (request.task) {
+    keywords.push(...request.task.split(/\s+/).filter((w) => w.length >= 3).slice(0, 5));
+  }
+  if (request.files) {
+    for (const f of request.files.slice(0, 3)) {
+      const basename = f.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
+      if (basename.length >= 3) keywords.push(basename);
+    }
+  }
+  return [...new Set(keywords)];
 }
 
 // ============================================================================
