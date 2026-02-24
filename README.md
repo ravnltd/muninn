@@ -1,474 +1,182 @@
 # Muninn
 
-[![CI](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml/badge.svg)](https://github.com/ravnltd/original-muninn/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/muninn-ai?color=blue)](https://www.npmjs.com/package/muninn-ai)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![GitHub stars](https://img.shields.io/github/stars/ravnltd/muninn)](https://github.com/ravnltd/muninn)
 
-Universal persistent memory for AI coding agents.
-
-AI agents have no memory between sessions and no awareness of what's dangerous. They'll happily refactor a critical file, contradict a decision made last week, or re-introduce a bug that was already fixed — because they don't know any better.
-
-Muninn fixes this by giving the agent institutional knowledge. Before touching any file, the agent checks: how fragile is this? what decisions were made here? are there open issues? what files usually change together? If something is high-risk, the agent stops and explains its approach instead of plowing ahead. If a pattern was learned from a past mistake, it surfaces automatically so the same mistake doesn't happen twice.
-
-There's a subtler problem too. As a codebase grows across dozens of AI sessions, each session makes locally reasonable decisions that drift from the original vision. Session 15 picks a different pattern than session 3. Two parts of the codebase solve the same problem differently. Nobody remembers *why* something was done a certain way, so the next session reinvents it. Muninn records every significant decision with its reasoning, so when the agent is about to make a choice, past decisions surface automatically. The agent can still diverge, but it does so knowingly, not accidentally. Patterns and conventions accumulate across sessions, so session 50 has access to the same architectural intent as session 1.
-
-Unlike a typical RAG system that just retrieves documents, Muninn is a read-write memory loop: the AI queries context before making changes, then writes back what it learned — turning a stateless, amnesiac coding agent into one that accumulates project wisdom over time.
-
-## How It Works
-
-Every session automatically:
-1. Loads context from the last session (via `SessionStart` hook)
-2. Makes 10 MCP tools available (9 core + 1 passthrough for full CLI access)
-3. Tracks file edits and session state (via `PostToolUse` and `Stop` hooks)
-
-Projects are auto-initialized on first session — no manual setup required.
-
-## Getting Started
-
-### Prerequisites
-
-- [Bun](https://bun.sh/) runtime (v1.0+)
-- [Claude Code](https://claude.ai/code) CLI
-- Git
-
-### Step 1: Install Bun
+**Your AI coding agent forgets everything between sessions. Muninn fixes that.**
 
 ```bash
-curl -fsSL https://bun.sh/install | bash
+npx muninn-ai
 ```
 
-### Step 2: Clone and Install
+Muninn gives AI coding agents persistent memory. Before every edit, the agent knows what's fragile, what decisions were made, and what broke last time. After every session, it writes back what it learned. Session 50 has the same institutional knowledge as session 1.
 
-```bash
-# Clone to a permanent location
-git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn
-cd ~/.local/share/muninn
+> **Works with**: Claude Code, Cursor, Windsurf, Continue.dev, and any MCP-compatible tool.
 
-# Install (compiles binaries to ~/.local/bin/)
-./install.sh
+---
+
+## The Problem
+
+AI coding agents are stateless. Every session starts from zero. This means:
+
+- **They break things** — editing a critical file with no idea it's fragile
+- **They contradict themselves** — picking a different pattern than 3 sessions ago
+- **They repeat mistakes** — re-introducing bugs that were already fixed
+- **They lose context** — forgetting *why* something was done a certain way
+
+The bigger the project, the worse it gets. By session 20, you're spending more time re-explaining context than writing code.
+
+## How Muninn Fixes It
+
+Muninn is a read-write memory loop. The agent queries context before making changes, then writes back what it learned.
+
+```
+Session starts
+  -> Load last session's context, goals, next steps
+  -> Surface relevant decisions, patterns, known issues
+
+Agent edits a file
+  -> Check fragility score (is this dangerous?)
+  -> Surface related decisions (what was decided here before?)
+  -> Warn about co-changed files (what else usually needs updating?)
+
+Session ends
+  -> Save what was done, what was learned, what's next
+  -> Build cross-session insights automatically
 ```
 
-The install script:
-- Compiles `muninn` and `muninn-mcp` binaries to `~/.local/bin/`
-- Checks if `~/.local/bin` is in your PATH
-- Shows MCP registration instructions
+After a few sessions, Muninn knows your codebase like a senior engineer who's been on the project for years.
 
-### Step 3: Add to PATH (if needed)
+## Quick Start
 
-If the installer shows a PATH warning:
+### Option 1: npx (Recommended)
 
 ```bash
-# Add to your shell profile (~/.bashrc or ~/.zshrc)
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-
-# Reload shell
-source ~/.bashrc  # or restart your terminal
+npx muninn-ai
 ```
 
-### Step 4: Register MCP Server
+### Option 2: Manual Install
 
 ```bash
-# Register for all projects (user scope)
+# Requires Bun (https://bun.sh)
+git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn
+cd ~/.local/share/muninn && ./install.sh
+```
+
+The installer compiles binaries, sets up hooks, and registers the MCP server automatically.
+
+### Register with Your Editor
+
+```bash
+# Claude Code
 claude mcp add --scope user muninn -- muninn-mcp
 
-# Verify registration
-claude mcp list
+# Other MCP clients: point to the muninn-mcp binary in ~/.local/bin/
 ```
 
-**Note:** The MCP server uses compiled binaries, not source files. This ensures it works regardless of which directory Claude Code is started from.
-
-### Step 5: Set Up Hooks (Recommended)
-
-Hooks enable automatic session management. Copy the example hooks:
+### Verify
 
 ```bash
-# Create hooks directory
-mkdir -p ~/.claude/hooks
-
-# Copy hook scripts
-cp docs/hooks/*.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/*.sh
-```
-
-Then add hooks to `~/.claude/settings.json`. You can either:
-- Copy the example: `cp docs/hooks/settings.example.json ~/.claude/settings.json`
-- Or merge into your existing settings (see `docs/hooks/settings.example.json`)
-
-**What the hooks do:**
-- **SessionStart**: Loads resume context, shows smart status, auto-inits database
-- **PreToolUse**: Checks file fragility before edits (warns on risky files)
-- **PostToolUse**: Tracks edited files in session memory
-- **Stop**: Persists session state on exit
-
-### Step 6: Verify Installation
-
-```bash
-# Check CLI works
 muninn --help
-
-# Check MCP server is registered
-claude mcp list | grep muninn
-
-# Start Claude Code in any project
-cd /path/to/your/project
-claude
-
-# You should see "Session Resume" output if hooks are working
-```
-
-## Multi-Machine Setup (Network/HTTP Mode)
-
-Muninn can sync across multiple machines using a central sqld database server. This is useful for:
-- Shared memory across workstations
-- Remote development servers
-- Keeping context in sync across your fleet
-
-### Prerequisites
-
-You need a [sqld](https://github.com/tursodatabase/libsql/tree/main/libsql-server) server running. Example with Docker:
-
-```bash
-# On your central server (e.g., YOUR_SQLD_HOST)
-docker run -d --name sqld \
-  -p 8080:8080 \
-  -v sqld-data:/var/lib/sqld \
-  ghcr.io/tursodatabase/libsql-server:latest
-```
-
-### Mode Options
-
-| Mode | Native Modules | Local Replica | Offline | Best For |
-|------|---------------|---------------|---------|----------|
-| `local` | No | N/A (single file) | Yes | Single machine |
-| `http` | No | No | No | **Compiled binaries, remote servers** |
-| `network` | Yes (@libsql) | Yes | Yes | Dev machines with full toolchain |
-
-**Use `http` mode for remote servers** — it uses pure HTTP fetch with no native C++ modules, so compiled binaries work anywhere.
-
-### Quick Setup (Remote Server)
-
-```bash
-# 1. Clone and install
-git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn
-cd ~/.local/share/muninn
-./install.sh
-
-# 2. Add to PATH and set HTTP mode
-cat >> ~/.bashrc << 'EOF'
-export PATH="$HOME/.local/bin:$PATH"
-export MUNINN_MODE=http
-export MUNINN_PRIMARY_URL=http://YOUR_SQLD_SERVER:8080
-EOF
-source ~/.bashrc
-
-# 3. Verify CLI works
 muninn status
-
-# 4. Register MCP with env vars
-claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SQLD_SERVER:8080 muninn-mcp
-
-# 5. Test MCP
-claude mcp list  # Should show muninn as "Connected"
 ```
 
-### Troubleshooting Network Mode
+That's it. Start a coding session and Muninn auto-initializes for your project.
 
-**"Cannot find module '@libsql/linux-x64-gnu'"**
+## What It Tracks
 
-You're using `network` mode on a compiled binary. Switch to `http` mode:
-```bash
-export MUNINN_MODE=http
-```
-
-**MCP shows connected but commands fail**
-
-The MCP server needs env vars passed at registration:
-```bash
-claude mcp remove muninn
-claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://SERVER:8080 muninn-mcp
-```
-
-**CLI works but Claude hangs**
-
-Hooks call `muninn` directly. Export env vars in your shell profile:
-```bash
-echo 'export MUNINN_MODE=http' >> ~/.bashrc
-echo 'export MUNINN_PRIMARY_URL=http://SERVER:8080' >> ~/.bashrc
-source ~/.bashrc
-```
-
-## External API Connections (Optional)
-
-Muninn works fully offline, but optional API integrations enhance capabilities:
-
-### Voyage AI (Better Embeddings)
-
-Voyage AI provides higher quality embeddings (512 dimensions) for semantic search. Without it, Muninn uses local Transformers.js embeddings (384 dimensions).
-
-```bash
-# Get API key from https://www.voyageai.com/
-export VOYAGE_API_KEY=pa-your-key-here
-
-# Add to your shell profile (~/.bashrc or ~/.zshrc) to persist
-echo 'export VOYAGE_API_KEY=pa-your-key-here' >> ~/.bashrc
-
-# Generate embeddings for existing knowledge
-muninn embed backfill
-
-# Verify
-muninn embed status
-```
-
-### Anthropic API (Smart Re-ranking)
-
-The Anthropic API enables LLM-powered re-ranking for search results (the `--smart` flag).
-
-```bash
-# Get API key from https://console.anthropic.com/
-export ANTHROPIC_API_KEY=sk-ant-your-key-here
-
-# Add to your shell profile
-echo 'export ANTHROPIC_API_KEY=sk-ant-your-key-here' >> ~/.bashrc
-
-# Use smart search
-muninn query "authentication flow" --smart
-```
-
-### API Key Summary
-
-| Feature | API Key | Required? | Fallback |
-|---------|---------|-----------|----------|
-| Vector search | `VOYAGE_API_KEY` | No | Local Transformers.js |
-| Smart re-ranking | `ANTHROPIC_API_KEY` | No | Standard FTS results |
-
-## First Project Walkthrough
-
-Once installed, here's how to use Muninn with a project:
-
-```bash
-# Navigate to your project
-cd /path/to/your/project
-
-# Start Claude Code
-claude
-
-# Muninn auto-initializes on first session
-# You'll see the .claude/ directory created with memory.db
-
-# During the session, Claude can use muninn tools:
-# - muninn_query "search term" to find relevant context
-# - muninn_check to verify file safety before edits
-# - muninn_decision_add to record architectural choices
-# - muninn_learn_add to save patterns for future sessions
-
-# When you end the session, Muninn saves the state
-# Next session picks up where you left off
-```
-
-### Common First Commands
-
-```bash
-# Check project status
-muninn status
-
-# See what files are known
-muninn file list
-
-# Search for context
-muninn query "authentication"
-
-# Check file safety before editing
-muninn check src/important-file.ts
-```
-
-## Architecture
-
-### Database
-
-Each project gets a `.claude/` directory containing a SQLite database with:
-- **Files**: Purpose, fragility scores, staleness detection
-- **Decisions**: Architectural choices with reasoning
-- **Issues**: Bugs and problems with workarounds
-- **Sessions**: Work history with goals, outcomes, next steps
-- **Learnings**: Patterns and gotchas (project-specific or global)
-- **Symbols**: Function-level knowledge with signatures and side effects
-- **Blast Radius**: Precomputed transitive dependency impact
-- **Bookmarks**: Session-scoped working memory
-- **Focus**: Current work area for query boosting
-- **Infrastructure**: Servers, services, routes, deployments (global)
-
-### Source Structure
-
-```
-src/
-├── index.ts                    # CLI entry point and command router
-├── mcp-server.ts               # MCP server (10 tools: 9 core + 1 passthrough)
-├── types.ts                    # All interfaces and type definitions
-├── commands/                   # All CLI commands
-├── database/                   # SQLite connection, migrations, queries
-├── embeddings/                 # Vector embedding providers
-└── utils/                      # Validation, errors, formatting
-```
+| Memory Type | Example | Why It Matters |
+|-------------|---------|----------------|
+| **Files** | `auth.ts` — fragility 8/10 | Agent asks before touching dangerous files |
+| **Decisions** | "Use JWT not sessions" — because stateless deploys | Agent won't contradict past choices |
+| **Issues** | Bug #12 — race condition in cache | Agent knows what's broken |
+| **Learnings** | "Always validate at boundaries" | Patterns accumulate across sessions |
+| **Sessions** | Last session: "Refactored auth, next: add tests" | Continuity between sessions |
+| **Blast Radius** | `types.ts` impacts 47 files | Agent understands ripple effects |
 
 ## MCP Tools
 
-Once registered, these tools are available:
+10 tools available to your AI agent via [Model Context Protocol](https://modelcontextprotocol.io/):
 
-### Core Tools (Full Schemas)
-
-| Tool | Purpose |
-|------|---------|
-| `muninn_query` | Search project memory (FTS/vector/smart) |
-| `muninn_check` | Pre-edit warnings (fragility, issues, staleness) |
-| `muninn_file_add` | Record file knowledge after modifying |
-| `muninn_decision_add` | Record architectural decisions |
-| `muninn_learn_add` | Save learnings for future sessions |
-| `muninn_issue` | Add or resolve issues (action: add/resolve) |
-| `muninn_session` | Start or end sessions (action: start/end) |
-| `muninn_predict` | Bundle all context for a task (FTS/keyword matching) |
-| `muninn_suggest` | Suggest files for a task (semantic/embedding search) |
-
-### Passthrough Tool
-
-For all other commands, use the `muninn` passthrough:
-
-```
-muninn "status"                     # Project state
-muninn "fragile"                    # List fragile files
-muninn "outcome record 5 succeeded" # Record decision outcome
-muninn "insights list"              # View cross-session insights
-muninn "insights ack 3"             # Acknowledge insight
-muninn "bookmark add --label x --content y"
-muninn "focus set --area auth"
-muninn "debt add --title X --severity 5"
-muninn "deps src/index.ts"          # Show file dependencies
-muninn "impact src/types.ts"        # Blast radius analysis
-```
-
-This hybrid approach provides full CLI access while keeping context overhead minimal.
-
-## CLI Reference
-
-```bash
-# Project
-muninn init                        # Initialize .claude/ for current project
-muninn status                      # Full project state
-muninn fragile                     # List fragile files
-
-# Search
-muninn query "authentication"      # FTS search
-muninn query "auth" --vector       # Semantic similarity
-muninn query "auth" --smart        # LLM re-ranked results
-
-# Intelligence
-muninn check src/auth.ts           # Pre-edit warnings
-muninn impact src/types.ts         # Blast radius
-muninn ss                          # Smart status
-muninn drift                       # Knowledge staleness
-muninn resume                      # Last session summary
-muninn predict "fix auth bug"      # FTS-based context bundle
-muninn suggest "fix auth bug"      # Semantic file suggestions
-
-# Dependencies
-muninn deps src/index.ts           # Show imports/dependents
-muninn deps --refresh              # Rebuild dependency graph
-muninn deps --graph                # Mermaid diagram
-muninn deps --cycles               # Find circular deps
-
-# Memory
-muninn file add src/auth.ts --fragility 8 --purpose "Auth system"
-muninn decision add --title "Use Drizzle" --reasoning "Type-safe SQL"
-muninn issue add --title "Bug" --severity 7
-muninn issue resolve 1 "Fixed in commit abc123"
-muninn learn add --title "Pattern" --content "Always validate at boundaries"
-
-# Sessions
-muninn session start "implementing auth"
-muninn session end 42 --outcome "Auth complete" --success 2
-
-# Embeddings
-muninn embed status                # Coverage stats
-muninn embed backfill              # Generate missing embeddings
-
-# Deploy
-muninn ship                        # Pre-deploy checklist
-```
-
-## Troubleshooting
-
-### "muninn: command not found"
-
-Ensure `~/.local/bin` is in your PATH:
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-# Add this line to ~/.bashrc or ~/.zshrc
-```
-
-### MCP server not appearing in Claude Code
-
-1. Check registration: `claude mcp list`
-2. Re-register: `claude mcp remove muninn && claude mcp add --scope user muninn -- muninn-mcp`
-3. Restart Claude Code
-
-### Hooks not running
-
-1. Verify scripts are executable: `ls -la ~/.claude/hooks/`
-2. Check settings.json syntax: `cat ~/.claude/settings.json | jq .`
-3. Test hook manually: `~/.claude/hooks/session-start.sh`
-
-### "No project found" errors
-
-Muninn auto-initializes, but you can manually init:
-```bash
-cd /path/to/your/project
-muninn init
-```
-
-### Embeddings not working
-
-Check API key status:
-```bash
-muninn embed status
-# Shows which embedding provider is active
-```
-
-## Philosophy
-
-1. **Query, don't preload** — Load context when needed, not upfront
-2. **Safety** — Know what's fragile before touching it
-3. **Continuity** — Pick up where you left off
-4. **Learning** — Build project knowledge over time
-5. **Minimal friction** — Auto-init, auto-session, auto-track
-
-The goal: your AI assistant operates like a senior engineer who's been on the project for years.
+| Tool | What It Does |
+|------|--------------|
+| `muninn_query` | Search memory (full-text, semantic, or LLM-ranked) |
+| `muninn_check` | Pre-edit safety check (fragility, issues, co-changers) |
+| `muninn_predict` | Bundle all relevant context for a task |
+| `muninn_suggest` | Find related files using semantic search |
+| `muninn_file_add` | Record file knowledge after editing |
+| `muninn_decision_add` | Record an architectural decision |
+| `muninn_learn_add` | Save a pattern or gotcha |
+| `muninn_issue` | Track bugs and problems |
+| `muninn_session` | Start/end session tracking |
+| `muninn` | Passthrough to full CLI (40+ commands) |
 
 ## Adaptive Intelligence
 
 Muninn gets smarter in two dimensions:
 
-**Per-codebase**: Tracks file correlations (which files change together), fragility patterns, architectural decisions, and recurring issues. After a few sessions, it knows your project's hot spots and can predict what files you'll need to touch.
+**Per-codebase**: Tracks which files change together, fragility patterns, architectural drift, and recurring issues. After a few sessions, it predicts what you'll need to touch and warns about risks.
 
-**Per-developer**: Builds a profile of your coding preferences — error handling style, naming conventions, patterns you favor, anti-patterns you avoid. This profile follows you across projects (stored in `~/.claude/`).
+**Per-developer**: Builds a profile of your coding preferences — error handling style, naming conventions, patterns you favor. This follows you across projects.
 
-## Compatibility
+**Closed feedback loops**: Every tool call is measured. Context that helps gets boosted. Context that's irrelevant gets suppressed. The system self-tunes.
 
-Muninn uses the [Model Context Protocol](https://modelcontextprotocol.io/), so the MCP server should work with any compatible tool:
+## Multi-Machine Setup
 
-- Claude Desktop
-- Cursor
-- Windsurf
-- Continue.dev
-- Any future MCP client
+Muninn supports a hub-and-spoke architecture using [sqld](https://github.com/tursodatabase/libsql/tree/main/libsql-server) for shared memory across machines:
 
-**Note:** Muninn has only been tested with Claude Code. The MCP tools will work elsewhere, but hooks (auto-session management, transcript analysis) are Claude Code specific. In other tools, you'll need to manually call `muninn session start/end`.
+```bash
+# On your central server
+docker run -d --name sqld -p 8080:8080 \
+  -v sqld-data:/var/lib/sqld \
+  ghcr.io/tursodatabase/libsql-server:latest
+
+# On each machine
+export MUNINN_MODE=http
+export MUNINN_PRIMARY_URL=http://YOUR_SERVER:8080
+claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SERVER:8080 muninn-mcp
+```
+
+## Optional: Enhanced Search
+
+Muninn works fully offline. Optional APIs improve search quality:
+
+| Feature | API Key | Fallback |
+|---------|---------|----------|
+| Vector search | `VOYAGE_API_KEY` | Local Transformers.js |
+| Smart re-ranking | `ANTHROPIC_API_KEY` | Standard FTS |
+
+## CLI Reference
+
+```bash
+muninn status                      # Project state
+muninn query "auth"                # Search memory
+muninn query "auth" --smart        # LLM-ranked search
+muninn check src/auth.ts           # Pre-edit safety check
+muninn impact src/types.ts         # Blast radius analysis
+muninn fragile                     # List high-risk files
+muninn drift                       # Knowledge staleness
+muninn ship                        # Pre-deploy checklist
+muninn deps src/index.ts           # Dependency graph
+muninn deps --cycles               # Find circular deps
+```
+
+## Philosophy
+
+1. **Query, don't preload** — Load context when needed, not upfront
+2. **Safety first** — Know what's fragile before touching it
+3. **Continuity** — Pick up where you left off, always
+4. **Accumulate wisdom** — Every session makes the next one better
+5. **Zero friction** — Auto-init, auto-session, auto-track
 
 ## Contributing
 
-Issues and bug reports welcome.
-Feature requests: open an issue first.
-PRs: not accepting at this time.
+Issues and bug reports welcome. Feature requests: open an issue first.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — free to use, modify, and share for any noncommercial purpose. Commercial use requires a separate license from [Ravn Ltd](https://råven.com).
+[AGPL-3.0-only](https://www.gnu.org/licenses/agpl-3.0.html) — free to use, modify, and share. If you run a modified version as a network service, you must release your source. Built by builders, for builders.
 
 ---
 

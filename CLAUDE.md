@@ -34,6 +34,8 @@ You have **native MCP tools** for project memory. Query, don't preload.
 
 **sqld server:** `http://YOUR_SQLD_HOST:8080` (Tailscale)
 
+**License:** AGPL-3.0-only
+
 **Security:** Always run sqld with auth enabled in production:
 ```bash
 # Generate a token and start sqld with auth
@@ -77,7 +79,7 @@ claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=ht
 ### Fresh install with HTTP mode
 
 ```bash
-git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn && \
+git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn && \
 cd ~/.local/share/muninn && \
 ./install.sh && \
 cat >> ~/.bashrc << 'EOF'

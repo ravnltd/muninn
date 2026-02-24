@@ -109,7 +109,7 @@ describe("authMiddleware", () => {
     const app = createTestApp();
     const res = await app.request("/test", {
       headers: {
-        Authorization: "Bearer mk_rosskey123",
+        Authorization: "Bearer mk_testkey123",
         "X-Muninn-App": "huginn",
       },
     });
