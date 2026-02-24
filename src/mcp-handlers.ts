@@ -263,6 +263,55 @@ export async function handleApprove(
 }
 
 // ============================================================================
+// v7: Unified Context Handler
+// ============================================================================
+
+export async function handleContext(
+  db: DatabaseAdapter,
+  projectId: number,
+  cwd: string,
+  params: { intent: string; files?: string[]; query?: string; task?: string },
+): Promise<string> {
+  const { routeContext } = await import("./context/unified-router");
+  const { formatUnifiedContext } = await import("./context/unified-formatter");
+  const type = params.intent as import("./context/unified-router").ContextIntent;
+
+  const result = await routeContext(db, projectId, cwd, {
+    intent: type,
+    files: params.files,
+    query: params.query,
+    task: params.task,
+  });
+
+  return formatUnifiedContext(result);
+}
+
+// ============================================================================
+// v7: Multi-Agent Intent Handler
+// ============================================================================
+
+export async function handleIntent(
+  db: DatabaseAdapter,
+  projectId: number,
+  sessionId: number | null,
+  params: { action: string; agentId?: string; intentType?: string; files?: string[]; description?: string },
+): Promise<string> {
+  const { handleIntent: processIntent } = await import("./agents/intent-manager");
+  type IntentAction = import("./agents/intent-manager").IntentAction;
+  type IntentType = import("./agents/intent-manager").IntentType;
+
+  const result = await processIntent(db, projectId, sessionId, {
+    action: params.action as IntentAction,
+    agentId: params.agentId,
+    intentType: params.intentType as IntentType | undefined,
+    files: params.files,
+    description: params.description,
+  });
+
+  return JSON.stringify(result);
+}
+
+// ============================================================================
 // Passthrough Command Router
 // ============================================================================
 

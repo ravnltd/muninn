@@ -280,8 +280,8 @@ export function parseCommandArgs(command: string): string[] {
 /** Build context output with calibrated budget weights applied */
 export function buildCalibratedContext(ctx: TaskContext, budget?: number): string {
   const defaultAlloc = {
-    contradictions: 300, criticalWarnings: 350, decisions: 350,
-    learnings: 350, fileContext: 350, errorFixes: 150, reserve: 150,
+    contradictions: 250, criticalWarnings: 300, strategies: 200, decisions: 300,
+    learnings: 300, fileContext: 300, errorFixes: 150, reserve: 200,
   };
   const adjusted = applyWeightAdjustments(defaultAlloc, cachedBudgetWeights);
   return buildContextOutput(ctx, budget, adjusted);

@@ -223,6 +223,85 @@ const JOB_HANDLERS: Record<string, JobHandler> = {
     }
   },
 
+  // v7 Phase 1C: Generate codebase DNA
+  async generate_codebase_dna(db, payload) {
+    const { generateCodebaseDNA, persistDNA } = await import("./context/codebase-dna");
+    const projectId = payload.projectId as number;
+    const dna = await generateCodebaseDNA(db, projectId);
+    await persistDNA(db, projectId, dna);
+  },
+
+  // v7 Phase 1B: Infer session outcome (called before other session-end jobs)
+  async infer_session_outcome(db, payload) {
+    const { inferSessionOutcome } = await import("./outcomes/auto-outcome");
+    const projectId = payload.projectId as number;
+    const sessionId = payload.sessionId as number;
+    const result = await inferSessionOutcome(db, projectId, sessionId);
+    // Update session with inferred outcome if no explicit success was set
+    const session = await db.get<{ success: number | null }>(
+      `SELECT success FROM sessions WHERE id = ?`,
+      [sessionId]
+    );
+    if (session && session.success === null) {
+      await db.run(
+        `UPDATE sessions SET success = ? WHERE id = ?`,
+        [result.success, sessionId]
+      );
+    }
+  },
+
+  // v7 Phase 2A: Extract reasoning traces from session tool calls
+  async extract_reasoning_traces(db, payload) {
+    const { extractReasoningTraces } = await import("./learning/reasoning-extractor");
+    const projectId = payload.projectId as number;
+    const sessionId = payload.sessionId as number;
+    await extractReasoningTraces(db, projectId, sessionId);
+  },
+
+  // v7 Phase 2B: Distill strategies from reasoning traces
+  async distill_strategies(db, payload) {
+    const { distillStrategies } = await import("./learning/strategy-distiller");
+    const projectId = payload.projectId as number;
+    await distillStrategies(db, projectId);
+  },
+
+  // v7 Phase 3A: Build workflow prediction model from tool call trigrams
+  async build_workflow_model(db, payload) {
+    const { buildWorkflowModel } = await import("./context/workflow-predictor");
+    const projectId = payload.projectId as number;
+    await buildWorkflowModel(db, projectId);
+  },
+
+  // v7 Phase 4A: Classify context impact at session end
+  async classify_impact(db, payload) {
+    const { classifyImpact } = await import("./outcomes/impact-classifier");
+    const projectId = payload.projectId as number;
+    const sessionId = payload.sessionId as number;
+    await classifyImpact(db, projectId, sessionId);
+  },
+
+  // v7 Phase 4C: Check knowledge freshness after git commits
+  async check_knowledge_freshness(db, payload) {
+    const { checkKnowledgeFreshness } = await import("./outcomes/freshness-tracker");
+    const projectId = payload.projectId as number;
+    await checkKnowledgeFreshness(db, projectId);
+  },
+
+  // v7 Phase 4C: Flag dependency decisions when package files change
+  async flag_dependency_decisions(db, payload) {
+    const { flagDependencyDecisions } = await import("./outcomes/freshness-tracker");
+    const projectId = payload.projectId as number;
+    const changedFiles = payload.changedFiles as string[];
+    await flagDependencyDecisions(db, projectId, changedFiles);
+  },
+
+  // v7 Phase 5A: Expire stale agent intents
+  async expire_intents(db, payload) {
+    const { expireIntents } = await import("./agents/intent-manager");
+    const projectId = payload.projectId as number;
+    await expireIntents(db, projectId);
+  },
+
   async update_file(db, payload) {
     const projectId = payload.projectId as number;
     const filePath = payload.filePath as string;

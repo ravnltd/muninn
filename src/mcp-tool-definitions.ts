@@ -196,6 +196,55 @@ export const TOOL_DEFINITIONS = [
     },
   },
 
+  // ========== v7: UNIFIED CONTEXT TOOL ==========
+
+  {
+    name: "muninn_context",
+    description: "Unified context retrieval — one tool for all context needs. Auto-routes based on intent. Use this instead of query/predict/suggest/enrich/check.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        intent: {
+          type: "string",
+          enum: ["edit", "read", "debug", "explore", "plan"],
+          description: "What you are about to do: edit (modify files), read (understand code), debug (fix errors), explore (discover), plan (design approach)",
+        },
+        files: { type: "array", items: { type: "string" }, description: "Files involved (for edit/read intents)" },
+        query: { type: "string", description: "Search query (for debug/explore intents)" },
+        task: { type: "string", description: "Task description (for plan/explore intents)" },
+        cwd: { type: "string", description: "Working directory" },
+      },
+      required: ["intent"],
+    },
+  },
+
+  // ========== v7: MULTI-AGENT INTENT TOOL ==========
+
+  {
+    name: "muninn_intent",
+    description: "Multi-agent coordination. Declare what you are about to do, check for conflicts with other agents, or release your intents when done.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["declare", "query", "release"],
+          description: "declare (announce intent), query (check active intents), release (clear your intents)",
+        },
+        agentId: { type: "string", description: "Your agent identifier (auto-assigned if omitted)" },
+        intentType: {
+          type: "string",
+          enum: ["edit", "read", "plan", "debug", "test"],
+          description: "Type of intent (for declare)",
+        },
+        files: { type: "array", items: { type: "string" }, description: "Target files (for declare)" },
+        description: { type: "string", description: "What you plan to do (for declare)" },
+        cwd: { type: "string", description: "Working directory" },
+      },
+      required: ["action"],
+    },
+  },
+
   // ========== PASSTHROUGH TOOL ==========
 
   {

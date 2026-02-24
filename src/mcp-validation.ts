@@ -276,6 +276,41 @@ export const ApproveInput = z.object({
 });
 
 /**
+ * muninn_context input validation — v7 Phase 1A
+ */
+export const ContextInput = z.object({
+  intent: z.enum(["edit", "read", "debug", "explore", "plan"]),
+  files: z.array(SafePath).max(50).optional(),
+  query: SafeText.optional(),
+  task: SafeText.optional(),
+  cwd: SafeCwd,
+});
+
+/**
+ * muninn_intent input validation — v7 Phase 5A
+ */
+export const IntentInput = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("declare"),
+    agentId: SafeText.optional(),
+    intentType: z.enum(["edit", "read", "plan", "debug", "test"]).optional(),
+    files: z.array(SafePath).max(50).optional(),
+    description: SafeText.optional(),
+    cwd: SafeCwd,
+  }),
+  z.object({
+    action: z.literal("query"),
+    agentId: SafeText.optional(),
+    cwd: SafeCwd,
+  }),
+  z.object({
+    action: z.literal("release"),
+    agentId: SafeText.optional(),
+    cwd: SafeCwd,
+  }),
+]);
+
+/**
  * muninn passthrough input validation
  */
 export const PassthroughInput = z.object({

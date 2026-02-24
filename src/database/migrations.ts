@@ -1950,6 +1950,295 @@ export const MIGRATIONS: Migration[] = [
       return !!table;
     },
   },
+  // ========================================================================
+  // v7 Phase 1C: Codebase DNA
+  // ========================================================================
+  {
+    version: 36,
+    name: "v7_codebase_dna",
+    description: "Compact project genome for instant session onboarding",
+    up: `
+      CREATE TABLE IF NOT EXISTS codebase_dna (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        dna_json TEXT NOT NULL,
+        formatted_text TEXT NOT NULL,
+        generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_codebase_dna_project ON codebase_dna(project_id);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='codebase_dna'")
+        .get();
+      return !!table;
+    },
+  },
+  // ========================================================================
+  // v7 Phase 2: Cognitive Memory — Reasoning Traces & Strategy Catalog
+  // ========================================================================
+  {
+    version: 37,
+    name: "v7_cognitive_memory",
+    description: "Reasoning trace capture and strategy catalog for cognitive memory",
+    up: `
+      CREATE TABLE IF NOT EXISTS reasoning_traces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        problem_signature TEXT NOT NULL,
+        hypothesis_chain TEXT NOT NULL DEFAULT '[]',
+        dead_ends TEXT NOT NULL DEFAULT '[]',
+        breakthrough TEXT,
+        strategy_tags TEXT NOT NULL DEFAULT '[]',
+        tool_sequence TEXT NOT NULL DEFAULT '[]',
+        outcome TEXT DEFAULT 'unknown',
+        duration_ms INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reasoning_traces_project ON reasoning_traces(project_id);
+      CREATE INDEX IF NOT EXISTS idx_reasoning_traces_session ON reasoning_traces(session_id);
+      CREATE INDEX IF NOT EXISTS idx_reasoning_traces_outcome ON reasoning_traces(outcome);
+
+      CREATE TABLE IF NOT EXISTS strategy_catalog (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        trigger_conditions TEXT NOT NULL DEFAULT '[]',
+        tool_pattern TEXT,
+        success_rate REAL DEFAULT 0.5,
+        times_used INTEGER DEFAULT 0,
+        avg_duration_ms INTEGER DEFAULT 0,
+        source_trace_ids TEXT NOT NULL DEFAULT '[]',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, name)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_strategy_catalog_project ON strategy_catalog(project_id);
+      CREATE INDEX IF NOT EXISTS idx_strategy_catalog_success ON strategy_catalog(success_rate DESC);
+    `,
+    validate: (db) => {
+      const traces = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='reasoning_traces'")
+        .get();
+      const catalog = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='strategy_catalog'")
+        .get();
+      return !!traces && !!catalog;
+    },
+  },
+
+  // ========================================================================
+  // v7 Phase 3A: Workflow Prediction
+  // ========================================================================
+  {
+    version: 38,
+    name: "v7_workflow_prediction",
+    description: "Trigram-based workflow prediction model",
+    up: `
+      CREATE TABLE IF NOT EXISTS workflow_predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        trigger_sequence TEXT NOT NULL,
+        predicted_tool TEXT NOT NULL,
+        predicted_args TEXT,
+        times_correct INTEGER DEFAULT 0,
+        times_total INTEGER DEFAULT 0,
+        confidence REAL DEFAULT 0.5,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, trigger_sequence, predicted_tool)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_workflow_pred_project ON workflow_predictions(project_id);
+      CREATE INDEX IF NOT EXISTS idx_workflow_pred_trigger ON workflow_predictions(trigger_sequence);
+      CREATE INDEX IF NOT EXISTS idx_workflow_pred_confidence ON workflow_predictions(confidence DESC);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_predictions'")
+        .get();
+      return !!table;
+    },
+  },
+
+  // ========================================================================
+  // v7 Phase 4: Self-Improving Intelligence
+  // ========================================================================
+  {
+    version: 39,
+    name: "v7_self_improving",
+    description: "Causal impact tracking and context A/B testing",
+    up: `
+      CREATE TABLE IF NOT EXISTS impact_tracking (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        context_type TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        outcome_signal TEXT NOT NULL DEFAULT 'unknown',
+        details TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_impact_project ON impact_tracking(project_id);
+      CREATE INDEX IF NOT EXISTS idx_impact_session ON impact_tracking(session_id);
+      CREATE INDEX IF NOT EXISTS idx_impact_type ON impact_tracking(context_type);
+      CREATE INDEX IF NOT EXISTS idx_impact_signal ON impact_tracking(outcome_signal);
+
+      CREATE TABLE IF NOT EXISTS ab_tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        test_name TEXT NOT NULL,
+        control_config TEXT NOT NULL,
+        variant_config TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        min_sessions INTEGER DEFAULT 20,
+        control_sessions INTEGER DEFAULT 0,
+        variant_sessions INTEGER DEFAULT 0,
+        control_metric_sum REAL DEFAULT 0,
+        variant_metric_sum REAL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'running',
+        conclusion TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        concluded_at DATETIME,
+        UNIQUE(project_id, test_name)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ab_tests_project ON ab_tests(project_id);
+      CREATE INDEX IF NOT EXISTS idx_ab_tests_status ON ab_tests(status);
+    `,
+    validate: (db) => {
+      const impact = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='impact_tracking'")
+        .get();
+      const ab = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='ab_tests'")
+        .get();
+      return !!impact && !!ab;
+    },
+  },
+
+  // ========================================================================
+  // v7 Phase 4C: Knowledge Freshness
+  // ========================================================================
+  {
+    version: 40,
+    name: "v7_knowledge_freshness",
+    description: "Track knowledge staleness based on time and dependency changes",
+    up: `
+      CREATE TABLE IF NOT EXISTS knowledge_freshness (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        source_table TEXT NOT NULL,
+        source_id INTEGER NOT NULL,
+        staleness_score REAL DEFAULT 0,
+        last_validated_at DATETIME,
+        deps_changed_count INTEGER DEFAULT 0,
+        flagged_stale INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, source_table, source_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_freshness_project ON knowledge_freshness(project_id);
+      CREATE INDEX IF NOT EXISTS idx_freshness_stale ON knowledge_freshness(staleness_score DESC);
+      CREATE INDEX IF NOT EXISTS idx_freshness_source ON knowledge_freshness(source_table, source_id);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_freshness'")
+        .get();
+      return !!table;
+    },
+  },
+
+  // ========================================================================
+  // v7 Phase 5: Multi-Agent Protocol
+  // ========================================================================
+  {
+    version: 41,
+    name: "v7_multi_agent",
+    description: "Multi-agent intent declaration, profiles, handoffs, and shared scratchpad",
+    up: `
+      CREATE TABLE IF NOT EXISTS agent_intents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        agent_id TEXT NOT NULL,
+        intent_type TEXT NOT NULL,
+        target_files TEXT DEFAULT '[]',
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_intents_project ON agent_intents(project_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_intents_status ON agent_intents(status);
+      CREATE INDEX IF NOT EXISTS idx_agent_intents_agent ON agent_intents(agent_id);
+
+      CREATE TABLE IF NOT EXISTS agent_profiles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL,
+        domains_touched TEXT DEFAULT '[]',
+        success_rate REAL DEFAULT 0.5,
+        preferred_tools TEXT DEFAULT '[]',
+        session_count INTEGER DEFAULT 0,
+        last_active_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, agent_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_profiles_project ON agent_profiles(project_id);
+
+      CREATE TABLE IF NOT EXISTS agent_handoffs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        from_session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+        from_agent_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        assumptions TEXT DEFAULT '[]',
+        warnings TEXT DEFAULT '[]',
+        next_steps TEXT DEFAULT '[]',
+        consumed INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_handoffs_project ON agent_handoffs(project_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_handoffs_consumed ON agent_handoffs(consumed);
+
+      CREATE TABLE IF NOT EXISTS agent_scratchpad (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        agent_id TEXT,
+        expires_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(project_id, key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_scratchpad_project ON agent_scratchpad(project_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_scratchpad_key ON agent_scratchpad(key);
+    `,
+    validate: (db) => {
+      const intents = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_intents'")
+        .get();
+      const profiles = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_profiles'")
+        .get();
+      return !!intents && !!profiles;
+    },
+  },
 ];
 
 // ============================================================================
@@ -2139,6 +2428,17 @@ const REQUIRED_PROJECT_TABLES = [
   "health_score_history",
   "archived_knowledge",
   "risk_alerts",
+  "codebase_dna",
+  "reasoning_traces",
+  "strategy_catalog",
+  "workflow_predictions",
+  "impact_tracking",
+  "ab_tests",
+  "knowledge_freshness",
+  "agent_intents",
+  "agent_profiles",
+  "agent_handoffs",
+  "agent_scratchpad",
 ];
 
 // Combined for reference

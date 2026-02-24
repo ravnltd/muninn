@@ -78,10 +78,25 @@ export async function autoEndSession(): Promise<void> {
       ? `Tools used: ${toolSummary.map((t) => `${t.tool_name} x${t.cnt}`).join(", ")}`
       : "No tool calls recorded";
 
-    await db.run(
-      `UPDATE sessions SET ended_at = datetime('now'), outcome = ? WHERE id = ?`,
-      [summaryText, activeSession.id]
-    );
+    // v7 Phase 1B: Infer session outcome from observable signals
+    let outcomeText = summaryText;
+    try {
+      const { inferSessionOutcome } = await import("./outcomes/auto-outcome.js");
+      const inferred = await inferSessionOutcome(db, projectId, activeSession.id);
+      outcomeText = `${summaryText}. ${inferred.summary}`;
+
+      // Store inferred success level
+      await db.run(
+        `UPDATE sessions SET ended_at = datetime('now'), outcome = ?, success = ? WHERE id = ?`,
+        [outcomeText, inferred.success, activeSession.id]
+      );
+    } catch {
+      // Fallback: just set the basic outcome
+      await db.run(
+        `UPDATE sessions SET ended_at = datetime('now'), outcome = ? WHERE id = ?`,
+        [summaryText, activeSession.id]
+      );
+    }
 
     // v4 Phase 2: Queue background learning jobs for this session
     try {
@@ -132,6 +147,68 @@ export async function autoEndSession(): Promise<void> {
       );
     } catch {
       // work_queue might not exist yet
+    }
+
+    // v7 Phase 2A/4A: Queue reasoning extraction and impact classification
+    try {
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["extract_reasoning_traces", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+      await db.run(
+        `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+        ["classify_impact", JSON.stringify({ projectId, sessionId: activeSession.id })]
+      );
+    } catch {
+      // work_queue might not exist yet
+    }
+
+    // v7 Phase 2B: Distill strategies every 5 sessions
+    try {
+      const sessionCount5 = await db.get<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM sessions WHERE project_id = ?`,
+        [projectId]
+      );
+      if (sessionCount5 && sessionCount5.cnt % 5 === 0) {
+        await db.run(
+          `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+          ["distill_strategies", JSON.stringify({ projectId })]
+        );
+      }
+    } catch {
+      // work_queue or sessions might not exist yet
+    }
+
+    // v7 Phase 3A: Build workflow model every 10 sessions
+    try {
+      const sessionCount10 = await db.get<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM sessions WHERE project_id = ?`,
+        [projectId]
+      );
+      if (sessionCount10 && sessionCount10.cnt % 10 === 0) {
+        await db.run(
+          `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+          ["build_workflow_model", JSON.stringify({ projectId })]
+        );
+      }
+    } catch {
+      // work_queue or sessions might not exist yet
+    }
+
+    // v7 Phase 1C: Regenerate codebase DNA every 20 sessions
+    try {
+      const sessionCount = await db.get<{ cnt: number }>(
+        `SELECT COUNT(*) as cnt FROM sessions WHERE project_id = ?`,
+        [projectId]
+      );
+      if (sessionCount && sessionCount.cnt % 20 === 0) {
+        await db.run(
+          `INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`,
+          ["generate_codebase_dna", JSON.stringify({ projectId })]
+        );
+      }
+    } catch {
+      // work_queue or sessions might not exist yet
     }
 
     // Spawn worker to process queued jobs

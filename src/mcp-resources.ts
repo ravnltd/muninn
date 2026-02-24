@@ -45,6 +45,12 @@ export function registerResourceHandlers(server: Server): void {
           description: "Cross-agent shared context: risk alerts, team learnings, and collaboration state for multi-agent workflows.",
           mimeType: "text/plain",
         },
+        {
+          uri: "muninn://briefing",
+          name: "Session Briefing",
+          description: "Project genome + resume context + active warnings. Start every session by reading this.",
+          mimeType: "text/plain",
+        },
       ],
     };
   });
@@ -112,6 +118,10 @@ export function registerResourceHandlers(server: Server): void {
 
       if (uri === "muninn://context/shared") {
         return await readSharedContext(db, projectId, uri);
+      }
+
+      if (uri === "muninn://briefing") {
+        return await readBriefing(db, projectId, uri);
       }
 
       return { contents: [{ uri, mimeType: "text/plain", text: `Unknown resource: ${uri}` }] };
@@ -346,6 +356,99 @@ async function readSharedContext(
 
   if (sections.length === 0) {
     return { contents: [{ uri, mimeType: "text/plain", text: "No shared context available." }] };
+  }
+
+  return { contents: [{ uri, mimeType: "text/plain", text: sections.join("\n") }] };
+}
+
+// ============================================================================
+// Briefing Resource (v7 Phase 1C)
+// ============================================================================
+
+/** Read session briefing: codebase DNA + resume context + active warnings */
+async function readBriefing(
+  db: DatabaseAdapter,
+  projectId: number,
+  uri: string,
+): Promise<ResourceResponse> {
+  const sections: string[] = [];
+
+  // 1. Codebase DNA
+  try {
+    const { loadDNA } = await import("./context/codebase-dna.js");
+    const dnaResult = await loadDNA(db, projectId);
+    if (dnaResult) {
+      sections.push("=== CODEBASE DNA ===");
+      sections.push(dnaResult.formatted);
+    }
+  } catch {
+    // codebase_dna table may not exist
+  }
+
+  // 2. Resume context (last session)
+  try {
+    const lastSession = await db.get<{
+      goal: string | null;
+      outcome: string | null;
+      success: number | null;
+    }>(
+      `SELECT goal, outcome, success FROM sessions
+       WHERE project_id = ? AND ended_at IS NOT NULL
+       ORDER BY ended_at DESC LIMIT 1`,
+      [projectId],
+    );
+    if (lastSession) {
+      sections.push("");
+      sections.push("=== LAST SESSION ===");
+      if (lastSession.goal) sections.push(`Goal: ${lastSession.goal}`);
+      if (lastSession.outcome) sections.push(`Outcome: ${lastSession.outcome.slice(0, 200)}`);
+      if (lastSession.success !== null) {
+        const labels = ["failed", "partial", "success"];
+        sections.push(`Result: ${labels[lastSession.success] ?? "unknown"}`);
+      }
+    }
+  } catch {
+    // sessions table may not exist
+  }
+
+  // 3. Session trajectory (v7 Phase 3B)
+  try {
+    const recentCalls = await db.all<{ tool_name: string; files_involved: string | null }>(
+      `SELECT tool_name, files_involved FROM tool_calls
+       WHERE project_id = ? ORDER BY created_at DESC LIMIT 20`,
+      [projectId],
+    );
+    if (recentCalls.length >= 3) {
+      const { analyzeTrajectory } = await import("./context/trajectory-analyzer.js");
+      const callData = recentCalls.reverse().map((c) => ({
+        toolName: c.tool_name,
+        files: c.files_involved ? c.files_involved.split(",").map((f: string) => f.trim()) : [],
+      }));
+      const trajectory = analyzeTrajectory(callData);
+      if (trajectory.pattern !== "normal" && trajectory.confidence > 0.5) {
+        sections.push("");
+        sections.push("=== SESSION TRAJECTORY ===");
+        sections.push(`Pattern: ${trajectory.pattern} — ${trajectory.message}`);
+        if (trajectory.suggestion) sections.push(`Suggestion: ${trajectory.suggestion}`);
+      }
+    }
+  } catch {
+    // trajectory analyzer may fail on older schemas
+  }
+
+  // 4. Active warnings (compact)
+  const warningSections: string[] = [];
+  await collectFragileFiles(db, projectId, warningSections);
+  await collectCriticalIssues(db, projectId, warningSections);
+  await collectContradictions(db, projectId, warningSections);
+  if (warningSections.length > 0) {
+    sections.push("");
+    sections.push("=== ACTIVE WARNINGS ===");
+    sections.push(...warningSections);
+  }
+
+  if (sections.length === 0) {
+    return { contents: [{ uri, mimeType: "text/plain", text: "No briefing data yet. Use muninn tools to build project knowledge." }] };
   }
 
   return { contents: [{ uri, mimeType: "text/plain", text: sections.join("\n") }] };

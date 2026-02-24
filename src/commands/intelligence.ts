@@ -187,6 +187,37 @@ async function checkSingleFile(db: DatabaseAdapter, projectId: number, projectPa
     );
   }
 
+  // v7 Phase 1D: Historical test failure rate and suggested test command
+  try {
+    const fileName = filePath.split("/").pop() ?? "";
+    const testHistory = await db.get<{
+      total: number;
+      failures: number;
+      last_command: string | null;
+    }>(
+      `SELECT
+         COUNT(*) as total,
+         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failures,
+         (SELECT test_command FROM test_results WHERE project_id = ? ORDER BY created_at DESC LIMIT 1) as last_command
+       FROM test_results
+       WHERE project_id = ?
+       AND output_summary LIKE ?
+       AND created_at > datetime('now', '-30 days')`,
+      [projectId, projectId, `%${fileName}%`],
+    );
+
+    if (testHistory && testHistory.total > 0 && testHistory.failures > 0) {
+      const failRate = Math.round((testHistory.failures / testHistory.total) * 100);
+      suggestions.push(`Test failure rate: ${failRate}% in last 30 days (${testHistory.failures}/${testHistory.total})`);
+    }
+
+    if (testHistory?.last_command) {
+      suggestions.push(`Suggested test: ${testHistory.last_command}`);
+    }
+  } catch {
+    // test_results table may not exist
+  }
+
   return {
     path: filePath,
     warnings,

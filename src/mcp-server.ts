@@ -40,6 +40,8 @@ import {
   SuggestInput,
   EnrichInput,
   ApproveInput,
+  ContextInput,
+  IntentInput,
   PassthroughInput,
   SafePassthroughArg,
   validateInput,
@@ -75,6 +77,8 @@ import {
   handleSuggest,
   handleEnrich,
   handleApprove,
+  handleContext,
+  handleIntent,
   handlePassthrough,
 } from "./mcp-handlers.js";
 import { createLogger } from "./lib/logger.js";
@@ -117,7 +121,7 @@ const log = createLogger("mcp-server");
 // ============================================================================
 
 const server = new Server(
-  { name: "muninn", version: "6.0.0" },
+  { name: "muninn", version: "7.0.0" },
   { capabilities: { tools: {}, resources: {} } }
 );
 
@@ -349,6 +353,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
+      // ========== v7: UNIFIED CONTEXT ==========
+
+      case "muninn_context": {
+        const validation = validateInput(ContextInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        if (validation.data.files) {
+          validation.data.files = normalizePaths(cwd, validation.data.files);
+        }
+        result = await handleContext(db, projectId, validation.data.cwd || cwd, validation.data);
+        // Track checked files for enforcement hook (edit intent)
+        if (validation.data.intent === "edit" && validation.data.files) {
+          getSessionState(cwd).markChecked(validation.data.files);
+        }
+        break;
+      }
+
+      // ========== v7: MULTI-AGENT INTENT ==========
+
+      case "muninn_intent": {
+        const validation = validateInput(IntentInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        if (validation.data.action === "declare" && validation.data.files) {
+          validation.data.files = normalizePaths(cwd, validation.data.files);
+        }
+        const sessionId = await getActiveSessionId(db, projectId);
+        result = await handleIntent(db, projectId, sessionId, validation.data);
+        break;
+      }
+
       // ========== PASSTHROUGH ==========
 
       case "muninn": {
@@ -400,7 +433,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // --- v4 Phase 3: Auto-append task context to read-oriented responses ---
     const READ_TOOLS = new Set([
       "muninn_query", "muninn_check", "muninn_predict",
-      "muninn_suggest", "muninn_enrich",
+      "muninn_suggest", "muninn_enrich", "muninn_context",
     ]);
     if (READ_TOOLS.has(name)) {
       const taskCtx = getTaskContext();
@@ -466,7 +499,7 @@ registerResourceHandlers(server);
 // ============================================================================
 
 async function main(): Promise<void> {
-  log.info("Starting Muninn MCP Server v6 (in-process)...");
+  log.info("Starting Muninn MCP Server v7 (in-process)...");
 
   // --- Global error handlers: prevent silent crashes ---
   process.on("unhandledRejection", (reason) => {
@@ -576,6 +609,19 @@ async function main(): Promise<void> {
       log.warn(`Keepalive ping failed`, { consecutive: getConsecutiveKeepaliveFailures(), error: err instanceof Error ? err.message : String(err) });
     }
   }, KEEPALIVE_INTERVAL_MS);
+
+  // --- v7 Phase 5A: Expire stale agent intents every 5 minutes ---
+  const INTENT_EXPIRE_MS = 5 * 60_000; // 5 minutes
+  safeInterval(async () => {
+    try {
+      const db = await getDb();
+      const defaultProject = await getProjectId(db, process.cwd());
+      const { expireIntents } = await import("./agents/intent-manager.js");
+      await expireIntents(db, defaultProject);
+    } catch {
+      // Best-effort — tables may not exist
+    }
+  }, INTENT_EXPIRE_MS);
 
   // --- Periodic stale-job check: spawn worker if jobs are stuck ---
   const STALE_JOB_CHECK_MS = 10 * 60_000; // 10 minutes

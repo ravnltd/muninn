@@ -16,6 +16,7 @@ import { estimateTokens } from "../enrichment/formatter";
 interface BudgetAllocation {
   contradictions: number;
   criticalWarnings: number;
+  strategies: number;
   decisions: number;
   learnings: number;
   fileContext: number;
@@ -36,13 +37,14 @@ interface ContextSection {
 const DEFAULT_TOTAL_BUDGET = 2000;
 
 const DEFAULT_ALLOCATION: BudgetAllocation = {
-  contradictions: 300,
-  criticalWarnings: 350,
-  decisions: 350,
-  learnings: 350,
-  fileContext: 350,
+  contradictions: 250,
+  criticalWarnings: 300,
+  strategies: 200,
+  decisions: 300,
+  learnings: 300,
+  fileContext: 300,
   errorFixes: 150,
-  reserve: 150,
+  reserve: 200,
 };
 
 // ============================================================================
@@ -132,6 +134,24 @@ function serializeErrorFix(fix: ErrorFix): string {
   return `  EF[${fix.signature.slice(0, 30)}|fix:${desc}]`;
 }
 
+/** v7 Phase 2B: Strategy entry type (matches strategy-distiller output) */
+interface StrategyEntry {
+  name: string;
+  description: string;
+  successRate: number;
+  timesUsed: number;
+}
+
+/** Format a strategy entry compactly */
+function serializeStrategy(strategy: StrategyEntry): string {
+  return `  ST[${strategy.name}|${strategy.description.slice(0, 50)}|rate:${(strategy.successRate * 100).toFixed(0)}%]`;
+}
+
+/** Score a strategy for relevance */
+function scoreStrategy(strategy: StrategyEntry): number {
+  return strategy.successRate * 0.6 + Math.min(strategy.timesUsed / 20, 1) * 0.4;
+}
+
 // ============================================================================
 // Weight Adjustments (from confidence calibrator)
 // ============================================================================
@@ -178,6 +198,7 @@ function clampBudget(value: number): number {
 
 const TYPE_TO_CATEGORY: Record<string, keyof BudgetAllocation> = {
   warning: "criticalWarnings",
+  strategy: "strategies",
   decision: "decisions",
   learning: "learnings",
   file: "fileContext",
@@ -256,7 +277,8 @@ function fitToBudget<T>(
 export function buildContextOutput(
   taskContext: TaskContext,
   totalBudget: number = DEFAULT_TOTAL_BUDGET,
-  allocation: BudgetAllocation = DEFAULT_ALLOCATION
+  allocation: BudgetAllocation = DEFAULT_ALLOCATION,
+  strategies: StrategyEntry[] = [],
 ): string {
   const sections: ContextSection[] = [];
 
@@ -288,6 +310,15 @@ export function buildContextOutput(
 
     const content = warningLines.join("\n");
     sections.push({ type: "warnings", content, tokens: estimateTokens(content) });
+  }
+
+  // 1.5 v7 Phase 2B: Matching strategies (between warnings and decisions)
+  // Strategies are injected externally via the strategies parameter
+  if (strategies && strategies.length > 0) {
+    const lines = ["Proven strategies:"];
+    lines.push(...fitToBudget(strategies, allocation.strategies, scoreStrategy, serializeStrategy));
+    const content = lines.join("\n");
+    sections.push({ type: "strategies", content, tokens: estimateTokens(content) });
   }
 
   // 2. Relevant decisions (non-failed)
