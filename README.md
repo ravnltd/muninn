@@ -12,6 +12,8 @@ npx muninn-ai
 
 Muninn gives AI coding agents persistent memory. Before every edit, the agent knows what's fragile, what decisions were made, and what broke last time. After every session, it writes back what it learned. Session 50 has the same institutional knowledge as session 1.
 
+Every session builds on the last. Every project informs every other project. Patterns learned in one codebase show up as warnings in another. Decisions compound. Solo builders can build like teams.
+
 > **Works with**: Claude Code, Cursor, Windsurf, Continue.dev, and any MCP-compatible tool.
 
 ---
@@ -48,6 +50,10 @@ Session ends
 
 After a few sessions, Muninn knows your codebase like a senior engineer who's been on the project for years.
 
+### Context Budget
+
+Most memory tools dump everything into the context window. Muninn doesn't. It enforces a hard **2000-token budget** per tool call. Seven intelligence signals run in parallel (~5-15ms), determine what's actually relevant to what you're doing right now, and pack only that into context. It tracks which context the agent actually used vs ignored, and adjusts the budget allocation over time. Irrelevant stuff gets suppressed. Useful stuff gets more room.
+
 ## Quick Start
 
 ### Option 1: npx (Recommended)
@@ -64,7 +70,7 @@ git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn
 cd ~/.local/share/muninn && ./install.sh
 ```
 
-The installer compiles binaries, sets up hooks, and registers the MCP server automatically.
+The installer creates wrapper scripts in `~/.local/bin/`, sets up hooks, and registers the MCP server.
 
 ### Register with Your Editor
 
@@ -72,7 +78,7 @@ The installer compiles binaries, sets up hooks, and registers the MCP server aut
 # Claude Code
 claude mcp add --scope user muninn -- muninn-mcp
 
-# Other MCP clients: point to the muninn-mcp binary in ~/.local/bin/
+# Other MCP clients: point to the muninn-mcp script in ~/.local/bin/
 ```
 
 ### Verify
@@ -97,7 +103,9 @@ That's it. Start a coding session and Muninn auto-initializes for your project.
 
 ## MCP Tools
 
-10 tools available to your AI agent via [Model Context Protocol](https://modelcontextprotocol.io/):
+14 tools available to your AI agent via [Model Context Protocol](https://modelcontextprotocol.io/):
+
+### Core Tools
 
 | Tool | What It Does |
 |------|--------------|
@@ -110,7 +118,21 @@ That's it. Start a coding session and Muninn auto-initializes for your project.
 | `muninn_learn_add` | Save a pattern or gotcha |
 | `muninn_issue` | Track bugs and problems |
 | `muninn_session` | Start/end session tracking |
-| `muninn` | Passthrough to full CLI (40+ commands) |
+
+### Intelligence Tools
+
+| Tool | What It Does |
+|------|--------------|
+| `muninn_enrich` | Auto-inject context for Read/Edit/Write/Bash/Glob/Grep calls |
+| `muninn_approve` | Approve blocked operations on high-fragility files |
+| `muninn_context` | Unified context retrieval with intent routing (edit/read/debug/explore/plan) |
+| `muninn_intent` | Multi-agent coordination (declare/query/release file locks) |
+
+### Passthrough
+
+| Tool | What It Does |
+|------|--------------|
+| `muninn` | Passthrough to full CLI (50+ commands) |
 
 ## Adaptive Intelligence
 
@@ -120,7 +142,33 @@ Muninn gets smarter in two dimensions:
 
 **Per-developer**: Builds a profile of your coding preferences — error handling style, naming conventions, patterns you favor. This follows you across projects.
 
-**Closed feedback loops**: Every tool call is measured. Context that helps gets boosted. Context that's irrelevant gets suppressed. The system self-tunes.
+### Feedback Loops
+
+Seven feedback loops run in parallel on every tool call:
+
+1. **Strategy success rates** — what approaches worked before
+2. **Workflow prediction** — anticipates next tool call
+3. **Staleness detection** — reduces budget for outdated knowledge
+4. **Impact tracking** — measures what context actually helped vs was ignored
+5. **Budget optimization** — A/B tests different context allocations
+6. **Agent profiling** — detects scope creep and repeated failure patterns
+7. **Trajectory analysis** — adjusts context based on whether you're exploring, failing, stuck, or confident
+
+All feeding into the 2000-token budget. Context that helps gets boosted. Context that's irrelevant gets suppressed.
+
+### Fragility Scoring
+
+Not a guess — a weighted composite of 7 signals:
+
+| Signal | Weight | What It Measures |
+|--------|--------|-----------------|
+| Dependents | 25% | How many files import this one |
+| Test coverage | 20% | Whether tests exist for this file |
+| Change velocity | 15% | How often it changes per week |
+| Error history | 15% | How many errors in the last 90 days |
+| Export surface | 10% | How many things it exports |
+| Complexity | 10% | Symbol count and structural complexity |
+| Manual override | 5% | Human-specified bias |
 
 ## Multi-Machine Setup
 
@@ -137,6 +185,15 @@ export MUNINN_MODE=http
 export MUNINN_PRIMARY_URL=http://YOUR_SERVER:8080
 claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SERVER:8080 muninn-mcp
 ```
+
+Two modes:
+
+| Mode | Local State | Use Case |
+|------|-------------|----------|
+| `local` | Full DB | Single machine |
+| `http` | None (stateless) | Multi-machine (recommended) |
+
+HTTP mode is stateless — all queries go directly to sqld. No local replica to corrupt. Just reconnect if anything goes wrong.
 
 ## Optional: Enhanced Search
 
