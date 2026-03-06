@@ -379,6 +379,19 @@ export function createTestDb(): TestDb {
     );
     CREATE INDEX idx_service_deps_service ON service_deps(service_id);
 
+    -- File correlations (co-change tracking)
+    CREATE TABLE file_correlations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      file_a TEXT NOT NULL,
+      file_b TEXT NOT NULL,
+      cochange_count INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(project_id, file_a, file_b)
+    );
+    CREATE INDEX idx_file_correlations_project ON file_correlations(project_id);
+
     -- FTS5 virtual tables
     CREATE VIRTUAL TABLE fts_files USING fts5(path, purpose, content='files', content_rowid='id');
     CREATE VIRTUAL TABLE fts_decisions USING fts5(title, decision, reasoning, content='decisions', content_rowid='id');

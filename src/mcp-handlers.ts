@@ -313,6 +313,73 @@ export async function handleIntent(
 }
 
 // ============================================================================
+// v9: Ambient Brain Handlers
+// ============================================================================
+
+export async function handleRecall(
+  db: DatabaseAdapter,
+  projectId: number,
+  cwd: string,
+  params: { files?: string[]; query?: string; task?: string },
+): Promise<string> {
+  const { recall, formatRecallResult } = await import("./v9/recall.js");
+  const result = await recall(db, projectId, cwd, params);
+  return formatRecallResult(result);
+}
+
+export async function handleRemember(
+  db: DatabaseAdapter,
+  projectId: number,
+  params: { content: string; type?: "decision" | "learning"; files?: string[] },
+): Promise<string> {
+  const { remember, formatRememberResult } = await import("./v9/remember.js");
+  const result = await remember(db, projectId, params);
+  return formatRememberResult(result);
+}
+
+export async function handleTrack(
+  db: DatabaseAdapter,
+  projectId: number,
+  params: { action: string; title?: string; description?: string; severity?: number; type?: string; files?: string[]; id?: number; resolution?: string },
+): Promise<string> {
+  const { track, formatTrackResult } = await import("./v9/track.js");
+
+  if (params.action === "add") {
+    const result = await track(db, projectId, {
+      action: "add",
+      title: params.title ?? "Untitled issue",
+      description: params.description,
+      severity: params.severity,
+      type: params.type as "bug" | "debt" | "security" | "performance" | undefined,
+      files: params.files,
+    });
+    return formatTrackResult(result);
+  }
+
+  if (params.action === "resolve") {
+    if (!params.id) throw new Error("Issue ID required for resolve");
+    const result = await track(db, projectId, {
+      action: "resolve",
+      id: params.id,
+      resolution: params.resolution ?? "Resolved",
+    });
+    return formatTrackResult(result);
+  }
+
+  throw new Error(`Unknown track action: ${params.action}`);
+}
+
+export async function handleCapture(
+  db: DatabaseAdapter,
+  projectId: number,
+  params: { files: Array<{ path: string; content?: string }> },
+): Promise<string> {
+  const { captureBatch, formatCaptureResult } = await import("./v9/capture.js");
+  const results = await captureBatch(db, projectId, params.files);
+  return results.map(formatCaptureResult).join("\n");
+}
+
+// ============================================================================
 // Passthrough Command Router
 // ============================================================================
 

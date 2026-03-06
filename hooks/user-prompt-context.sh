@@ -26,4 +26,4 @@ fi
 echo "## Muninn Context (auto-loaded)"
 head -50 "$context_path"  # Safety cap: max 50 lines
 echo ""
-echo "REMINDER: Call muninn_check before editing any file."
+echo "REQUIRED WORKFLOW: muninn_predict/suggest/query BEFORE planning. muninn_check BEFORE editing. muninn_file_add/decision_add/learn_add AFTER changes."

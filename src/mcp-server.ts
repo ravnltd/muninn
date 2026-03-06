@@ -42,6 +42,9 @@ import {
   ApproveInput,
   ContextInput,
   IntentInput,
+  RecallInput,
+  RememberInput,
+  TrackInput,
   PassthroughInput,
   SafePassthroughArg,
   validateInput,
@@ -79,6 +82,9 @@ import {
   handleApprove,
   handleContext,
   handleIntent,
+  handleRecall,
+  handleRemember,
+  handleTrack,
   handlePassthrough,
 } from "./mcp-handlers.js";
 import { createLogger } from "./lib/logger.js";
@@ -453,6 +459,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
+      // ========== v9: AMBIENT BRAIN ==========
+
+      case "recall": {
+        const validation = validateInput(RecallInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        if (validation.data.files) {
+          validation.data.files = normalizePaths(cwd, validation.data.files);
+        }
+        result = await handleRecall(db, projectId, validation.data.cwd || cwd, validation.data);
+        // Mark files as checked for enforcement hook compatibility
+        if (validation.data.files) {
+          getSessionState(cwd)?.markChecked(validation.data.files);
+        }
+        break;
+      }
+
+      case "remember": {
+        const validation = validateInput(RememberInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        result = await handleRemember(db, projectId, validation.data);
+        break;
+      }
+
+      case "track": {
+        const validation = validateInput(TrackInput, typedArgs);
+        if (!validation.success) throw new Error(validation.error);
+        const data = validation.data;
+        if (data.action === "add" && data.files) {
+          data.files = normalizePaths(cwd, data.files);
+        }
+        result = await handleTrack(db, projectId, data);
+        break;
+      }
+
       // ========== PASSTHROUGH ==========
 
       case "muninn": {
@@ -505,6 +545,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const READ_TOOLS = new Set([
       "muninn_query", "muninn_check", "muninn_predict",
       "muninn_suggest", "muninn_enrich", "muninn_context",
+      "recall",
     ]);
     if (READ_TOOLS.has(name)) {
       const taskCtx = getTaskContext();

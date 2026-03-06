@@ -14,9 +14,9 @@ describe("Export Snapshots", () => {
     expect(MIGRATIONS[43].version).toBe(44);
   });
 
-  test("TOOL_DEFINITIONS array has 14 tools", async () => {
+  test("TOOL_DEFINITIONS array has 17 tools", async () => {
     const { TOOL_DEFINITIONS } = await import("../../src/mcp-tool-definitions");
-    expect(TOOL_DEFINITIONS).toHaveLength(14);
+    expect(TOOL_DEFINITIONS).toHaveLength(17);
 
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toEqual([
@@ -33,6 +33,9 @@ describe("Export Snapshots", () => {
       "muninn_approve",
       "muninn_context",
       "muninn_intent",
+      "recall",
+      "remember",
+      "track",
       "muninn",
     ]);
   });

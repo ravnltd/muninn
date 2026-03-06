@@ -17,7 +17,7 @@ describe("MCP Server Startup", () => {
     const { TOOL_DEFINITIONS } = await import("../../src/mcp-tool-definitions");
 
     for (const tool of TOOL_DEFINITIONS) {
-      expect(tool.name).toMatch(/^muninn/);
+      expect(tool.name).toMatch(/^(muninn|recall|remember|track)/);
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe("object");

@@ -316,6 +316,54 @@ export const IntentInput = z.discriminatedUnion("action", [
   }),
 ]);
 
+// ============================================================================
+// v9: Ambient Brain Schemas
+// ============================================================================
+
+/**
+ * recall input validation — v9
+ */
+export const RecallInput = z.object({
+  files: z.array(SafePath).max(50).optional(),
+  query: SafeText.optional(),
+  task: SafeText.optional(),
+  cwd: SafeCwd,
+}).refine(
+  (data) => data.files || data.query || data.task,
+  { message: "Provide at least one of: files, query, or task" },
+);
+
+/**
+ * remember input validation — v9
+ */
+export const RememberInput = z.object({
+  content: ContentText,
+  type: z.enum(["decision", "learning"]).optional(),
+  files: z.array(SafePath).max(20).optional(),
+  cwd: SafeCwd,
+});
+
+/**
+ * track input validation — v9
+ */
+export const TrackInput = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("add"),
+    title: SafeText,
+    description: ContentText.optional(),
+    severity: z.number().int().min(1).max(10).optional(),
+    type: z.enum(["bug", "debt", "security", "performance"]).optional(),
+    files: z.array(SafePath).max(20).optional(),
+    cwd: SafeCwd,
+  }),
+  z.object({
+    action: z.literal("resolve"),
+    id: z.number().int().positive(),
+    resolution: SafeText,
+    cwd: SafeCwd,
+  }),
+]);
+
 /**
  * muninn passthrough input validation
  */
