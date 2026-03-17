@@ -75,10 +75,10 @@ export async function handleRecall(
   projectId: number,
   cwd: string,
   params: { files?: string[]; query?: string; task?: string },
-): Promise<string> {
+): Promise<{ text: string; resultIds: string | null }> {
   const { recall, formatRecallResult } = await import("./v9/recall.js");
   const result = await recall(db, projectId, cwd, params);
-  return formatRecallResult(result);
+  return { text: formatRecallResult(result), resultIds: result.resultIds };
 }
 
 export async function handleRemember(

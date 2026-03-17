@@ -112,8 +112,8 @@ export function createApp(db: DatabaseAdapter, projectId: number, cwd: string): 
     const body = await c.req.json();
     const validation = validateInput(RecallInput, body);
     if (!validation.success) return c.json({ error: validation.error }, 400);
-    const result = await handleRecall(db, projectId, cwd, validation.data);
-    return c.json({ data: result });
+    const recallResult = await handleRecall(db, projectId, cwd, validation.data);
+    return c.json({ data: recallResult.text });
   });
 
   // Remember — record decision or learning

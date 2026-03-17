@@ -51,8 +51,20 @@ function inferType(filePath: string): string {
   return "module";
 }
 
-function inferPurpose(filePath: string): string {
-  // Extract meaningful name from path
+function inferPurpose(filePath: string, fileContent?: string): string {
+  // If we have content, extract actual code signals
+  if (fileContent) {
+    const exports = extractExportNames(fileContent);
+    if (exports.length > 0) {
+      const dir = filePath.split("/").slice(-2, -1)[0] ?? "";
+      const prefix = dir && dir !== "src" ? `${dir} — ` : "";
+      const named = exports.slice(0, 3).join(", ");
+      const suffix = exports.length > 3 ? ` +${exports.length - 3} more` : "";
+      return `${prefix}exports ${named}${suffix}`.slice(0, 200);
+    }
+  }
+
+  // Fall back to path-based inference
   const parts = filePath.split("/");
   const filename = parts[parts.length - 1]
     .replace(/\.[^.]+$/, "")
@@ -63,6 +75,20 @@ function inferPurpose(filePath: string): string {
     return `${dir} — ${filename}`;
   }
   return filename;
+}
+
+/** Extract exported symbol names using fast regex (no AST) */
+function extractExportNames(content: string): string[] {
+  const names: string[] = [];
+  for (const line of content.split("\n")) {
+    const match = line
+      .trim()
+      .match(
+        /export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|type|interface)\s+(\w+)/,
+      );
+    if (match) names.push(match[1]);
+  }
+  return names;
 }
 
 // ============================================================================
@@ -96,7 +122,7 @@ export async function capture(
   if (!existing) {
     // Create new file record
     const type = inferType(filePath);
-    const purpose = inferPurpose(filePath);
+    const purpose = inferPurpose(filePath, fileContent);
 
     await db.run(
       `INSERT INTO files (project_id, path, purpose, type, fragility, content_hash, status, created_at, updated_at)

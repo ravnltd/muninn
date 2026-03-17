@@ -123,7 +123,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (validation.data.files) {
           validation.data.files = normalizePaths(cwd, validation.data.files);
         }
-        result = await handleRecall(db, projectId, validation.data.cwd || cwd, validation.data);
+        const recallResult = await handleRecall(db, projectId, validation.data.cwd || cwd, validation.data);
+        result = recallResult.text;
+        if (recallResult.resultIds && timer) {
+          timer.setRecallResultIds(recallResult.resultIds);
+        }
         break;
       }
 

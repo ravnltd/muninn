@@ -2223,4 +2223,35 @@ export const MIGRATIONS: Migration[] = [
       return trigger?.sql?.includes("failed") ?? false;
     },
   },
+
+  // ============================================================================
+  // v45 — Intelligence: learning graduation, retrieval feedback, decision grounding
+  // ============================================================================
+  {
+    version: 45,
+    name: "v9_intelligence",
+    description: "v9 intelligence — learning graduation, retrieval feedback, decision grounding",
+    up: `
+      ALTER TABLE learnings ADD COLUMN stage TEXT DEFAULT 'validated';
+      ALTER TABLE decisions ADD COLUMN content_hash_snapshot TEXT;
+      ALTER TABLE tool_calls ADD COLUMN recall_result_ids TEXT;
+      CREATE INDEX IF NOT EXISTS idx_learnings_stage ON learnings(stage);
+    `,
+    validate: (db) => {
+      const learningCols = db
+        .query<{ name: string }, []>("PRAGMA table_info(learnings)")
+        .all();
+      const decisionCols = db
+        .query<{ name: string }, []>("PRAGMA table_info(decisions)")
+        .all();
+      const toolCallCols = db
+        .query<{ name: string }, []>("PRAGMA table_info(tool_calls)")
+        .all();
+      return (
+        learningCols.some((c) => c.name === "stage") &&
+        decisionCols.some((c) => c.name === "content_hash_snapshot") &&
+        toolCallCols.some((c) => c.name === "recall_result_ids")
+      );
+    },
+  },
 ];

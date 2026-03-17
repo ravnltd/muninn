@@ -6,6 +6,9 @@
  * Runs async in background — commit completes immediately.
  */
 
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { DatabaseAdapter } from "../database/adapter";
 import { updateFileCorrelations } from "../commands/correlations";
 
@@ -72,6 +75,105 @@ export function parseNumstat(numstatOutput: string): FileChange[] {
   }
 
   return files;
+}
+
+// ============================================================================
+// Content Analysis (fast regex-based, no AST)
+// ============================================================================
+
+/** Hash file content with sha256, truncated to 16 hex chars */
+function hashFileContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
+/** Read first N lines of a file, returns null if unreadable */
+function readFileHead(filePath: string, maxLines: number): string | null {
+  try {
+    const fullPath = resolve(process.cwd(), filePath);
+    if (!existsSync(fullPath)) return null;
+    const content = readFileSync(fullPath, "utf-8");
+    return content.split("\n").slice(0, maxLines).join("\n");
+  } catch {
+    return null;
+  }
+}
+
+/** Extract exports, imports, and definitions from source content */
+function extractCodeSignals(content: string): {
+  imports: string[];
+  exports: string[];
+  definitions: string[];
+} {
+  const imports: string[] = [];
+  const exports: string[] = [];
+  const definitions: string[] = [];
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    // Imports: from "x" or require("x")
+    const importMatch = trimmed.match(/(?:from\s+["'])([^"']+)["']/);
+    if (importMatch) imports.push(importMatch[1]);
+    // Exports: export function/class/const/default
+    const exportMatch = trimmed.match(
+      /export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|type|interface)\s+(\w+)/,
+    );
+    if (exportMatch) exports.push(exportMatch[1]);
+    // Function/class definitions (non-exported)
+    const defMatch = trimmed.match(
+      /^(?:async\s+)?(?:function|class)\s+(\w+)/,
+    );
+    if (defMatch && !trimmed.startsWith("export")) {
+      definitions.push(defMatch[1]);
+    }
+  }
+
+  return { imports, exports, definitions };
+}
+
+/** Infer file type from path patterns */
+function inferFileType(filePath: string): string {
+  const patterns: Array<[RegExp, string]> = [
+    [/\.test\.|\.spec\.|__tests__/, "test"],
+    [/\.config\.|\.rc\.|\bconfig\//, "config"],
+    [/components?\//, "component"],
+    [/hooks?\//, "hook"],
+    [/utils?\/|helpers?\/|lib\//, "util"],
+    [/routes?\/|api\//, "api"],
+    [/middleware/, "middleware"],
+    [/types?\.ts|\.d\.ts|interfaces?\//, "types"],
+    [/migrations?\//, "migration"],
+    [/schemas?\//, "schema"],
+    [/commands?\//, "command"],
+    [/database|db\//, "database"],
+    [/index\.[jt]sx?$/, "entry"],
+  ];
+  for (const [pattern, type] of patterns) {
+    if (pattern.test(filePath)) return type;
+  }
+  return "module";
+}
+
+/** Build a purpose string from code signals and file path */
+function buildPurpose(
+  filePath: string,
+  signals: ReturnType<typeof extractCodeSignals>,
+): string {
+  const parts: string[] = [];
+  const basename = filePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
+  const dir = filePath.split("/").slice(-2, -1)[0] ?? "";
+
+  if (dir && dir !== "src") parts.push(dir);
+  parts.push(basename);
+
+  if (signals.exports.length > 0) {
+    const named = signals.exports.slice(0, 3).join(", ");
+    const suffix = signals.exports.length > 3
+      ? ` +${signals.exports.length - 3} more`
+      : "";
+    parts.push(`exports ${named}${suffix}`);
+  }
+
+  return parts.join(" — ").slice(0, 200);
 }
 
 // ============================================================================
@@ -212,37 +314,80 @@ export async function processCommit(db: DatabaseAdapter, projectId: number): Pro
 
 /**
  * Update a single file's metadata from a commit.
+ * Reads file content for new files to generate real purpose descriptions.
  */
 async function updateFileFromCommit(
   db: DatabaseAdapter,
   projectId: number,
   change: FileChange
 ): Promise<void> {
-  const existing = await db.get<{ id: number; change_count: number }>(
-    `SELECT id, change_count FROM files WHERE project_id = ? AND path = ?`,
+  const existing = await db.get<{
+    id: number;
+    change_count: number;
+    purpose: string | null;
+  }>(
+    `SELECT id, change_count, purpose FROM files WHERE project_id = ? AND path = ?`,
     [projectId, change.path]
   );
 
   if (existing) {
     const newCount = existing.change_count + 1;
+    const updates = buildExistingFileUpdates(change.path, existing.purpose);
     await db.run(
       `UPDATE files SET
         change_count = ?,
         temperature = 'hot',
         last_referenced_at = datetime('now'),
         velocity_score = CAST(? AS REAL) / (1 + (julianday('now') - julianday(COALESCE(first_changed_at, created_at)))),
+        content_hash = COALESCE(?, content_hash),
+        purpose = COALESCE(?, purpose),
         updated_at = datetime('now')
        WHERE id = ?`,
-      [newCount, newCount, existing.id]
+      [newCount, newCount, updates.contentHash, updates.purpose, existing.id]
     );
   } else {
-    // Auto-create file entry
+    const meta = buildNewFileMeta(change.path);
     await db.run(
-      `INSERT OR IGNORE INTO files (project_id, path, purpose, fragility, change_count, temperature, first_changed_at, created_at, updated_at)
-       VALUES (?, ?, 'Auto-tracked from git', 3, 1, 'hot', datetime('now'), datetime('now'), datetime('now'))`,
-      [projectId, change.path]
+      `INSERT OR IGNORE INTO files (project_id, path, purpose, type, fragility, content_hash, change_count, temperature, first_changed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 3, ?, 1, 'hot', datetime('now'), datetime('now'), datetime('now'))`,
+      [projectId, change.path, meta.purpose, meta.type, meta.contentHash]
     );
   }
+}
+
+/** Build metadata for a newly tracked file */
+function buildNewFileMeta(filePath: string): {
+  purpose: string;
+  type: string;
+  contentHash: string | null;
+} {
+  const type = inferFileType(filePath);
+  const head = readFileHead(filePath, 100);
+  if (!head) {
+    return { purpose: `${type} file`, type, contentHash: null };
+  }
+
+  const signals = extractCodeSignals(head);
+  const purpose = buildPurpose(filePath, signals);
+  const contentHash = hashFileContent(head);
+  return { purpose, type, contentHash };
+}
+
+/** Build update fields for an existing file (recompute if purpose was auto) */
+function buildExistingFileUpdates(
+  filePath: string,
+  currentPurpose: string | null,
+): { contentHash: string | null; purpose: string | null } {
+  const head = readFileHead(filePath, 100);
+  if (!head) return { contentHash: null, purpose: null };
+
+  const contentHash = hashFileContent(head);
+  // Only regenerate purpose if it was the old placeholder
+  if (currentPurpose === "Auto-tracked from git") {
+    const signals = extractCodeSignals(head);
+    return { contentHash, purpose: buildPurpose(filePath, signals) };
+  }
+  return { contentHash, purpose: null };
 }
 
 // ============================================================================

@@ -134,11 +134,26 @@ const JOB_HANDLERS: Record<string, JobHandler> = {
   },
 
   // v5 Phase 1: Reinforce learnings based on session outcomes
+  // v9: Also runs graduation, deduplication, and pruning
   async reinforce_learnings(db, payload) {
     const { reinforceLearnings } = await import("./outcomes/learning-reinforcer");
     const projectId = payload.projectId as number;
     const sessionId = payload.sessionId as number;
     await reinforceLearnings(db, projectId, sessionId);
+
+    // v9 Intelligence: graduation + dedup + pruning (best-effort)
+    try {
+      const { graduateLearnings } = await import("./intelligence/learning-graduation");
+      await graduateLearnings(db, projectId);
+    } catch { /* stage column may not exist yet */ }
+
+    try {
+      const { deduplicateLearnings, pruneStaleLearnings, pruneWeakCorrelations } =
+        await import("./intelligence/dedup-pruning");
+      await deduplicateLearnings(db, projectId);
+      await pruneStaleLearnings(db, projectId);
+      await pruneWeakCorrelations(db, projectId);
+    } catch { /* best-effort */ }
   },
 
   // v5 Phase 2: Compute composite fragility scores

@@ -23,6 +23,7 @@ export interface ToolCallRecord {
   success: boolean;
   durationMs: number;
   errorMessage?: string;
+  recallResultIds?: string;
 }
 
 // ============================================================================
@@ -74,8 +75,8 @@ export function summarizeInput(args: Record<string, unknown>): string {
 export function logToolCall(db: DatabaseAdapter, record: ToolCallRecord): void {
   // Fire and forget — do not await
   db.run(
-    `INSERT INTO tool_calls (project_id, session_id, tool_name, input_summary, files_involved, success, duration_ms, error_message)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tool_calls (project_id, session_id, tool_name, input_summary, files_involved, success, duration_ms, error_message, recall_result_ids)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       record.projectId,
       record.sessionId,
@@ -85,6 +86,7 @@ export function logToolCall(db: DatabaseAdapter, record: ToolCallRecord): void {
       record.success ? 1 : 0,
       record.durationMs,
       record.errorMessage ?? null,
+      record.recallResultIds ?? null,
     ]
   ).catch(() => {
     // Swallow errors — logging must never break tool calls
@@ -100,12 +102,20 @@ export function createToolCallTimer(
   projectId: number,
   toolName: string,
   args: Record<string, unknown>
-): { finish: (success: boolean, errorMessage?: string) => void } {
+): {
+  finish: (success: boolean, errorMessage?: string) => number;
+  setRecallResultIds: (ids: string) => void;
+} {
   const startTime = Date.now();
   const files = extractFilesFromArgs(toolName, args);
   const inputSummary = summarizeInput(args);
+  let recallResultIds: string | undefined;
 
   return {
+    setRecallResultIds(ids: string): void {
+      recallResultIds = ids;
+    },
+
     finish(success: boolean, errorMessage?: string): number {
       const durationMs = Date.now() - startTime;
 
@@ -121,6 +131,7 @@ export function createToolCallTimer(
             success,
             durationMs,
             errorMessage,
+            recallResultIds,
           });
         })
         .catch(() => {
@@ -134,6 +145,7 @@ export function createToolCallTimer(
             success,
             durationMs,
             errorMessage,
+            recallResultIds,
           });
         });
 

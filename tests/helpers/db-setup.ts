@@ -124,6 +124,7 @@ export function createTestDb(): TestDb {
       outcome_at TEXT,
       check_after_sessions INTEGER DEFAULT 5,
       sessions_since INTEGER DEFAULT 0,
+      content_hash_snapshot TEXT,
       archived_at TEXT,
       consolidated_into INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -194,6 +195,9 @@ export function createTestDb(): TestDb {
       embedding BLOB,
       temperature TEXT DEFAULT 'cold',
       last_referenced_at TEXT,
+      stage TEXT DEFAULT 'validated',
+      auto_reinforcement_count INTEGER DEFAULT 0,
+      last_reinforced_at TEXT,
       archived_at TEXT,
       consolidated_into INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -201,6 +205,7 @@ export function createTestDb(): TestDb {
     );
     CREATE INDEX idx_learnings_project ON learnings(project_id);
     CREATE INDEX idx_learnings_category ON learnings(category);
+    CREATE INDEX idx_learnings_stage ON learnings(stage);
 
     -- Focus (working memory)
     CREATE TABLE focus (

@@ -37,6 +37,7 @@ interface RecallSearchResult {
   title: string;
   content: string | null;
   confidence: number;
+  stage?: string;
 }
 
 interface RecallResult {
@@ -45,6 +46,8 @@ interface RecallResult {
   results: RecallSearchResult[];
   relatedFiles: Array<{ path: string; reason: string; similarity: number }>;
   warnings: string[];
+  /** Serialized result IDs for retrieval feedback tracking */
+  resultIds: string | null;
 }
 
 // ============================================================================
@@ -74,6 +77,7 @@ export async function recall(
     results: [],
     relatedFiles: [],
     warnings: ["Provide files, query, or task"],
+    resultIds: null,
   };
 }
 
@@ -106,12 +110,19 @@ async function recallFiles(
   const ambient = await detectAmbientWarnings(db, projectId, files);
   warnings.push(...ambient);
 
+  // Collect result IDs for retrieval feedback
+  const ids = fileResults
+    .map((f) => `file:${f.path}`)
+    .concat(fileResults.flatMap((f) => f.decisions.map((d) => `decision:${d.id}`)))
+    .concat(fileResults.flatMap((f) => f.issues.map((i) => `issue:${i.id}`)));
+
   return {
     mode: "files",
     files: fileResults,
     results: [],
     relatedFiles: [],
     warnings,
+    resultIds: ids.length > 0 ? JSON.stringify(ids) : null,
   };
 }
 
@@ -267,17 +278,25 @@ async function recallSearch(
     const key = `${r.type}:${r.id}`;
     if (!seen.has(key)) {
       seen.add(key);
-      // Boost if also found in vector
       merged.push(r);
     }
   }
 
+  // Apply retrieval boosts from feedback loop
+  const boosts = await getRetrievalBoostsIfAvailable(db, projectId);
+  const boosted = applyBoostsAndStageRanking(merged, boosts);
+  const final = boosted.slice(0, 15);
+
+  // Collect result IDs for feedback tracking
+  const ids = final.map((r) => `${r.type}:${r.id}`);
+
   return {
     mode: "search",
     files: [],
-    results: merged.slice(0, 15),
+    results: final,
     relatedFiles: [],
-    warnings: merged.length === 0 ? ["No results found"] : [],
+    warnings: final.length === 0 ? ["No results found"] : [],
+    resultIds: ids.length > 0 ? JSON.stringify(ids) : null,
   };
 }
 
@@ -301,10 +320,11 @@ async function searchFts(
       [escapedQuery, projectId],
     ).catch(() => []),
 
-    db.all<{ id: number; title: string; content: string; confidence: number }>(
-      `SELECT l.id, l.title, l.content, l.confidence FROM fts_learnings
+    db.all<{ id: number; title: string; content: string; confidence: number; stage: string | null }>(
+      `SELECT l.id, l.title, l.content, l.confidence, l.stage FROM fts_learnings
        JOIN learnings l ON fts_learnings.rowid = l.id
        WHERE fts_learnings MATCH ?1 AND (l.project_id = ?2 OR l.project_id IS NULL)
+       AND COALESCE(l.stage, 'validated') != 'archived'
        ORDER BY bm25(fts_learnings) LIMIT 5`,
       [escapedQuery, projectId],
     ).catch(() => []),
@@ -330,7 +350,14 @@ async function searchFts(
     results.push({ type: "decision", id: d.id, title: d.title, content: d.decision, confidence: 0.7 });
   }
   for (const l of learnings) {
-    results.push({ type: "learning", id: l.id, title: l.title, content: l.content, confidence: l.confidence / 10 });
+    results.push({
+      type: "learning",
+      id: l.id,
+      title: l.title,
+      content: l.content,
+      confidence: l.confidence / 10,
+      stage: (l as { stage?: string | null }).stage ?? "validated",
+    });
   }
   for (const i of issues) {
     results.push({ type: "issue", id: i.id, title: i.title, content: null, confidence: i.severity / 10 });
@@ -420,12 +447,25 @@ async function recallPlan(
     }
   }
 
+  // Apply boosts and stage ranking
+  const boosts = await getRetrievalBoostsIfAvailable(db, projectId);
+  const boosted = applyBoostsAndStageRanking(results, boosts);
+  const finalResults = boosted.slice(0, 15);
+  const relatedFiles = [...vectorFileResults, ...cochangers].slice(0, 10);
+
+  // Collect result IDs for feedback tracking
+  const ids = [
+    ...finalResults.map((r) => `${r.type}:${r.id}`),
+    ...relatedFiles.map((f) => `file:${f.path}`),
+  ];
+
   return {
     mode: "plan",
     files: [],
-    results: results.slice(0, 15),
-    relatedFiles: [...vectorFileResults, ...cochangers].slice(0, 10),
+    results: finalResults,
+    relatedFiles,
     warnings: [],
+    resultIds: ids.length > 0 ? JSON.stringify(ids) : null,
   };
 }
 
@@ -528,14 +568,13 @@ async function detectAmbientWarnings(
         [projectId, ...files.map((f) => `%${f}%`)],
       ).catch(() => []),
 
-      // Decisions that haven't been reviewed and affect these files
-      db.all<{ title: string; sessions_since: number }>(
-        `SELECT title, sessions_since FROM decisions
+      // Decisions with content_hash_snapshot that may have drifted
+      db.all<{ id: number; title: string; content_hash_snapshot: string }>(
+        `SELECT id, title, content_hash_snapshot FROM decisions
          WHERE project_id = ? AND status = 'active'
-         AND outcome_status = 'pending'
-         AND sessions_since >= check_after_sessions
+         AND content_hash_snapshot IS NOT NULL
          AND (${files.map(() => "affects LIKE ?").join(" OR ")})
-         LIMIT 3`,
+         LIMIT 5`,
         [projectId, ...files.map((f) => `%${f}%`)],
       ).catch(() => []),
     ]);
@@ -549,13 +588,80 @@ async function detectAmbientWarnings(
     }
 
     for (const dec of driftedDecisions) {
-      warnings.push(`DECISION REVIEW DUE: "${dec.title}" — ${dec.sessions_since} sessions without review`);
+      if (await hasDecisionDrifted(db, projectId, dec.content_hash_snapshot)) {
+        warnings.push(`DECISION POSSIBLY DRIFTED: "${dec.title}" — affected files have changed since decision was made`);
+      }
     }
   } catch {
     // Non-critical — don't break recall
   }
 
   return warnings;
+}
+
+// ============================================================================
+// Decision Drift Detection
+// ============================================================================
+
+/** Check if any files in a decision's hash snapshot have changed */
+async function hasDecisionDrifted(
+  db: DatabaseAdapter,
+  projectId: number,
+  snapshotJson: string,
+): Promise<boolean> {
+  try {
+    const snapshot = JSON.parse(snapshotJson) as Record<string, string>;
+    for (const [filePath, storedHash] of Object.entries(snapshot)) {
+      const file = await db.get<{ content_hash: string | null }>(
+        `SELECT content_hash FROM files WHERE project_id = ? AND path = ?`,
+        [projectId, filePath],
+      );
+      if (file?.content_hash && file.content_hash !== storedHash) return true;
+    }
+  } catch {
+    // Malformed snapshot — skip
+  }
+  return false;
+}
+
+// ============================================================================
+// Retrieval Boost + Stage Ranking
+// ============================================================================
+
+const STAGE_WEIGHTS: Record<string, number> = {
+  foundational: 0.4,
+  established: 0.2,
+  validated: 0,
+  draft: -0.1,
+};
+
+/** Safely load retrieval boosts — returns empty map on failure */
+async function getRetrievalBoostsIfAvailable(
+  db: DatabaseAdapter,
+  projectId: number,
+): Promise<Map<string, number>> {
+  try {
+    const { getRetrievalBoosts } = await import("../intelligence/retrieval-feedback.js");
+    return await getRetrievalBoosts(db, projectId);
+  } catch {
+    return new Map();
+  }
+}
+
+/** Apply retrieval boosts and learning stage ranking to search results */
+function applyBoostsAndStageRanking(
+  results: RecallSearchResult[],
+  boosts: Map<string, number>,
+): RecallSearchResult[] {
+  return [...results].sort((a, b) => {
+    const aBoost = boosts.get(`${a.type}:${a.id}`) ?? 0;
+    const bBoost = boosts.get(`${b.type}:${b.id}`) ?? 0;
+    const aStage = a.stage ? (STAGE_WEIGHTS[a.stage] ?? 0) : 0;
+    const bStage = b.stage ? (STAGE_WEIGHTS[b.stage] ?? 0) : 0;
+    const aScore = a.confidence + aBoost + aStage;
+    const bScore = b.confidence + bBoost + bStage;
+    return bScore - aScore;
+  });
 }
 
 function escapeFtsQuery(query: string): string {

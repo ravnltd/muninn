@@ -19,6 +19,32 @@ import type { DatabaseAdapter } from "../database/adapter.js";
 import { silentCatch } from "../utils/silent-catch.js";
 
 // ============================================================================
+// File Hash Snapshot
+// ============================================================================
+
+/** Snapshot content hashes of files for decision drift detection */
+async function snapshotFileHashes(
+  db: DatabaseAdapter,
+  projectId: number,
+  files: string[],
+): Promise<string | null> {
+  const snapshot: Record<string, string> = {};
+
+  for (const filePath of files) {
+    const file = await db.get<{ content_hash: string | null }>(
+      `SELECT content_hash FROM files WHERE project_id = ? AND path = ?`,
+      [projectId, filePath],
+    ).catch(() => null);
+
+    if (file?.content_hash) {
+      snapshot[filePath] = file.content_hash;
+    }
+  }
+
+  return Object.keys(snapshot).length > 0 ? JSON.stringify(snapshot) : null;
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -223,10 +249,22 @@ export async function remember(
   let id: number;
 
   if (type === "decision") {
+    // Snapshot content hashes of affected files for drift detection
+    const hashSnapshot = input.files
+      ? await snapshotFileHashes(db, projectId, input.files)
+      : null;
+
     const result = await db.run(
-      `INSERT INTO decisions (project_id, title, decision, reasoning, affects, status, created_at)
-       VALUES (?, ?, ?, ?, ?, 'active', datetime('now'))`,
-      [projectId, title, content, content, input.files ? JSON.stringify(input.files) : null],
+      `INSERT INTO decisions (project_id, title, decision, reasoning, affects, content_hash_snapshot, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'))`,
+      [
+        projectId,
+        title,
+        content,
+        content,
+        input.files ? JSON.stringify(input.files) : null,
+        hashSnapshot,
+      ],
     );
     id = Number(result.lastInsertRowid ?? 0);
 
@@ -242,8 +280,8 @@ export async function remember(
   } else {
     const category = detectCategory(content);
     const result = await db.run(
-      `INSERT INTO learnings (project_id, category, title, content, context, source, confidence, created_at)
-       VALUES (?, ?, ?, ?, ?, 'manual', 7, datetime('now'))`,
+      `INSERT INTO learnings (project_id, category, title, content, context, source, confidence, stage, created_at)
+       VALUES (?, ?, ?, ?, ?, 'manual', 7, 'validated', datetime('now'))`,
       [projectId, category, title, content, input.files ? JSON.stringify(input.files) : null],
     );
     id = Number(result.lastInsertRowid ?? 0);
