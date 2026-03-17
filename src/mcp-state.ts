@@ -143,16 +143,45 @@ export function setCachedBudgetOverrides(overrides: typeof cachedBudgetOverrides
 // Exception Classification
 // ============================================================================
 
-/** Exceptions that don't count toward the crash threshold.
- *  Broadly classify to avoid killing the server over transient errors.
- *  The server should only die for truly systemic failures. */
-export function isExpectedException(error: Error): boolean {
+// Track degraded-state exceptions for restart decisions
+let degradedExceptionCount = 0;
+let lastSuccessfulOperation = Date.now();
+const DEGRADED_RESTART_THRESHOLD = 10;
+const DEGRADED_RESTART_WINDOW_MS = 60_000;
+
+export function recordSuccessfulOperation(): void {
+  degradedExceptionCount = 0;
+  lastSuccessfulOperation = Date.now();
+}
+
+export function checkDegradedRestart(): boolean {
+  return degradedExceptionCount >= DEGRADED_RESTART_THRESHOLD &&
+    Date.now() - lastSuccessfulOperation > DEGRADED_RESTART_WINDOW_MS;
+}
+
+/**
+ * Benign exceptions: validation, user errors, not-found.
+ * These don't count toward any threshold.
+ */
+export function isBenignException(error: Error): boolean {
   const msg = error.message.toLowerCase();
   return msg.includes("validation") ||
     msg.includes("invalid params") ||
     msg.includes("not found") ||
-    msg.includes("circuit breaker open") ||
     msg.includes("must be called before") ||
+    msg.includes("unknown tool") ||
+    msg.includes("empty command");
+}
+
+/**
+ * Degraded exceptions: network, timeout, circuit breaker.
+ * These indicate transient infrastructure issues.
+ * Tracked separately — too many without recovery triggers restart.
+ */
+export function isDegradedException(error: Error): boolean {
+  const msg = error.message.toLowerCase();
+  return msg.includes("circuit breaker") ||
+    msg.includes("temporarily unavailable") ||
     msg.includes("timeout") ||
     msg.includes("abort") ||
     msg.includes("econnrefused") ||
@@ -160,14 +189,17 @@ export function isExpectedException(error: Error): boolean {
     msg.includes("epipe") ||
     msg.includes("fetch failed") ||
     msg.includes("network") ||
-    msg.includes("socket") ||
-    msg.includes("sql") ||
-    msg.includes("sqlite") ||
-    msg.includes("no such table") ||
-    msg.includes("no such column") ||
-    msg.includes("database") ||
-    msg.includes("busy") ||
-    msg.includes("locked");
+    msg.includes("socket");
+}
+
+/** Legacy alias — checks if exception is benign OR degraded (not fatal) */
+export function isExpectedException(error: Error): boolean {
+  if (isBenignException(error)) return true;
+  if (isDegradedException(error)) {
+    degradedExceptionCount++;
+    return true;
+  }
+  return false;
 }
 
 // ============================================================================
@@ -226,36 +258,10 @@ export async function getProjectId(db: DatabaseAdapter, cwd: string): Promise<nu
 
 export const ALLOWED_PASSTHROUGH_COMMANDS = new Set([
   "status",
-  "fragile",
-  "brief",
-  "resume",
-  "outcome",
-  "insights",
-  "bookmark",
-  "bm",
-  "focus",
-  "observe",
-  "obs",
-  "debt",
-  "pattern",
-  "stack",
-  "temporal",
-  "profile",
-  "workflow",
-  "wf",
-  "foundational",
-  "correlations",
-  "git-info",
-  "sync-hashes",
-  "drift",
-  "conflicts",
-  "deps",
-  "blast",
+  "reindex",
   "db",
-  "smart-status",
-  "ss",
-  "ingest",
-  "install-hook",
+  "fragile",
+  "outcome",
 ]);
 
 /**

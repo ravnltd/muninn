@@ -44,7 +44,7 @@ export function registerWriteRoutes(app: Hono, deps: WriteRouteDeps, writeRateLi
       return c.json({ id: Number(insertResult.lastInsertRowid), message: "Issue created" }, 201);
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return c.json({ error: "Validation failed", details: e.errors }, 400);
+        return c.json({ error: "Validation failed", details: e.issues }, 400);
       }
       console.error("API Error:", e);
       return c.json({ error: "Internal server error" }, 500);
@@ -80,7 +80,7 @@ export function registerWriteRoutes(app: Hono, deps: WriteRouteDeps, writeRateLi
       return c.json({ message: "Issue resolved" });
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return c.json({ error: "Validation failed", details: e.errors }, 400);
+        return c.json({ error: "Validation failed", details: e.issues }, 400);
       }
       console.error("API Error:", e);
       return c.json({ error: "Internal server error" }, 500);
@@ -108,7 +108,7 @@ export function registerWriteRoutes(app: Hono, deps: WriteRouteDeps, writeRateLi
       return c.json({ id: Number(insertResult.lastInsertRowid), message: "Decision created" }, 201);
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return c.json({ error: "Validation failed", details: e.errors }, 400);
+        return c.json({ error: "Validation failed", details: e.issues }, 400);
       }
       console.error("API Error:", e);
       return c.json({ error: "Internal server error" }, 500);
@@ -136,7 +136,7 @@ export function registerWriteRoutes(app: Hono, deps: WriteRouteDeps, writeRateLi
       return c.json({ id: Number(insertResult.lastInsertRowid), message: "Learning created" }, 201);
     } catch (e) {
       if (e instanceof z.ZodError) {
-        return c.json({ error: "Validation failed", details: e.errors }, 400);
+        return c.json({ error: "Validation failed", details: e.issues }, 400);
       }
       console.error("API Error:", e);
       return c.json({ error: "Internal server error" }, 500);

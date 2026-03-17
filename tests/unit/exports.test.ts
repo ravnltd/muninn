@@ -14,25 +14,12 @@ describe("Export Snapshots", () => {
     expect(MIGRATIONS[43].version).toBe(44);
   });
 
-  test("TOOL_DEFINITIONS array has 17 tools", async () => {
+  test("TOOL_DEFINITIONS array has 4 tools", async () => {
     const { TOOL_DEFINITIONS } = await import("../../src/mcp-tool-definitions");
-    expect(TOOL_DEFINITIONS).toHaveLength(17);
+    expect(TOOL_DEFINITIONS).toHaveLength(4);
 
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toEqual([
-      "muninn_query",
-      "muninn_check",
-      "muninn_file_add",
-      "muninn_decision_add",
-      "muninn_learn_add",
-      "muninn_issue",
-      "muninn_session",
-      "muninn_predict",
-      "muninn_suggest",
-      "muninn_enrich",
-      "muninn_approve",
-      "muninn_context",
-      "muninn_intent",
       "recall",
       "remember",
       "track",
@@ -40,7 +27,7 @@ describe("Export Snapshots", () => {
     ]);
   });
 
-  test("mcp-state.ts exports 28 named symbols", async () => {
+  test("mcp-state.ts exports expected symbols", async () => {
     const mod = await import("../../src/mcp-state");
     const exports = Object.keys(mod).sort();
     expect(exports).toEqual([
@@ -49,6 +36,7 @@ describe("Export Snapshots", () => {
       "MAX_EXCEPTIONS_IN_WINDOW",
       "WORKER_SPAWN_COOLDOWN_MS",
       "buildCalibratedContext",
+      "checkDegradedRestart",
       "getBudgetWeightsLoaded",
       "getCachedBudgetOverrides",
       "getCachedBudgetWeights",
@@ -63,8 +51,11 @@ describe("Export Snapshots", () => {
       "getSessionAutoStarted",
       "getSessionState",
       "getTaskAnalyzed",
+      "isBenignException",
+      "isDegradedException",
       "isExpectedException",
       "parseCommandArgs",
+      "recordSuccessfulOperation",
       "setBudgetWeightsLoaded",
       "setCachedBudgetOverrides",
       "setCachedBudgetWeights",
@@ -76,7 +67,7 @@ describe("Export Snapshots", () => {
       "setSessionAutoStarted",
       "setTaskAnalyzed",
     ]);
-    expect(exports).toHaveLength(31);
+    expect(exports).toHaveLength(35);
   });
 
   test("worker.ts JOB_HANDLERS has 33 keys", async () => {

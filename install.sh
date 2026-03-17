@@ -118,6 +118,27 @@ if git rev-parse --git-dir &> /dev/null; then
     fi
 fi
 
+# Re-register MCP server with Claude Code (idempotent)
+echo ""
+echo "Registering MCP server with Claude Code..."
+if command -v claude &> /dev/null; then
+    # Remove old registration (ignore errors if not registered)
+    claude mcp remove muninn 2>/dev/null || true
+
+    # Detect mode from environment or default to local
+    MUNINN_MODE="${MUNINN_MODE:-local}"
+    if [ "$MUNINN_MODE" = "http" ] && [ -n "$MUNINN_PRIMARY_URL" ]; then
+        claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL="$MUNINN_PRIMARY_URL" muninn-mcp
+        echo "✓ MCP registered (http mode: $MUNINN_PRIMARY_URL)"
+    else
+        claude mcp add --scope user muninn -- muninn-mcp
+        echo "✓ MCP registered (local mode)"
+    fi
+else
+    echo "⚠️  Claude Code CLI not found — register MCP manually:"
+    echo "   claude mcp add --scope user muninn -- muninn-mcp"
+fi
+
 # Check if in PATH
 PATH_OK=false
 if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then

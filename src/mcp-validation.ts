@@ -1,8 +1,8 @@
 /**
  * Muninn MCP Server - Input Validation Schemas
  *
- * Zod schemas for validating MCP tool inputs.
- * Rejects shell metacharacters to prevent injection attacks.
+ * v9: NaturalText for recall/remember/track — allows backticks, parens, etc.
+ * Shell metacharacter validation only applies to passthrough args.
  */
 
 import { z } from "zod";
@@ -11,15 +11,10 @@ import { z } from "zod";
 // Security Patterns
 // ============================================================================
 
-/**
- * Characters that are dangerous in shell contexts.
- * These could be used for command injection if passed to a shell.
- */
+/** Shell-dangerous characters — only used for passthrough CLI args */
 const SHELL_DANGEROUS = /[`$(){}|;&<>\\]/;
 
-/**
- * Pattern for path traversal attacks.
- */
+/** Path traversal attacks */
 const PATH_TRAVERSAL = /\.\./;
 
 // ============================================================================
@@ -27,7 +22,7 @@ const PATH_TRAVERSAL = /\.\./;
 // ============================================================================
 
 /**
- * Safe port number (1-65535).
+ * Safe port number (1-65535). Used by CLI and web server.
  */
 export const SafePort = z.coerce
   .number()
@@ -37,7 +32,7 @@ export const SafePort = z.coerce
 
 /**
  * Safe passthrough argument that rejects shell metacharacters.
- * Used to validate individual arguments in passthrough commands.
+ * Only used for the muninn passthrough tool.
  */
 export const SafePassthroughArg = z
   .string()
@@ -47,27 +42,37 @@ export const SafePassthroughArg = z
   });
 
 /**
- * Safe text that rejects shell metacharacters.
- * Use for titles, descriptions, queries, etc.
+ * Natural text — allows everything except null bytes.
+ * Used for v9 tools (recall, remember, track) which use parameterized SQL.
+ * Shell injection is impossible — no CLI passthrough involved.
  */
-export const SafeText = z
+export const NaturalText = z
   .string()
   .min(1, "Text cannot be empty")
-  .max(1000, "Text too long (max 1000 chars)")
-  .refine((s) => !SHELL_DANGEROUS.test(s), {
-    message: "Text contains potentially dangerous characters: ` $ ( ) { } | ; & < > \\",
+  .max(10000, "Text too long (max 10000 chars)")
+  .refine((s) => !s.includes("\0"), {
+    message: "Null bytes not allowed",
   });
 
 /**
- * Safe file path that rejects path traversal and shell metacharacters.
- * Decodes URL-encoded strings before checking to prevent bypass attempts.
+ * Natural text for short fields (titles, queries)
+ */
+export const ShortNaturalText = z
+  .string()
+  .min(1, "Text cannot be empty")
+  .max(1000, "Text too long (max 1000 chars)")
+  .refine((s) => !s.includes("\0"), {
+    message: "Null bytes not allowed",
+  });
+
+/**
+ * Safe file path — rejects path traversal but allows natural characters.
  */
 export const SafePath = z
   .string()
   .min(1, "Path cannot be empty")
   .max(500, "Path too long (max 500 chars)")
   .transform((s) => {
-    // Decode URL-encoded characters to prevent bypass via %2e%2e
     try {
       return decodeURIComponent(s);
     } catch {
@@ -76,20 +81,6 @@ export const SafePath = z
   })
   .refine((s) => !PATH_TRAVERSAL.test(s), {
     message: "Path traversal (..) not allowed",
-  })
-  .refine((s) => !SHELL_DANGEROUS.test(s), {
-    message: "Path contains potentially dangerous characters",
-  });
-
-/**
- * Longer content text (for descriptions, learnings, etc.)
- * Still rejects shell metacharacters but allows more length.
- */
-export const ContentText = z
-  .string()
-  .max(10000, "Content too long (max 10000 chars)")
-  .refine((s) => !SHELL_DANGEROUS.test(s), {
-    message: "Content contains potentially dangerous characters",
   });
 
 /**
@@ -110,223 +101,16 @@ export const SafeCwd = z
   .optional();
 
 // ============================================================================
-// Tool-Specific Schemas
+// v9 Tool Schemas — Natural Text
 // ============================================================================
 
 /**
- * muninn_query input validation
- */
-export const QueryInput = z.object({
-  query: SafeText,
-  smart: z.boolean().optional(),
-  vector: z.boolean().optional(),
-  fts: z.boolean().optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_check input validation
- */
-export const CheckInput = z.object({
-  files: z.array(SafePath).min(1, "At least one file required").max(50, "Too many files (max 50)"),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_file_add input validation
- */
-export const FileAddInput = z.object({
-  path: SafePath,
-  purpose: SafeText,
-  fragility: z.number().int().min(1).max(10),
-  fragility_reason: SafeText.optional(),
-  type: z
-    .string()
-    .max(50)
-    .regex(/^[a-z-]+$/, "Type must be lowercase letters and hyphens only")
-    .optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_decision_add input validation
- */
-export const DecisionAddInput = z.object({
-  title: SafeText,
-  decision: ContentText,
-  reasoning: ContentText,
-  affects: z
-    .string()
-    .max(2000)
-    .refine(
-      (s) => {
-        try {
-          const parsed = JSON.parse(s);
-          return Array.isArray(parsed) && parsed.every((p) => typeof p === "string");
-        } catch {
-          return false;
-        }
-      },
-      { message: "affects must be a valid JSON array of strings" }
-    )
-    .optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_learn_add input validation
- */
-export const LearnAddInput = z.object({
-  title: SafeText,
-  content: ContentText,
-  category: z.enum(["pattern", "gotcha", "preference", "convention"]).optional(),
-  context: SafeText.optional(),
-  global: z.boolean().optional(),
-  files: z
-    .string()
-    .max(2000)
-    .refine(
-      (s) => {
-        try {
-          const parsed = JSON.parse(s);
-          return Array.isArray(parsed) && parsed.every((p) => typeof p === "string");
-        } catch {
-          return false;
-        }
-      },
-      { message: "files must be a valid JSON array of strings" }
-    )
-    .optional(),
-  foundational: z.boolean().optional(),
-  reviewAfter: z.number().int().min(1).max(365).optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_issue input validation
- */
-export const IssueInput = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("add"),
-    title: SafeText,
-    description: ContentText.optional(),
-    severity: z.number().int().min(1).max(10).optional(),
-    type: z.enum(["bug", "potential", "security", "performance"]).optional(),
-    cwd: SafeCwd,
-  }),
-  z.object({
-    action: z.literal("resolve"),
-    id: z.number().int().positive(),
-    resolution: SafeText,
-    cwd: SafeCwd,
-  }),
-]);
-
-/**
- * muninn_session input validation
- */
-export const SessionInput = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("start"),
-    goal: SafeText,
-    cwd: SafeCwd,
-  }),
-  z.object({
-    action: z.literal("end"),
-    outcome: SafeText.optional(),
-    next_steps: SafeText.optional(),
-    success: z.number().int().min(0).max(2).optional(),
-    cwd: SafeCwd,
-  }),
-]);
-
-/**
- * muninn_predict input validation
- */
-export const PredictInput = z.object({
-  task: SafeText.optional(),
-  files: z.array(SafePath).max(50).optional(),
-  advise: z.boolean().optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_suggest input validation
- */
-export const SuggestInput = z.object({
-  task: SafeText,
-  limit: z.number().int().min(1).max(100).optional(),
-  includeSymbols: z.boolean().optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_enrich input validation
- */
-export const EnrichInput = z.object({
-  tool: z.enum(["Read", "Edit", "Write", "Bash", "Glob", "Grep"]),
-  input: z.string().max(10000), // JSON string, validated separately
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_approve input validation
- */
-export const ApproveInput = z.object({
-  operationId: z
-    .string()
-    .min(1)
-    .max(100)
-    .regex(/^op_[a-zA-Z0-9]+$/, "Invalid operation ID format (expected op_xxx)"),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_context input validation — v7 Phase 1A
- */
-export const ContextInput = z.object({
-  intent: z.enum(["edit", "read", "debug", "explore", "plan"]),
-  files: z.array(SafePath).max(50).optional(),
-  query: SafeText.optional(),
-  task: SafeText.optional(),
-  cwd: SafeCwd,
-});
-
-/**
- * muninn_intent input validation — v7 Phase 5A
- */
-export const IntentInput = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("declare"),
-    agentId: SafeText.optional(),
-    intentType: z.enum(["edit", "read", "plan", "debug", "test"]).optional(),
-    files: z.array(SafePath).max(50).optional(),
-    description: SafeText.optional(),
-    cwd: SafeCwd,
-  }),
-  z.object({
-    action: z.literal("query"),
-    agentId: SafeText.optional(),
-    cwd: SafeCwd,
-  }),
-  z.object({
-    action: z.literal("release"),
-    agentId: SafeText.optional(),
-    cwd: SafeCwd,
-  }),
-]);
-
-// ============================================================================
-// v9: Ambient Brain Schemas
-// ============================================================================
-
-/**
- * recall input validation — v9
+ * recall input validation
  */
 export const RecallInput = z.object({
   files: z.array(SafePath).max(50).optional(),
-  query: SafeText.optional(),
-  task: SafeText.optional(),
+  query: ShortNaturalText.optional(),
+  task: ShortNaturalText.optional(),
   cwd: SafeCwd,
 }).refine(
   (data) => data.files || data.query || data.task,
@@ -334,23 +118,23 @@ export const RecallInput = z.object({
 );
 
 /**
- * remember input validation — v9
+ * remember input validation
  */
 export const RememberInput = z.object({
-  content: ContentText,
+  content: NaturalText,
   type: z.enum(["decision", "learning"]).optional(),
   files: z.array(SafePath).max(20).optional(),
   cwd: SafeCwd,
 });
 
 /**
- * track input validation — v9
+ * track input validation
  */
 export const TrackInput = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("add"),
-    title: SafeText,
-    description: ContentText.optional(),
+    title: ShortNaturalText,
+    description: NaturalText.optional(),
     severity: z.number().int().min(1).max(10).optional(),
     type: z.enum(["bug", "debt", "security", "performance"]).optional(),
     files: z.array(SafePath).max(20).optional(),
@@ -359,7 +143,7 @@ export const TrackInput = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("resolve"),
     id: z.number().int().positive(),
-    resolution: SafeText,
+    resolution: ShortNaturalText,
     cwd: SafeCwd,
   }),
 ]);
@@ -380,13 +164,13 @@ export const PassthroughInput = z.object({
  * Validate input against a schema and return a formatted error message.
  */
 export function validateInput<T>(
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T>,
   input: unknown
 ): { success: true; data: T } | { success: false; error: string } {
   const result = schema.safeParse(input);
   if (result.success) {
     return { success: true, data: result.data };
   }
-  const errors = result.error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
+  const errors = result.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
   return { success: false, error: `Validation failed: ${errors}` };
 }

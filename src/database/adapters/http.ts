@@ -103,9 +103,10 @@ export class HttpAdapter implements DatabaseAdapter {
   private _circuitOpens = 0; // consecutive opens for exponential backoff
   private _lastCircuitOpenAt = 0; // when circuit last opened (for backoff reset)
   private readonly CIRCUIT_FAILURE_THRESHOLD = 5;
-  private readonly CIRCUIT_BASE_MS = 30_000; // 30s base cooldown
-  private readonly CIRCUIT_MAX_MS = 300_000; // 5min max cooldown
-  private readonly CIRCUIT_RESET_OPENS_MS = 60_000; // reset opens counter after 60s success
+  private readonly CIRCUIT_BASE_MS = 5_000; // 5s base cooldown (was 30s)
+  private readonly CIRCUIT_MAX_MS = 60_000; // 60s max cooldown (was 5min)
+  private readonly CIRCUIT_RESET_OPENS_MS = 30_000; // reset opens counter after 30s success
+  private readonly STALE_CACHE_TTL = 300_000; // 5min stale cache during circuit-open
 
   // In-memory LRU cache for read queries
   private cache = new Map<string, { data: unknown; expiry: number; lastAccess: number }>();
@@ -125,20 +126,37 @@ export class HttpAdapter implements DatabaseAdapter {
 
   /**
    * Get from cache if valid. Returns { hit: true, data } or { hit: false }
+   * When allowStale is true, returns expired cache entries (for circuit-open fallback)
    */
-  private getFromCache<T>(key: string): { hit: true; data: T } | { hit: false } {
+  private getFromCache<T>(key: string, allowStale = false): { hit: true; data: T; stale: boolean } | { hit: false } {
     const cached = this.cache.get(key);
     if (!cached) return { hit: false };
 
     const now = Date.now();
-    if (now >= cached.expiry) {
+    const isExpired = now >= cached.expiry;
+
+    if (isExpired && !allowStale) {
+      this.cache.delete(key);
+      return { hit: false };
+    }
+
+    // Even stale data has a max TTL
+    if (isExpired && now >= cached.expiry + this.STALE_CACHE_TTL) {
       this.cache.delete(key);
       return { hit: false };
     }
 
     // Update last access for LRU
     cached.lastAccess = now;
-    return { hit: true, data: cached.data as T };
+    return { hit: true, data: cached.data as T, stale: isExpired };
+  }
+
+  /**
+   * Check if circuit breaker is currently open.
+   * Used by keepalive to switch to recovery probing.
+   */
+  isCircuitOpen(): boolean {
+    return this._circuitState === "open";
   }
 
   /**
@@ -486,11 +504,24 @@ export class HttpAdapter implements DatabaseAdapter {
   async get<T = any>(sql: string, params?: any[]): Promise<T | null> {
     this.ensureInitialized();
 
-    // Check cache first
+    // Check cache first (fresh)
     const cacheKey = this.getCacheKey(sql, params);
     const cached = this.getFromCache<T | null>(cacheKey);
-    if (cached.hit) {
+    if (cached.hit && !cached.stale) {
       return cached.data;
+    }
+
+    // If circuit is open, serve stale cache instead of throwing
+    if (this._circuitState === "open" && Date.now() < this._circuitOpenUntil) {
+      const stale = this.getFromCache<T | null>(cacheKey, true);
+      if (stale.hit) {
+        return stale.data;
+      }
+      // No stale cache available — throw a recoverable message
+      throw new Error(
+        "Memory temporarily unavailable — will recover automatically. " +
+        `Retry in ${Math.ceil((this._circuitOpenUntil - Date.now()) / 1000)}s.`
+      );
     }
 
     const args = params?.map((p) => this.toHranaValue(p));
@@ -504,7 +535,6 @@ export class HttpAdapter implements DatabaseAdapter {
 
     const result = response.results[0]?.response?.result;
     if (!result || result.rows.length === 0) {
-      // Cache null results too (query returned no rows)
       this.setCache(cacheKey, null);
       return null;
     }
@@ -518,11 +548,23 @@ export class HttpAdapter implements DatabaseAdapter {
   async all<T = any>(sql: string, params?: any[]): Promise<T[]> {
     this.ensureInitialized();
 
-    // Check cache first
+    // Check cache first (fresh)
     const cacheKey = this.getCacheKey(sql, params);
     const cached = this.getFromCache<T[]>(cacheKey);
-    if (cached.hit) {
+    if (cached.hit && !cached.stale) {
       return cached.data;
+    }
+
+    // If circuit is open, serve stale cache instead of throwing
+    if (this._circuitState === "open" && Date.now() < this._circuitOpenUntil) {
+      const stale = this.getFromCache<T[]>(cacheKey, true);
+      if (stale.hit) {
+        return stale.data;
+      }
+      throw new Error(
+        "Memory temporarily unavailable — will recover automatically. " +
+        `Retry in ${Math.ceil((this._circuitOpenUntil - Date.now()) / 1000)}s.`
+      );
     }
 
     const args = params?.map((p) => this.toHranaValue(p));

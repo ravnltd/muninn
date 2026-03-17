@@ -86,19 +86,10 @@ try {
 // 2. Merge hook registrations into settings.json
 // ---------------------------------------------------------------------------
 
-/** Hook definitions that Muninn registers with Claude Code */
+/** Hook definitions that Muninn registers with Claude Code.
+ *  v9: Removed enforce-check.sh (PreToolUse) and user-prompt-context.sh (UserPromptSubmit).
+ *  Zero ceremony — no edit blocking, no workflow enforcement. */
 const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>> = {
-  PreToolUse: [
-    {
-      matcher: 'tool == "Edit" || tool == "Write"',
-      hooks: [
-        {
-          type: "command",
-          command: "~/.claude/hooks/context-integration/enforce-check.sh",
-        },
-      ],
-    },
-  ],
   PostToolUse: [
     {
       matcher: 'tool == "Edit" || tool == "Write"',
@@ -132,18 +123,10 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
       ],
     },
   ],
-  UserPromptSubmit: [
-    {
-      matcher: "*",
-      hooks: [
-        {
-          type: "command",
-          command: "~/.claude/hooks/context-integration/user-prompt-context.sh",
-        },
-      ],
-    },
-  ],
 }
+
+/** Hook types that were removed in v9 — clean up from settings.json */
+const REMOVED_HOOK_TYPES = ["PreToolUse", "UserPromptSubmit"]
 
 /** Check if a hook group contains a context-integration command */
 function isMuninnHookGroup(group: { hooks?: Array<{ command?: string }> }): boolean {
@@ -172,6 +155,19 @@ if (existsSync(SETTINGS)) {
 // Ensure hooks object exists
 const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>
 settings.hooks = hooks
+
+// Clean up hook types removed in v9 (only remove muninn entries, keep user entries)
+for (const removedType of REMOVED_HOOK_TYPES) {
+  const existing = (hooks[removedType] ?? []) as Array<{ hooks?: Array<{ command?: string }> }>
+  const filtered = existing.filter((group) => !isMuninnHookGroup(group))
+  if (filtered.length === 0) {
+    delete hooks[removedType]
+    console.log(`  Removed v8 hook type: ${removedType}`)
+  } else {
+    hooks[removedType] = filtered
+    console.log(`  Cleaned muninn entries from ${removedType} (kept ${filtered.length} user hook(s))`)
+  }
+}
 
 // For each hook type: remove old muninn entries, append fresh ones
 for (const [type, muninnEntries] of Object.entries(MUNINN_HOOKS)) {

@@ -1,18 +1,10 @@
 #!/usr/bin/env bun
 
 /**
- * Muninn — MCP Server v4 (In-Process)
+ * Muninn — MCP Server v9 (Simplified)
  *
- * Calls core functions directly instead of spawning CLI processes.
- * Eliminates ~55 HTTP round-trips of overhead per tool call.
- *
- * Hybrid tool approach:
- * - 11 core tools with full schemas (frequently used, benefit from validation)
- * - 1 passthrough tool for whitelisted commands (saves ~8k tokens)
- *
- * Security:
- * - Input validation via Zod schemas
- * - Command whitelist for passthrough tool
+ * 4 tools: recall, remember, track, muninn
+ * Zero ceremony. Clean hot path: DB init -> validate -> dispatch -> return.
  *
  * Split into:
  * - mcp-state.ts — Shared mutable state, getters/setters, helpers
@@ -29,19 +21,6 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
-  QueryInput,
-  CheckInput,
-  FileAddInput,
-  DecisionAddInput,
-  LearnAddInput,
-  IssueInput,
-  SessionInput,
-  PredictInput,
-  SuggestInput,
-  EnrichInput,
-  ApproveInput,
-  ContextInput,
-  IntentInput,
   RecallInput,
   RememberInput,
   TrackInput,
@@ -50,38 +29,8 @@ import {
   validateInput,
 } from "./mcp-validation.js";
 import { createToolCallTimer } from "./ingestion/tool-logger.js";
-import { queueFileUpdate } from "./ingestion/auto-file-update.js";
-import { detectErrors, recordErrors } from "./ingestion/error-detector.js";
-import { getActiveSessionId } from "./commands/session-tracking.js";
-import { analyzeTask, getTaskContext, setTaskContext } from "./context/task-analyzer.js";
+import { normalizePaths } from "./utils/paths.js";
 import {
-  recordToolCall,
-  checkAndUpdateFocus,
-  shouldRefreshContext,
-  recordFileAccess,
-  resetQuality,
-  setContextFiles,
-} from "./context/shifter.js";
-import { warmCache } from "./context/embedding-cache.js";
-import { onShutdown, installSignalHandlers, shutdown } from "./utils/shutdown.js";
-import { safeInterval } from "./utils/timers.js";
-import { normalizePath, normalizePaths } from "./utils/paths.js";
-import {
-  handleQuery,
-  handleCheck,
-  handleFileAdd,
-  handleDecisionAdd,
-  handleLearnAdd,
-  handleIssueAdd,
-  handleIssueResolve,
-  handleSessionStart,
-  handleSessionEnd,
-  handlePredict,
-  handleSuggest,
-  handleEnrich,
-  handleApprove,
-  handleContext,
-  handleIntent,
   handleRecall,
   handleRemember,
   handleTrack,
@@ -89,12 +38,12 @@ import {
 } from "./mcp-handlers.js";
 import { createLogger } from "./lib/logger.js";
 import { silentCatch } from "./utils/silent-catch.js";
+import { runBackground } from "./utils/background-tasks.js";
+import { onShutdown, installSignalHandlers, shutdown } from "./utils/shutdown.js";
 
-// --- Extracted modules ---
 import {
   getDb,
   getProjectId,
-  getSessionState,
   getDbAdapter,
   getConsecutiveKeepaliveFailures,
   setConsecutiveKeepaliveFailures,
@@ -104,17 +53,10 @@ import {
   EXCEPTION_WINDOW_MS,
   MAX_EXCEPTIONS_IN_WINDOW,
   isExpectedException,
+  recordSuccessfulOperation,
+  checkDegradedRestart,
   getSessionAutoStarted,
   setSessionAutoStarted,
-  getTaskAnalyzed,
-  setTaskAnalyzed,
-  getEmbeddingCacheWarmed,
-  setEmbeddingCacheWarmed,
-  getBudgetWeightsLoaded,
-  setBudgetWeightsLoaded,
-  setCachedBudgetWeights,
-  setCachedBudgetOverrides,
-  buildCalibratedContext,
   ALLOWED_PASSTHROUGH_COMMANDS,
   parseCommandArgs,
 } from "./mcp-state.js";
@@ -125,82 +67,16 @@ import { autoStartSession, autoEndSession, spawnWorkerIfNeeded } from "./mcp-lif
 const log = createLogger("mcp-server");
 
 // ============================================================================
-// v8: Unified Analysis + Intelligence Collection
-// ============================================================================
-
-/** Cached intelligence signals for the current session */
-let cachedStrategies: Array<{ name: string; description: string; successRate: number; timesUsed: number }> = [];
-
-/**
- * Run task analysis then collect intelligence signals in parallel.
- * Strategies flow into buildCalibratedContext, dynamic budget
- * adjustments apply via intelligence signals.
- */
-async function analyzeAndEnhance(
-  db: import("./database/adapter").DatabaseAdapter,
-  projectId: number,
-  name: string,
-  typedArgs: Record<string, unknown>,
-  cwd: string,
-): Promise<void> {
-  const ctx = await analyzeTask(db, projectId, name, typedArgs);
-  setTaskContext(ctx);
-
-  // Persist task_type to session row (fire-and-forget, first-write-wins)
-  if (ctx.taskType !== "unknown") {
-    getActiveSessionId(db, projectId)
-      .then((sid) => {
-        if (sid) db.run(
-          "UPDATE sessions SET task_type = ? WHERE id = ? AND task_type IS NULL",
-          [ctx.taskType, sid],
-        ).catch(silentCatch("mcp:session-task-type-update"));
-      })
-      .catch(silentCatch("mcp:session-id-lookup"));
-  }
-
-  // Track context files for quality monitoring
-  setContextFiles(ctx.relevantFiles.map((f) => f.path));
-
-  // v8: Collect intelligence signals (strategies, impact, trajectory, etc.)
-  try {
-    const { getRecentToolNames } = await import("./context/shifter.js");
-    const { collectIntelligence } = await import("./context/intelligence-collector.js");
-    const { computeDynamicBudget } = await import("./context/dynamic-budget.js");
-
-    const recentTools = getRecentToolNames();
-    const keywords = ctx.relevantLearnings.map((l) => l.title).slice(0, 5);
-    const signals = await collectIntelligence(db, projectId, keywords, recentTools);
-
-    // Cache strategies for context output (Loop 1)
-    if (signals.strategies.length > 0) {
-      cachedStrategies = signals.strategies;
-    }
-
-    // Apply dynamic budget (Loops 3, 4, 5, 7)
-    const dynamicAlloc = computeDynamicBudget(signals, signals.budgetOverrides, signals.impactStats);
-    setCachedBudgetOverrides(dynamicAlloc);
-  } catch (e) {
-    silentCatch("mcp:intelligence-collect")(e);
-  }
-
-  // Build and cache context output with strategies (Loop 1)
-  const output = buildCalibratedContext(ctx, 800, cachedStrategies);
-  if (output) {
-    getSessionState(cwd)?.writeContext(output);
-  }
-}
-
-// ============================================================================
 // Server Instance
 // ============================================================================
 
 const server = new Server(
-  { name: "muninn", version: "8.0.0" },
+  { name: "muninn", version: "9.0.0" },
   { capabilities: { tools: {}, resources: {} } }
 );
 
 // ============================================================================
-// Tool Definitions - 11 Core + 1 Passthrough
+// Tool Definitions — 4 tools
 // ============================================================================
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -208,7 +84,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // ============================================================================
-// Tool Handlers — In-Process
+// Tool Handler — Clean hot path
 // ============================================================================
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -218,7 +94,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   log.debug(`Tool: ${name}`, { tool: name, args });
 
-  // --- v4: Timer created early so catch block can access it ---
   let timer: ReturnType<typeof createToolCallTimer> | null = null;
 
   try {
@@ -226,240 +101,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const db = await getDb();
     const projectId = await getProjectId(db, cwd);
 
-    // --- v4: Tool call timer (fire-and-forget logging) ---
+    // Tool call timer (fire-and-forget logging)
     timer = createToolCallTimer(db, projectId, name, typedArgs);
 
-    // --- v4 Phase 3: Context shifter — track tool calls for focus detection ---
-    recordToolCall(name, typedArgs);
-
-    // --- v5: Track file accesses for context quality ---
-    const fileFields = ["path", "file_path"];
-    for (const field of fileFields) {
-      const val = typedArgs[field];
-      if (typeof val === "string") recordFileAccess(val);
-    }
-
-    // --- v8: Unified analysis + intelligence collection ---
-    // Combines task analysis, intelligence gathering, and dynamic budget allocation
-    const taskAnalyzed = getTaskAnalyzed();
-    const needsAnalysis = (!taskAnalyzed && name !== "muninn_session") || shouldRefreshContext();
-    if (needsAnalysis) {
-      const isRefresh = taskAnalyzed;
-      setTaskAnalyzed(true);
-      if (isRefresh) resetQuality();
-      try {
-        analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(silentCatch("mcp:analyze-enhance"));
-      } catch (e) { silentCatch("mcp:analyze-enhance-sync")(e); }
-    }
-
-    // --- v4 Phase 3: Context shifter — auto-update focus if topic shifted ---
-    try {
-      checkAndUpdateFocus(db, projectId)
-        .then((shifted) => {
-          if (shifted) {
-            resetQuality();
-            try {
-              analyzeAndEnhance(db, projectId, name, typedArgs, cwd).catch(silentCatch("mcp:analyze-enhance-shift"));
-            } catch (e) { silentCatch("mcp:analyze-enhance-shift-sync")(e); }
-          }
-        })
-        .catch(silentCatch("mcp:focus-update"));
-    } catch (e) { silentCatch("mcp:focus-update-sync")(e); }
-
-    // --- v8: Trajectory-driven context refresh (uses intelligence collector) ---
-    try {
-      const { getRecentToolNames } = await import("./context/shifter.js");
-      const recentTools = getRecentToolNames();
-      if (recentTools.length >= 5) {
-        const { analyzeTrajectory } = await import("./context/trajectory-analyzer.js");
-        const callData = recentTools.map((t) => ({ toolName: t, files: [] }));
-        const trajectory = analyzeTrajectory(callData);
-        if ((trajectory.pattern === "stuck" || trajectory.pattern === "failing") &&
-            trajectory.confidence > 0.6 && !shouldRefreshContext()) {
-          resetQuality();
-        }
-      }
-    } catch (e) { silentCatch("mcp:trajectory-refresh")(e); }
-
-    // --- v4: Session auto-start on first tool call ---
+    // Session auto-start on first tool call
     if (!getSessionAutoStarted()) {
       setSessionAutoStarted(true);
-      const state = getSessionState(cwd);
-      state?.clear();
-      // Check if project has any file knowledge — skip enforcement for new projects
-      const fileCount = await db.get<{ cnt: number }>(
-        "SELECT COUNT(*) as cnt FROM files WHERE project_id = ?",
-        [projectId]
-      );
-      state?.writeDiscoveryFile({ hasFileData: (fileCount?.cnt ?? 0) > 0 });
-      try {
-        autoStartSession(db, projectId).catch(silentCatch("mcp:auto-start-session"));
-      } catch (e) { silentCatch("mcp:auto-start-session-sync")(e); }
-      // Load budget weights and overrides for this session
-      if (!getBudgetWeightsLoaded()) {
-        setBudgetWeightsLoaded(true);
-        try {
-          import("./outcomes/confidence-calibrator.js")
-            .then((mod) => mod.getWeightAdjustments(db, projectId))
-            .then((weights) => { setCachedBudgetWeights(weights); })
-            .catch(silentCatch("mcp:load-budget-weights"));
-        } catch (e) { silentCatch("mcp:load-budget-weights-sync")(e); }
-        try {
-          import("./context/budget-manager.js")
-            .then((mod) => mod.loadBudgetOverrides(db, projectId))
-            .then((overrides) => { setCachedBudgetOverrides(overrides); })
-            .catch(silentCatch("mcp:load-budget-overrides"));
-        } catch (e) { silentCatch("mcp:load-budget-overrides-sync")(e); }
-      }
-      // v5 Phase 3: Warm embedding cache for hybrid semantic retrieval
-      if (!getEmbeddingCacheWarmed()) {
-        setEmbeddingCacheWarmed(true);
-        try {
-          warmCache(db, projectId).catch(silentCatch("mcp:warm-embedding-cache"));
-        } catch (e) { silentCatch("mcp:warm-embedding-cache-sync")(e); }
-      }
+      runBackground("session-auto-start", async () => {
+        await autoStartSession(db, projectId);
+      });
     }
 
     let result: string;
 
     switch (name) {
-      // ========== CORE TOOLS ==========
-
-      case "muninn_query": {
-        const validation = validateInput(QueryInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        result = await handleQuery(db, projectId, validation.data);
-        break;
-      }
-
-      case "muninn_check": {
-        const validation = validateInput(CheckInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        validation.data.files = normalizePaths(cwd, validation.data.files);
-        result = await handleCheck(db, projectId, validation.data.cwd || cwd, validation.data);
-        // Track checked files for enforcement hook
-        getSessionState(cwd)?.markChecked(validation.data.files);
-        break;
-      }
-
-      case "muninn_file_add": {
-        const validation = validateInput(FileAddInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        validation.data.path = normalizePath(cwd, validation.data.path);
-        result = await handleFileAdd(db, projectId, validation.data);
-        break;
-      }
-
-      case "muninn_decision_add": {
-        const validation = validateInput(DecisionAddInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        result = await handleDecisionAdd(db, projectId, validation.data);
-        break;
-      }
-
-      case "muninn_learn_add": {
-        const validation = validateInput(LearnAddInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        result = await handleLearnAdd(db, projectId, validation.data);
-        break;
-      }
-
-      case "muninn_issue": {
-        const validation = validateInput(IssueInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        const data = validation.data;
-        if (data.action === "add") {
-          result = await handleIssueAdd(db, projectId, data);
-        } else {
-          result = await handleIssueResolve(db, data);
-        }
-        break;
-      }
-
-      case "muninn_session": {
-        const validation = validateInput(SessionInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        const data = validation.data;
-        const workingCwd = data.cwd || cwd;
-        if (data.action === "start") {
-          result = await handleSessionStart(db, projectId, data, workingCwd);
-        } else {
-          result = await handleSessionEnd(db, projectId, data);
-        }
-        break;
-      }
-
-      case "muninn_predict": {
-        const validation = validateInput(PredictInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        if (validation.data.files) {
-          validation.data.files = normalizePaths(cwd, validation.data.files);
-        }
-        result = await handlePredict(db, projectId, validation.data);
-        break;
-      }
-
-      case "muninn_suggest": {
-        const validation = validateInput(SuggestInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        result = await handleSuggest(db, projectId, validation.data);
-        break;
-      }
-
-      case "muninn_enrich": {
-        const validation = validateInput(EnrichInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        // Normalize file paths inside the JSON input string
-        try {
-          const parsed = JSON.parse(validation.data.input);
-          if (parsed.file_path) {
-            parsed.file_path = normalizePath(cwd, parsed.file_path);
-            validation.data.input = JSON.stringify(parsed);
-          }
-        } catch (e) {
-          silentCatch("mcp:enrich-json-parse")(e);
-        }
-        result = await handleEnrich(db, projectId, validation.data.cwd || cwd, validation.data);
-        break;
-      }
-
-      case "muninn_approve": {
-        const validation = validateInput(ApproveInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        result = await handleApprove(db, validation.data);
-        break;
-      }
-
-      // ========== v7: UNIFIED CONTEXT ==========
-
-      case "muninn_context": {
-        const validation = validateInput(ContextInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        if (validation.data.files) {
-          validation.data.files = normalizePaths(cwd, validation.data.files);
-        }
-        result = await handleContext(db, projectId, validation.data.cwd || cwd, validation.data);
-        // Track checked files for enforcement hook (edit intent)
-        if (validation.data.intent === "edit" && validation.data.files) {
-          getSessionState(cwd)?.markChecked(validation.data.files);
-        }
-        break;
-      }
-
-      // ========== v7: MULTI-AGENT INTENT ==========
-
-      case "muninn_intent": {
-        const validation = validateInput(IntentInput, typedArgs);
-        if (!validation.success) throw new Error(validation.error);
-        if (validation.data.action === "declare" && validation.data.files) {
-          validation.data.files = normalizePaths(cwd, validation.data.files);
-        }
-        const sessionId = await getActiveSessionId(db, projectId);
-        result = await handleIntent(db, projectId, sessionId, validation.data);
-        break;
-      }
-
-      // ========== v9: AMBIENT BRAIN ==========
+      // ========== v9: 4 TOOLS ==========
 
       case "recall": {
         const validation = validateInput(RecallInput, typedArgs);
@@ -468,10 +124,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           validation.data.files = normalizePaths(cwd, validation.data.files);
         }
         result = await handleRecall(db, projectId, validation.data.cwd || cwd, validation.data);
-        // Mark files as checked for enforcement hook compatibility
-        if (validation.data.files) {
-          getSessionState(cwd)?.markChecked(validation.data.files);
-        }
         break;
       }
 
@@ -493,8 +145,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      // ========== PASSTHROUGH ==========
-
       case "muninn": {
         const validation = validateInput(PassthroughInput, typedArgs);
         if (!validation.success) throw new Error(validation.error);
@@ -506,7 +156,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const subcommand = parsedArgs[0].toLowerCase();
         if (!ALLOWED_PASSTHROUGH_COMMANDS.has(subcommand)) {
           throw new Error(
-            `Command "${subcommand}" not allowed via passthrough. Use dedicated tools for: query, check, file, decision, learn, issue, session, predict, suggest, enrich, approve. Allowed passthrough commands: ${[...ALLOWED_PASSTHROUGH_COMMANDS].sort().join(", ")}`
+            `Command "${subcommand}" not available. Allowed: ${[...ALLOWED_PASSTHROUGH_COMMANDS].sort().join(", ")}`
           );
         }
 
@@ -515,7 +165,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const argResult = SafePassthroughArg.safeParse(parsedArgs[i]);
           if (!argResult.success) {
             throw new Error(
-              `Invalid argument at position ${i}: ${argResult.error.errors[0]?.message || "validation failed"}`
+              `Invalid argument at position ${i}: ${argResult.error.issues[0]?.message || "validation failed"}`
             );
           }
         }
@@ -529,10 +179,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
 
-    // --- v4: Log successful tool call ---
+    // Log successful tool call
+    recordSuccessfulOperation();
     const durationMs = timer.finish(true);
 
-    // --- v4: Slow-call monitoring ---
+    // Slow-call monitoring
     const SLOW_THRESHOLD_MS = 5_000;
     const SLOW_WARNING_THRESHOLD = 3;
     if (durationMs !== undefined && durationMs > SLOW_THRESHOLD_MS) {
@@ -541,40 +192,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       setConsecutiveSlowCalls(0);
     }
 
-    // --- v4 Phase 3: Auto-append task context to read-oriented responses ---
-    const READ_TOOLS = new Set([
-      "muninn_query", "muninn_check", "muninn_predict",
-      "muninn_suggest", "muninn_enrich", "muninn_context",
-      "recall",
-    ]);
-    if (READ_TOOLS.has(name)) {
-      const taskCtx = getTaskContext();
-      if (taskCtx) {
-        const contextBlock = buildCalibratedContext(taskCtx, 800, cachedStrategies);
-        if (contextBlock && contextBlock.length < 4000) {
-          result += `\n\n--- Task Context ---\n${contextBlock}`;
-        }
-      }
-    }
-
-    // --- v4: Auto-update file knowledge for Edit/Write-like tools ---
-    if (name === "muninn_file_add" && typeof typedArgs.path === "string") {
-      queueFileUpdate(projectId, typedArgs.path as string);
-    }
-
-    // --- v4: Detect errors in passthrough Bash-like output ---
-    if (name === "muninn" && result) {
-      try {
-        const errors = detectErrors(result);
-        if (errors.length > 0) {
-          getActiveSessionId(db, projectId)
-            .then((sessionId) => recordErrors(db, projectId, sessionId, null, errors))
-            .catch(silentCatch("mcp:record-errors"));
-        }
-      } catch (e) { silentCatch("mcp:error-detect")(e); }
-    }
-
-    // --- v4: Prepend slow-call warning if consecutive threshold exceeded ---
+    // Prepend slow-call warning if consecutive threshold exceeded
     const currentSlowCalls = getConsecutiveSlowCalls();
     if (currentSlowCalls >= SLOW_WARNING_THRESHOLD) {
       result = `[Slow responses detected — ${currentSlowCalls} consecutive calls >5s — check sqld connectivity]\n\n${result}`;
@@ -585,23 +203,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const errMsg = error instanceof Error ? error.message : String(error);
     log.error(errMsg, { tool: name });
 
-    // --- v4: Log failed tool call (if timer was created) ---
     timer?.finish(false, errMsg);
 
-    // Connection resilience is handled inside HttpAdapter (retries + circuit breaker).
-    // Don't reset the adapter from here — it defeats the circuit breaker's protection
-    // and causes expensive re-initialization. The circuit breaker will naturally
-    // recover after its cooldown period.
+    // For "temporarily unavailable" errors, don't mark as isError
+    // so Claude knows to retry rather than giving up
+    const isRecoverable = errMsg.includes("temporarily unavailable");
 
     return {
-      content: [{ type: "text", text: `Error: ${errMsg}` }],
-      isError: true,
+      content: [{ type: "text", text: isRecoverable ? errMsg : `Error: ${errMsg}` }],
+      isError: !isRecoverable,
     };
   }
 });
 
 // ============================================================================
-// v4 Phase 3: MCP Resources
+// MCP Resources
 // ============================================================================
 
 registerResourceHandlers(server);
@@ -611,26 +227,23 @@ registerResourceHandlers(server);
 // ============================================================================
 
 async function main(): Promise<void> {
-  log.info("Starting Muninn MCP Server v7 (in-process)...");
+  log.info("Starting Muninn MCP Server v9...");
 
-  // --- Global error handlers: prevent silent crashes ---
+  // --- Global error handlers ---
   process.on("unhandledRejection", (reason) => {
     log.error(`Unhandled rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
   });
   process.on("uncaughtException", (error) => {
     log.error(`Uncaught exception: ${error.stack || error.message}`);
 
-    // Skip expected errors (validation, tool errors) — they don't indicate systemic failure
     if (isExpectedException(error)) {
       log.warn("Expected exception (not counted toward crash threshold)");
       return;
     }
 
-    // Rate-limit: track exceptions in a sliding window
     const now = Date.now();
     const exceptionWindow = getExceptionWindow();
     exceptionWindow.push(now);
-    // Evict entries older than the window
     while (exceptionWindow.length > 0 && exceptionWindow[0] < now - EXCEPTION_WINDOW_MS) {
       exceptionWindow.shift();
     }
@@ -638,12 +251,15 @@ async function main(): Promise<void> {
     if (exceptionWindow.length >= MAX_EXCEPTIONS_IN_WINDOW) {
       log.error(`${exceptionWindow.length} exceptions in ${EXCEPTION_WINDOW_MS / 1000}s — systemic failure, exiting`);
       shutdown(1);
+    } else if (checkDegradedRestart()) {
+      log.error("Sustained degraded state with no successful operations — restarting");
+      shutdown(1);
     } else {
       log.warn(`Exception survived (${exceptionWindow.length}/${MAX_EXCEPTIONS_IN_WINDOW} in window)`);
     }
   });
 
-  // --- Stdio pipe monitoring: detect broken pipes ---
+  // --- Stdio pipe monitoring ---
   process.stdin.on("error", (err) => {
     log.error(`stdin error: ${err.message}`);
   });
@@ -664,8 +280,6 @@ async function main(): Promise<void> {
   try {
     const db = await getDb();
     log.info("Database adapter initialized");
-
-    // Pre-warm a default project ID if we have a cwd
     const defaultCwd = process.cwd();
     await getProjectId(db, defaultCwd);
     log.info("Project ID cached", { cwd: defaultCwd });
@@ -673,28 +287,21 @@ async function main(): Promise<void> {
     log.warn(`DB pre-warm failed (will retry on first tool call): ${error}`);
   }
 
-  // --- MCP server error/close handlers (set BEFORE connect to avoid race) ---
+  // --- MCP server error/close handlers ---
   server.onerror = (error) => {
     log.error(`MCP server error: ${error instanceof Error ? error.message : String(error)}`);
-    // Don't crash on server errors — they're recoverable
   };
   server.onclose = () => {
-    log.info("MCP server connection closed — checking if stdin is still open");
-    // Only shutdown if stdin is truly dead. The MCP SDK may fire onclose
-    // transiently during reconnection.
-    if (process.stdin.destroyed || process.stdin.readableEnded) {
-      log.info("stdin is dead — shutting down");
-      shutdown(0);
-    } else {
-      log.warn("onclose fired but stdin still alive — staying up for potential reconnect");
-    }
+    // Stdio MCP servers cannot reconnect. Clean restart is the only recovery.
+    log.info("MCP server connection closed — shutting down for clean restart");
+    shutdown(0);
   };
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  log.info("MCP-native session ready — session auto-start/end works for any MCP client");
+  log.info("MCP server ready");
 
-  // Write PID file for watchdog detection (restrictive permissions to prevent symlink attacks)
+  // Write PID file for watchdog detection
   try {
     const { writeFileSync } = await import("node:fs");
     writeFileSync("/tmp/muninn-mcp.pid", String(process.pid), { mode: 0o600 });
@@ -702,13 +309,21 @@ async function main(): Promise<void> {
     silentCatch("mcp:pid-file-write")(e);
   }
 
-  // --- Database keepalive: prevent connection staleness ---
-  // Ping every 5 minutes. Monitor-only — the adapter's circuit breaker
-  // handles recovery. Keepalive just keeps the connection warm.
-  const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  safeInterval(async () => {
+  // --- Adaptive keepalive ---
+  const KEEPALIVE_NORMAL_MS = 60_000;
+  const KEEPALIVE_RECOVERY_MS = 10_000;
+  let keepaliveTimerId: ReturnType<typeof setTimeout> | null = null;
+
+  const runKeepalive = async () => {
     const adapter = getDbAdapter();
-    if (!adapter) return; // No adapter yet
+    if (!adapter) {
+      keepaliveTimerId = setTimeout(runKeepalive, KEEPALIVE_NORMAL_MS);
+      if (keepaliveTimerId && typeof keepaliveTimerId === "object" && "unref" in keepaliveTimerId) keepaliveTimerId.unref();
+      return;
+    }
+
+    let nextInterval = KEEPALIVE_NORMAL_MS;
+
     try {
       await adapter.get("SELECT 1");
       const failures = getConsecutiveKeepaliveFailures();
@@ -718,25 +333,30 @@ async function main(): Promise<void> {
       setConsecutiveKeepaliveFailures(0);
     } catch (err) {
       setConsecutiveKeepaliveFailures(getConsecutiveKeepaliveFailures() + 1);
-      log.warn(`Keepalive ping failed`, { consecutive: getConsecutiveKeepaliveFailures(), error: err instanceof Error ? err.message : String(err) });
+      nextInterval = KEEPALIVE_RECOVERY_MS;
+      log.warn(`Keepalive ping failed`, {
+        consecutive: getConsecutiveKeepaliveFailures(),
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, KEEPALIVE_INTERVAL_MS);
 
-  // --- v7 Phase 5A: Expire stale agent intents every 5 minutes ---
-  const INTENT_EXPIRE_MS = 5 * 60_000; // 5 minutes
-  safeInterval(async () => {
-    try {
-      const db = await getDb();
-      const defaultProject = await getProjectId(db, process.cwd());
-      const { expireIntents } = await import("./agents/intent-manager.js");
-      await expireIntents(db, defaultProject);
-    } catch (e) {
-      silentCatch("mcp:expire-intents")(e);
+    // Also probe fast if circuit is open
+    if ("isCircuitOpen" in adapter && typeof (adapter as { isCircuitOpen: () => boolean }).isCircuitOpen === "function") {
+      if ((adapter as { isCircuitOpen: () => boolean }).isCircuitOpen()) {
+        nextInterval = KEEPALIVE_RECOVERY_MS;
+      }
     }
-  }, INTENT_EXPIRE_MS);
 
-  // --- Periodic stale-job check: spawn worker if jobs are stuck ---
-  const STALE_JOB_CHECK_MS = 10 * 60_000; // 10 minutes
+    keepaliveTimerId = setTimeout(runKeepalive, nextInterval);
+    if (keepaliveTimerId && typeof keepaliveTimerId === "object" && "unref" in keepaliveTimerId) keepaliveTimerId.unref();
+  };
+
+  keepaliveTimerId = setTimeout(runKeepalive, KEEPALIVE_NORMAL_MS);
+  if (keepaliveTimerId && typeof keepaliveTimerId === "object" && "unref" in keepaliveTimerId) keepaliveTimerId.unref();
+
+  // --- Periodic stale-job check ---
+  const STALE_JOB_CHECK_MS = 10 * 60_000;
+  const { safeInterval } = await import("./utils/timers.js");
   safeInterval(async () => {
     try {
       const db = await getDb();
@@ -755,7 +375,7 @@ async function main(): Promise<void> {
     }
   }, STALE_JOB_CHECK_MS);
 
-  // Register cleanup and signal handlers via shutdown manager
+  // Register cleanup and signal handlers
   onShutdown(() => autoEndSession());
   installSignalHandlers();
 }

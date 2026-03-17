@@ -1,19 +1,14 @@
 /**
- * Muninn HTTP Server — v7 Phase 6A
+ * Muninn HTTP Server — v9
  *
- * REST API alongside MCP, wrapping the same handlers.
+ * REST API wrapping the v9 handlers (recall, remember, track).
  * Lightweight Hono server on configurable port (default 3001).
  *
- * Usage:
- *   bun run src/http-server.ts
- *   MUNINN_HTTP_PORT=3001 bun run src/http-server.ts
- *
  * Endpoints:
- *   POST /api/v1/context   — Unified context retrieval
- *   POST /api/v1/memory    — Create learning/decision/issue
- *   POST /api/v1/session   — Manage sessions
- *   POST /api/v1/intent    — Multi-agent intents
- *   GET  /api/v1/briefing  — Session briefing + codebase DNA
+ *   POST /api/v1/recall    — Retrieve context (files/query/task)
+ *   POST /api/v1/remember  — Record decision or learning
+ *   POST /api/v1/track     — Manage issues (add/resolve)
+ *   GET  /api/v1/briefing  — Session briefing
  *   GET  /api/v1/health    — System health
  *   POST /api/v1/export    — Memory interchange format
  */
@@ -22,25 +17,16 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { DatabaseAdapter } from "./database/adapter";
 import {
-  ContextInput,
-  IntentInput,
-  SessionInput,
-  LearnAddInput,
-  DecisionAddInput,
-  IssueInput,
+  RecallInput,
+  RememberInput,
+  TrackInput,
   validateInput,
 } from "./mcp-validation.js";
 import {
-  handleContext,
-  handleIntent,
-  handleSessionStart,
-  handleSessionEnd,
-  handleLearnAdd,
-  handleDecisionAdd,
-  handleIssueAdd,
-  handleIssueResolve,
+  handleRecall,
+  handleRemember,
+  handleTrack,
 } from "./mcp-handlers.js";
-import { getActiveSessionId } from "./commands/session-tracking.js";
 import { createLogger } from "./lib/logger.js";
 
 const log = createLogger("http-server");
@@ -61,22 +47,17 @@ type AppEnv = {
 // App Factory
 // ============================================================================
 
-/**
- * Create a Hono app with all v1 API routes.
- * Accepts db and projectId so it can be mounted in tests or composed externally.
- */
 export function createApp(db: DatabaseAdapter, projectId: number, cwd: string): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
-  // Global middleware — restrict CORS to localhost origins
+  // Global middleware
   app.use("*", cors({
     origin: ["http://localhost:3001", "http://127.0.0.1:3001", "http://localhost:3000", "http://127.0.0.1:3000"],
   }));
 
-  // Bearer token auth — required when MUNINN_API_TOKEN is set
+  // Bearer token auth
   const apiToken = process.env.MUNINN_API_TOKEN;
   app.use("/api/*", async (c, next) => {
-    // Health endpoint is always public
     if (c.req.path === "/api/v1/health") return next();
     if (apiToken) {
       const auth = c.req.header("Authorization");
@@ -94,14 +75,13 @@ export function createApp(db: DatabaseAdapter, projectId: number, cwd: string): 
     await next();
   });
 
-  // Health check — enhanced with worker stats and metrics
+  // Health check
   app.get("/api/v1/health", async (c) => {
     const startMs = Date.now();
     try {
       await db.get("SELECT 1");
       const dbLatency = Date.now() - startMs;
 
-      // Worker queue stats (last 24h)
       const workerStats = { pending: 0, failed: 0, completed: 0 };
       try {
         const rows = await db.all<{ status: string; cnt: number }>(
@@ -116,106 +96,48 @@ export function createApp(db: DatabaseAdapter, projectId: number, cwd: string): 
         }
       } catch { /* table may not exist */ }
 
-      // In-memory metrics
-      let metrics = {};
-      try {
-        const { getMetrics } = await import("./observability/metrics.js");
-        metrics = getMetrics();
-      } catch { /* module may not load */ }
-
       return c.json({
         status: "ok",
-        version: "8.0.0",
+        version: "9.0.0",
         dbLatencyMs: dbLatency,
         worker: workerStats,
-        metrics,
       });
     } catch {
-      return c.json({ status: "degraded", version: "8.0.0" }, 503);
+      return c.json({ status: "degraded", version: "9.0.0" }, 503);
     }
   });
 
-  // Unified context
-  app.post("/api/v1/context", async (c) => {
+  // Recall — context retrieval
+  app.post("/api/v1/recall", async (c) => {
     const body = await c.req.json();
-    const validation = validateInput(ContextInput, body);
+    const validation = validateInput(RecallInput, body);
     if (!validation.success) return c.json({ error: validation.error }, 400);
-
-    const result = await handleContext(db, projectId, cwd, validation.data);
+    const result = await handleRecall(db, projectId, cwd, validation.data);
     return c.json({ data: result });
   });
 
-  // Memory creation (learning, decision, issue)
-  app.post("/api/v1/memory", async (c) => {
+  // Remember — record decision or learning
+  app.post("/api/v1/remember", async (c) => {
     const body = await c.req.json();
-    const { type, ...params } = body as { type: string; [key: string]: unknown };
-
-    switch (type) {
-      case "learning": {
-        const validation = validateInput(LearnAddInput, params);
-        if (!validation.success) return c.json({ error: validation.error }, 400);
-        const result = await handleLearnAdd(db, projectId, validation.data);
-        return c.json({ data: result });
-      }
-      case "decision": {
-        const validation = validateInput(DecisionAddInput, params);
-        if (!validation.success) return c.json({ error: validation.error }, 400);
-        const result = await handleDecisionAdd(db, projectId, validation.data);
-        return c.json({ data: result });
-      }
-      case "issue": {
-        const validation = validateInput(IssueInput, params);
-        if (!validation.success) return c.json({ error: validation.error }, 400);
-        if (params.action === "resolve") {
-          const result = await handleIssueResolve(db, validation.data as { id: number; resolution: string });
-          return c.json({ data: result });
-        }
-        const result = await handleIssueAdd(db, projectId, validation.data as { title: string; description?: string; severity?: number; type?: string });
-        return c.json({ data: result });
-      }
-      default:
-        return c.json({ error: "Unknown memory type. Use: learning, decision, issue" }, 400);
-    }
-  });
-
-  // Session management
-  app.post("/api/v1/session", async (c) => {
-    const body = await c.req.json();
-    const validation = validateInput(SessionInput, body);
+    const validation = validateInput(RememberInput, body);
     if (!validation.success) return c.json({ error: validation.error }, 400);
-
-    const data = validation.data;
-    if (data.action === "start") {
-      const result = await handleSessionStart(db, projectId, data, cwd);
-      return c.json({ data: result });
-    }
-    const result = await handleSessionEnd(db, projectId, data);
+    const result = await handleRemember(db, projectId, validation.data);
     return c.json({ data: result });
   });
 
-  // Multi-agent intents
-  app.post("/api/v1/intent", async (c) => {
+  // Track — issue management
+  app.post("/api/v1/track", async (c) => {
     const body = await c.req.json();
-    const validation = validateInput(IntentInput, body);
+    const validation = validateInput(TrackInput, body);
     if (!validation.success) return c.json({ error: validation.error }, 400);
-
-    const sessionId = await getActiveSessionId(db, projectId);
-    const result = await handleIntent(db, projectId, sessionId, validation.data);
-    return c.json({ data: JSON.parse(result) });
+    const result = await handleTrack(db, projectId, validation.data);
+    return c.json({ data: result });
   });
 
   // Session briefing
   app.get("/api/v1/briefing", async (c) => {
     const sections: string[] = [];
 
-    // Codebase DNA
-    try {
-      const { loadDNA } = await import("./context/codebase-dna.js");
-      const dna = await loadDNA(db, projectId);
-      if (dna) sections.push(dna.formatted);
-    } catch { /* table may not exist */ }
-
-    // Last session
     try {
       const last = await db.get<{ goal: string | null; outcome: string | null; success: number | null }>(
         `SELECT goal, outcome, success FROM sessions WHERE project_id = ? AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT 1`,
@@ -250,7 +172,6 @@ async function main(): Promise<void> {
   const { getGlobalDb } = await import("./database/connection.js");
   const db = await getGlobalDb();
 
-  // Get or create project
   const cwd = process.cwd();
   const { basename } = await import("node:path");
   const projectName = basename(cwd);

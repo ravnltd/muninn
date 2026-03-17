@@ -29,7 +29,7 @@ export const ServiceStatusSchema = z.enum(["running", "stopped", "error", "unkno
 
 export const ServerAddInput = z.object({
   name: NonEmptyString,
-  ip: z.string().ip().optional(),
+  ip: z.union([z.ipv4(), z.ipv6()]).optional(),
   hostname: OptionalString,
   role: ServerRoleSchema.optional(),
   user: z.string().default("root"),
