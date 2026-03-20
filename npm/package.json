@@ -1,0 +1,35 @@
+{
+  "name": "muninn-ai",
+  "version": "9.0.0",
+  "description": "Persistent memory for AI coding agents — files, decisions, learnings, and issues that compound across sessions",
+  "type": "module",
+  "bin": {
+    "muninn-ai": "./install.mjs"
+  },
+  "scripts": {
+    "postinstall": "node install.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "ai",
+    "memory",
+    "claude",
+    "cursor",
+    "windsurf",
+    "coding-agent",
+    "model-context-protocol"
+  ],
+  "author": "Ravn Ltd (https://råven.com)",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ravnltd/muninn.git"
+  },
+  "homepage": "https://github.com/ravnltd/muninn",
+  "bugs": {
+    "url": "https://github.com/ravnltd/muninn/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

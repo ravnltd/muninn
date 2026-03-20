@@ -155,11 +155,19 @@ async function main(): Promise<void> {
       }
     }
 
+    // Bootstrap from git history on first init
+    const { bootstrap } = await import("./commands/bootstrap.js");
+    const bootstrapResult = await bootstrap(db, projectId, process.cwd());
+    if (!bootstrapResult.skipped && bootstrapResult.files > 0) {
+      console.error(`📚 Bootstrapped ${bootstrapResult.files} files from ${bootstrapResult.commits} commits`);
+    }
+
     console.error(`✅ Muninn initialized for ${process.cwd()}`);
     outputSuccess({
       projectId,
       dbPath: join(process.cwd(), LOCAL_DB_DIR, LOCAL_DB_NAME),
       claudeMd: claudeMdAction,
+      bootstrap: bootstrapResult,
     });
     closeAll();
     return;
@@ -696,6 +704,18 @@ async function main(): Promise<void> {
           process.on("SIGTERM", resolve);
           process.on("SIGINT", resolve);
         });
+        break;
+      }
+
+      case "bootstrap": {
+        const { bootstrap } = await import("./commands/bootstrap.js");
+        const result = await bootstrap(db, projectId, process.cwd());
+        if (result.skipped) {
+          console.error("Already bootstrapped (>5 files tracked). Skipping.");
+        } else {
+          console.error(`Bootstrapped ${result.files} files, ${result.correlations} correlations from ${result.commits} commits`);
+        }
+        outputJson(result);
         break;
       }
 
