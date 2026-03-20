@@ -12,6 +12,7 @@ export {
   getLatestVersion,
   getPendingMigrations,
   runMigrations,
+  runMigrationsAsync,
 } from "./runner.js";
 export { checkIntegrity, logDbError, getRecentErrors } from "./integrity.js";
 export { applyReliabilityPragmas, optimizeDatabase } from "./pragmas.js";

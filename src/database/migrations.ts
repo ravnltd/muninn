@@ -17,6 +17,7 @@ export {
   getLatestVersion,
   getPendingMigrations,
   runMigrations,
+  runMigrationsAsync,
   checkIntegrity,
   logDbError,
   getRecentErrors,

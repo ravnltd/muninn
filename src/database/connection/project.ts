@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { DatabaseAdapter } from "../adapter.js";
 import { LocalAdapter } from "../adapters/local.js";
-import { applyReliabilityPragmas, runMigrations } from "../migrations.js";
+import { applyReliabilityPragmas, runMigrations, runMigrationsAsync } from "../migrations.js";
 import {
   GLOBAL_DB_PATH,
   LOCAL_DB_DIR,
@@ -115,6 +115,12 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
     if (existsSync(SCHEMA_PATH)) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
       await projectAdapterInstance.exec(schema);
+    }
+
+    // Run async migrations for HTTP mode
+    const migrationResult = await runMigrationsAsync(projectAdapterInstance);
+    if (!migrationResult.ok) {
+      console.error(`Migration warning: ${migrationResult.error.message}`);
     }
   } else {
     // For local mode, use sync operations
