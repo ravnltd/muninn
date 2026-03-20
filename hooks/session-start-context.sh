@@ -12,8 +12,13 @@ fi
 
 # Auto-initialize if needed
 if [ ! -d ".claude" ]; then
-  muninn init >/dev/null 2>&1
+  INIT_OUTPUT=$(muninn init 2>&1)
   echo "[Muninn] Initialized .claude for $(basename "$PWD")" >&2
+  # Show bootstrap summary if files were indexed
+  BOOTSTRAP_FILES=$(echo "$INIT_OUTPUT" | grep -oP 'Bootstrapped \K\d+' 2>/dev/null || true)
+  if [ -n "$BOOTSTRAP_FILES" ] && [ "$BOOTSTRAP_FILES" -gt 0 ] 2>/dev/null; then
+    echo "[Muninn] Bootstrapped $BOOTSTRAP_FILES files from git history" >&2
+  fi
 fi
 
 # --- STDOUT: Injected into Claude's context ---

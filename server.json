@@ -1,0 +1,17 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ravnltd/muninn",
+  "description": "Persistent memory for AI coding agents — files, decisions, learnings, and issues that compound across sessions",
+  "repository": {
+    "url": "https://github.com/ravnltd/muninn",
+    "source": "github"
+  },
+  "version": "9.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "name": "muninn-ai",
+      "version": "9.0.0"
+    }
+  ]
+}

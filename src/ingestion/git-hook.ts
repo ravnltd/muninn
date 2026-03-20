@@ -82,12 +82,12 @@ export function parseNumstat(numstatOutput: string): FileChange[] {
 // ============================================================================
 
 /** Hash file content with sha256, truncated to 16 hex chars */
-function hashFileContent(content: string): string {
+export function hashFileContent(content: string): string {
   return createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
 /** Read first N lines of a file, returns null if unreadable */
-function readFileHead(filePath: string, maxLines: number): string | null {
+export function readFileHead(filePath: string, maxLines: number): string | null {
   try {
     const fullPath = resolve(process.cwd(), filePath);
     if (!existsSync(fullPath)) return null;
@@ -99,7 +99,7 @@ function readFileHead(filePath: string, maxLines: number): string | null {
 }
 
 /** Extract exports, imports, and definitions from source content */
-function extractCodeSignals(content: string): {
+export function extractCodeSignals(content: string): {
   imports: string[];
   exports: string[];
   definitions: string[];
@@ -131,7 +131,7 @@ function extractCodeSignals(content: string): {
 }
 
 /** Infer file type from path patterns */
-function inferFileType(filePath: string): string {
+export function inferFileType(filePath: string): string {
   const patterns: Array<[RegExp, string]> = [
     [/\.test\.|\.spec\.|__tests__/, "test"],
     [/\.config\.|\.rc\.|\bconfig\//, "config"],
@@ -154,7 +154,7 @@ function inferFileType(filePath: string): string {
 }
 
 /** Build a purpose string from code signals and file path */
-function buildPurpose(
+export function buildPurpose(
   filePath: string,
   signals: ReturnType<typeof extractCodeSignals>,
 ): string {
@@ -356,7 +356,7 @@ async function updateFileFromCommit(
 }
 
 /** Build metadata for a newly tracked file */
-function buildNewFileMeta(filePath: string): {
+export function buildNewFileMeta(filePath: string): {
   purpose: string;
   type: string;
   contentHash: string | null;

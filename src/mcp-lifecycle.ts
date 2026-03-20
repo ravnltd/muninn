@@ -50,6 +50,23 @@ export async function autoStartSession(db: DatabaseAdapter, projectId: number): 
     );
     if (activeSession) return;
 
+    // Auto-bootstrap if files table is empty (first-run)
+    try {
+      const fileCount = await db.get<{ cnt: number }>(
+        "SELECT COUNT(*) as cnt FROM files WHERE project_id = ?",
+        [projectId]
+      );
+      if (fileCount && fileCount.cnt === 0) {
+        const { bootstrap } = await import("./commands/bootstrap.js");
+        const result = await bootstrap(db, projectId, process.cwd());
+        if (!result.skipped && result.files > 0) {
+          log.info(`Bootstrapped ${result.files} files from ${result.commits} commits`);
+        }
+      }
+    } catch (e) {
+      silentCatch("lifecycle:auto-bootstrap")(e);
+    }
+
     const mod = await import("./commands/session.js");
     await captureOutput(async () => { await mod.sessionStart(db, projectId, "Auto-started session"); });
     log.info("Auto-started session");
