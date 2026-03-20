@@ -18,6 +18,8 @@ import {
   type IntegrityCheck,
   logDbError,
   type MigrationState,
+  runMigrations,
+  runMigrationsAsync,
 } from "../migrations.js";
 import {
   getMuninnHome,
@@ -107,11 +109,25 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
   if (config.mode === "local") {
     const rawDb = globalAdapterInstance.raw() as Database;
     initGlobalTables(rawDb);
+    // Run local migrations (sync)
+    const migResult = runMigrations(rawDb);
+    if (!migResult.ok) {
+      console.error(`Migration warning: ${migResult.error.message}`);
+    }
   } else {
     // For HTTP mode, skip init if schema already exists (fast path)
     const schemaExists = await checkSchemaExists(globalAdapterInstance);
     if (!schemaExists) {
       await initGlobalTablesAsync(globalAdapterInstance);
+    }
+    // Run async migrations (works with HTTP adapter)
+    const migResult = await runMigrationsAsync(globalAdapterInstance);
+    if (!migResult.ok) {
+      console.error(`Migration warning: ${migResult.error.message}`);
+    } else if (migResult.value.applied.length > 0) {
+      console.error(
+        `Applied ${migResult.value.applied.length} migration(s) to v${migResult.value.current_version}`,
+      );
     }
   }
 
