@@ -16,6 +16,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter.js";
+import { publishEvent } from "../lib/redis.js";
 import { silentCatch } from "../utils/silent-catch.js";
 
 // ============================================================================
@@ -316,6 +317,15 @@ export async function remember(
   } catch {
     // Embedding generation not critical
   }
+
+  // Publish event for Huginn perturbation bridge
+  publishEvent("muninn:events:remember", {
+    type,
+    title,
+    id,
+    projectId,
+    timestamp: Date.now(),
+  }).catch(() => {});
 
   return {
     id,

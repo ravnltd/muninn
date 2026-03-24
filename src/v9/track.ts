@@ -6,6 +6,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter.js";
+import { publishEvent } from "../lib/redis.js";
 import { silentCatch } from "../utils/silent-catch.js";
 
 // ============================================================================
@@ -96,6 +97,16 @@ async function trackAdd(
     // Not critical
   }
 
+  // Publish event for Huginn perturbation bridge
+  publishEvent("muninn:events:issue", {
+    action: "add",
+    id,
+    title: input.title,
+    severity,
+    type,
+    timestamp: Date.now(),
+  }).catch(() => {});
+
   return { action: "added", id, title: input.title };
 }
 
@@ -118,6 +129,14 @@ async function trackResolve(
      WHERE id = ?`,
     [input.resolution, input.id],
   );
+
+  // Publish event for Huginn perturbation bridge
+  publishEvent("muninn:events:issue", {
+    action: "resolve",
+    id: input.id,
+    title: issue.title,
+    timestamp: Date.now(),
+  }).catch(() => {});
 
   return { action: "resolved", id: input.id, title: issue.title };
 }

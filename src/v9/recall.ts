@@ -11,6 +11,8 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter.js";
+import { readNeuroState } from "../lib/redis.js";
+import { parseNeuroState, scoreWithNeuro } from "../intelligence/neuro-scoring.js";
 
 
 // ============================================================================
@@ -32,12 +34,13 @@ interface RecallFileResult {
 }
 
 interface RecallSearchResult {
-  type: "decision" | "learning" | "issue" | "file";
+  type: "decision" | "learning" | "issue" | "file" | "cognitive_event" | "belief";
   id: number;
   title: string;
   content: string | null;
   confidence: number;
   stage?: string;
+  neuroSnapshot?: string;
 }
 
 interface RecallResult {
@@ -310,8 +313,8 @@ async function searchFts(
 
   const results: RecallSearchResult[] = [];
 
-  // Search all FTS tables in parallel
-  const [decisions, learnings, issues, files] = await Promise.all([
+  // Search all FTS tables in parallel (including Huginn cognitive tables)
+  const [decisions, learnings, issues, files, cogEvents, beliefs] = await Promise.all([
     db.all<{ id: number; title: string; decision: string }>(
       `SELECT d.id, d.title, d.decision FROM fts_decisions
        JOIN decisions d ON fts_decisions.rowid = d.id
@@ -344,6 +347,26 @@ async function searchFts(
        ORDER BY bm25(fts_files) LIMIT 5`,
       [escapedQuery, projectId],
     ).catch(() => []),
+
+    // Huginn cognitive events
+    db.all<{ id: number; event_type: string; content: string; neuro_snapshot: string; created_at: number }>(
+      `SELECT ce.id, ce.event_type, ce.content, ce.neuro_snapshot, ce.created_at
+       FROM fts_cognitive_events
+       JOIN cognitive_events ce ON fts_cognitive_events.rowid = ce.id
+       WHERE fts_cognitive_events MATCH ?1
+       ORDER BY ce.created_at DESC LIMIT 3`,
+      [escapedQuery],
+    ).catch(() => []),
+
+    // Huginn beliefs
+    db.all<{ id: number; topic: string; conclusion: string; confidence: number; competing_hypothesis: string }>(
+      `SELECT b.id, b.topic, b.conclusion, b.confidence, b.competing_hypothesis
+       FROM fts_beliefs
+       JOIN beliefs b ON fts_beliefs.rowid = b.id
+       WHERE fts_beliefs MATCH ?1 AND b.status != 'archived'
+       ORDER BY b.confidence DESC LIMIT 3`,
+      [escapedQuery],
+    ).catch(() => []),
   ]);
 
   for (const d of decisions) {
@@ -364,6 +387,46 @@ async function searchFts(
   }
   for (const f of files) {
     results.push({ type: "file", id: f.id, title: f.path, content: f.purpose, confidence: 0.5 });
+  }
+  for (const ce of cogEvents) {
+    results.push({
+      type: "cognitive_event",
+      id: ce.id,
+      title: `[${ce.event_type}]`,
+      content: ce.content,
+      confidence: 0.5,
+      neuroSnapshot: ce.neuro_snapshot,
+    });
+  }
+  for (const b of beliefs) {
+    const content = b.competing_hypothesis
+      ? `${b.conclusion} | Alternative: ${b.competing_hypothesis}`
+      : b.conclusion;
+    results.push({
+      type: "belief",
+      id: b.id,
+      title: b.topic,
+      content,
+      confidence: b.confidence,
+    });
+  }
+
+  // Apply neuro-aware scoring if Huginn's neuro state is available
+  const rawNeuro = await readNeuroState();
+  const currentNeuro = rawNeuro ? parseNeuroState(JSON.stringify(rawNeuro)) : null;
+  if (currentNeuro) {
+    const now = Date.now() / 1000;
+    for (const r of results) {
+      const storedNeuro = r.neuroSnapshot ? parseNeuroState(r.neuroSnapshot) : null;
+      if (storedNeuro) {
+        // Use neuro score as a boost (multiply existing confidence)
+        const ageHours = (now - (cogEvents.find((ce) => ce.id === r.id)?.created_at ?? now)) / 3600;
+        const neuroBoost = scoreWithNeuro(ageHours, storedNeuro, currentNeuro);
+        r.confidence = Math.min(1.0, r.confidence * (0.5 + neuroBoost));
+      }
+    }
+    // Re-sort by confidence after neuro scoring
+    results.sort((a, b) => b.confidence - a.confidence);
   }
 
   return results;
@@ -754,6 +817,22 @@ export function formatRecallResult(result: RecallResult): string {
     if (files.length > 0) {
       for (const f of files) {
         sections.push(`F[${f.title}|${f.content?.slice(0, 40) ?? ""}]`);
+      }
+    }
+
+    const cogEvents = result.results.filter((r) => r.type === "cognitive_event");
+    if (cogEvents.length > 0) {
+      for (const ce of cogEvents) {
+        sections.push(`CE[${ce.title}|${ce.content?.slice(0, 80) ?? ""}]`);
+      }
+    }
+
+    const beliefs = result.results.filter((r) => r.type === "belief");
+    if (beliefs.length > 0) {
+      for (const b of beliefs) {
+        const conf = Math.round(b.confidence * 100);
+        sections.push(`B[${b.title}|conf:${conf}%]`);
+        if (b.content) sections.push(`  ${b.content.slice(0, 100)}`);
       }
     }
   }

@@ -2254,4 +2254,112 @@ export const MIGRATIONS: Migration[] = [
       );
     },
   },
+
+  // ============================================================================
+  // v46 — Cognitive integration: Huginn events, beliefs, predictions
+  // ============================================================================
+  {
+    version: 46,
+    name: "cognitive_integration",
+    description: "Huginn cognitive events, beliefs, and predictions tables for unified memory",
+    up: `
+      ALTER TABLE cognitive_events ADD COLUMN project_id INTEGER REFERENCES projects(id);
+      ALTER TABLE cognitive_events ADD COLUMN neuro_snapshot TEXT DEFAULT '{}';
+      ALTER TABLE cognitive_events ADD COLUMN source TEXT DEFAULT 'huginn';
+
+      CREATE INDEX IF NOT EXISTS idx_cog_events_type ON cognitive_events(event_type);
+      CREATE INDEX IF NOT EXISTS idx_cog_events_created ON cognitive_events(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_cog_events_project ON cognitive_events(project_id);
+      CREATE INDEX IF NOT EXISTS idx_cog_events_source ON cognitive_events(source);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_cognitive_events
+        USING fts5(content, event_type, source, content=cognitive_events, content_rowid=id);
+
+      CREATE TRIGGER IF NOT EXISTS cognitive_events_fts_ai AFTER INSERT ON cognitive_events BEGIN
+        INSERT INTO fts_cognitive_events(rowid, content, event_type, source)
+        VALUES (new.id, new.content, new.event_type, new.source);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS cognitive_events_fts_ad AFTER DELETE ON cognitive_events BEGIN
+        INSERT INTO fts_cognitive_events(fts_cognitive_events, rowid, content, event_type, source)
+        VALUES ('delete', old.id, old.content, old.event_type, old.source);
+      END;
+
+      CREATE TABLE IF NOT EXISTS beliefs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER REFERENCES projects(id),
+        topic TEXT NOT NULL,
+        conclusion TEXT NOT NULL,
+        evidence TEXT DEFAULT '[]',
+        confidence REAL DEFAULT 0.8,
+        source TEXT DEFAULT 'musing',
+        status TEXT DEFAULT 'settled',
+        competing_hypothesis TEXT DEFAULT '',
+        labile_until REAL DEFAULT 0.0,
+        concluded_at REAL NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_beliefs_topic ON beliefs(topic);
+      CREATE INDEX IF NOT EXISTS idx_beliefs_status ON beliefs(status);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_beliefs
+        USING fts5(topic, conclusion, competing_hypothesis, content=beliefs, content_rowid=id);
+
+      CREATE TRIGGER IF NOT EXISTS beliefs_fts_ai AFTER INSERT ON beliefs BEGIN
+        INSERT INTO fts_beliefs(rowid, topic, conclusion, competing_hypothesis)
+        VALUES (new.id, new.topic, new.conclusion, new.competing_hypothesis);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS beliefs_fts_ad AFTER DELETE ON beliefs BEGIN
+        INSERT INTO fts_beliefs(fts_beliefs, rowid, topic, conclusion, competing_hypothesis)
+        VALUES ('delete', old.id, old.topic, old.conclusion, old.competing_hypothesis);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS beliefs_fts_au AFTER UPDATE ON beliefs BEGIN
+        INSERT INTO fts_beliefs(fts_beliefs, rowid, topic, conclusion, competing_hypothesis)
+        VALUES ('delete', old.id, old.topic, old.conclusion, old.competing_hypothesis);
+        INSERT INTO fts_beliefs(rowid, topic, conclusion, competing_hypothesis)
+        VALUES (new.id, new.topic, new.conclusion, new.competing_hypothesis);
+      END;
+
+      CREATE TABLE IF NOT EXISTS predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER REFERENCES projects(id),
+        claim TEXT NOT NULL,
+        source TEXT DEFAULT 'huginn',
+        confidence REAL DEFAULT 0.5,
+        made_at REAL NOT NULL,
+        expected_by REAL,
+        status TEXT DEFAULT 'pending',
+        resolution_notes TEXT,
+        resolved_at REAL,
+        surprise_on_resolution REAL
+      );
+      CREATE INDEX IF NOT EXISTS idx_predictions_status ON predictions(status);
+      CREATE INDEX IF NOT EXISTS idx_predictions_project ON predictions(project_id);
+    `,
+    validate: (db) => {
+      const cogCols = db
+        .query<{ name: string }, []>("PRAGMA table_info(cognitive_events)")
+        .all();
+      const beliefs = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'beliefs'",
+        )
+        .get();
+      const predictions = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'predictions'",
+        )
+        .get();
+      return (
+        cogCols.some((c) => c.name === "project_id") &&
+        cogCols.some((c) => c.name === "neuro_snapshot") &&
+        cogCols.some((c) => c.name === "source") &&
+        !!beliefs &&
+        !!predictions
+      );
+    },
+  },
 ];
