@@ -120,7 +120,7 @@ export function authMiddleware() {
     const appId = c.req.header("X-Muninn-App");
     if (!appId) {
       return c.json(
-        { error: "Missing X-Muninn-App header. Specify the app ID (e.g. huginn, studio)" },
+        { error: "Missing X-Muninn-App header. Specify the app ID (e.g. my-app, studio)" },
         400
       );
     }

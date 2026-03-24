@@ -93,13 +93,13 @@ describe("authMiddleware", () => {
     const res = await app.request("/test", {
       headers: {
         Authorization: "Bearer mk_testkey123",
-        "X-Muninn-App": "huginn",
+        "X-Muninn-App": "test-app",
       },
     });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.tenantId).toBe("default");
-    expect(body.appId).toBe("huginn");
+    expect(body.appId).toBe("test-app");
   });
 
   it("supports tenant:key format", async () => {
@@ -110,7 +110,7 @@ describe("authMiddleware", () => {
     const res = await app.request("/test", {
       headers: {
         Authorization: "Bearer mk_testkey123",
-        "X-Muninn-App": "huginn",
+        "X-Muninn-App": "test-app",
       },
     });
     expect(res.status).toBe(200);
@@ -127,7 +127,7 @@ describe("authMiddleware", () => {
     const res1 = await app.request("/test", {
       headers: {
         Authorization: "Bearer mk_key1",
-        "X-Muninn-App": "huginn",
+        "X-Muninn-App": "test-app",
       },
     });
     expect(res1.status).toBe(200);

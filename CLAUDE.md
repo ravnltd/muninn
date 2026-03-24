@@ -33,7 +33,7 @@ Everything else is automatic. No mandatory steps. No ceremony.
 cd ~/.local/share/muninn && git pull && bun install && ./install.sh
 
 # Fresh install (HTTP mode)
-git clone https://github.com/ravnltd/original-muninn.git ~/.local/share/muninn && \
+git clone https://github.com/ravnltd/muninn.git ~/.local/share/muninn && \
 cd ~/.local/share/muninn && ./install.sh && \
 claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL=http://YOUR_SQLD_HOST:8080 muninn-mcp
 ```

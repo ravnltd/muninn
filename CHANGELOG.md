@@ -2,6 +2,30 @@
 
 All notable changes to Muninn are documented here.
 
+## [9.0.0] — 2026-03-23
+
+Radical simplification. 4 tools replace 40+ commands. Memory that compounds automatically.
+
+### Added
+- **4-tool API**: `recall`, `remember`, `track`, `muninn` — zero ceremony, complete coverage
+- **Ambient brain**: recall returns pre-edit context bundles (fragility, co-changers, decisions, issues, blast radius) in a single call
+- **Self-healing stability**: auto-migration in HTTP mode, graceful degradation throughout
+- **Intelligence layer**: compounding memory with learning graduation, decision grounding, file correlations, and fragility scoring
+- **`npx muninn-ai` installer**: one-command setup with auto-detection for Claude Code, Cursor, Windsurf, Continue.dev
+- **Session hooks**: auto-installed via symlinks, lifecycle management with background workers
+
+### Changed
+- Tool count reduced from 40+ CLI commands to 4 MCP tools
+- `recall` replaces predict, suggest, query, check, context, and enrich
+- `remember` replaces decision_add, learn_add, file_add (auto-categorizes)
+- `track` replaces issue add/resolve/list
+- README rewritten for the 4-tool API
+
+### Fixed
+- Migrations now auto-apply in HTTP mode (43 missing tables restored)
+- AGPL-3.0-only relicense (was PolyForm Noncommercial)
+- Comprehensive security hardening (29 issues across all severity levels)
+
 ## [8.0.0] — 2026-02-23
 
 Universal AI memory platform. Complete rewrite of the intelligence layer.

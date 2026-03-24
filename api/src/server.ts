@@ -1,7 +1,7 @@
 /**
  * Muninn Memory API — Hono Server Entry Point
  *
- * Memory as a Service for Raven apps (Huginn, Studio, Claude Code).
+ * Memory as a Service for MCP-compatible apps.
  * Mounts: health, memory CRUD, search, context, app management.
  */
 

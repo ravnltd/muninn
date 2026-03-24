@@ -223,8 +223,8 @@ describe("BatchOperationSchema", () => {
 describe("AppInputSchema", () => {
   it("validates a valid app", () => {
     const result = AppInputSchema.safeParse({
-      id: "huginn",
-      name: "Huginn Household Manager",
+      id: "test-app",
+      name: "Test App",
     });
     expect(result.success).toBe(true);
   });
