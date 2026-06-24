@@ -87,6 +87,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Tool Handler — Clean hot path
 // ============================================================================
 
+// Serializes tool-call handling. The business logic is concurrency-safe, but
+// the stdio transport is not under parallel load, and MCP clients (incl. Claude
+// Code) batch independent tool calls by default. Concurrent JSON-RPC over stdio
+// could crash the server — and a stdio server cannot reconnect. Each call waits
+// for the previous to finish, so batched calls run FIFO instead of racing.
+let toolCallChain: Promise<void> = Promise.resolve();
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   const typedArgs = args as Record<string, unknown>;
@@ -95,6 +102,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   log.debug(`Tool: ${name}`, { tool: name, args });
 
   let timer: ReturnType<typeof createToolCallTimer> | null = null;
+
+  // Acquire the serialization gate: wait for the previous call, then install a
+  // fresh gate that the next call will wait on. Released in the finally below.
+  const prevCall = toolCallChain;
+  let releaseCall: () => void = () => {};
+  toolCallChain = new Promise<void>((resolve) => {
+    releaseCall = resolve;
+  });
+  await prevCall;
 
   try {
     // Initialize shared DB adapter (cached after first call)
@@ -207,6 +223,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: "text", text: isRecoverable ? errMsg : `Error: ${errMsg}` }],
       isError: !isRecoverable,
     };
+  } finally {
+    // Release the gate so the next queued tool call can proceed.
+    releaseCall();
   }
 });
 
