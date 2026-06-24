@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Muninn MCP Server — Session Lifecycle (v9 Simplified)
  *

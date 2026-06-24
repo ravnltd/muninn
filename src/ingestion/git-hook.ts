@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Git Post-Commit Ingester
  *

@@ -30,6 +30,11 @@ export const TOOL_DEFINITIONS = [
         content: { type: "string", description: "What you want to remember. Natural language." },
         type: { type: "string", enum: ["decision", "learning"], description: "Override auto-detection if needed" },
         files: { type: "array", items: { type: "string" }, description: "Related file paths" },
+        id: { type: "number", description: "Amend existing memory by ID (decision or learning)" },
+        supersedes: { type: "number", description: "Create new memory and mark this ID as superseded" },
+        alternatives: { type: "array", items: { type: "string" }, description: "Rejected alternatives with reasons (decisions only)" },
+        revisit_when: { type: "string", description: "Conditions that would make this decision wrong" },
+        durability: { type: "string", enum: ["permanent", "project", "session"], description: "How long to remember: permanent (years), project (default), session (expires)" },
         cwd: { type: "string", description: "Working directory" },
       },
       required: ["content"],
@@ -58,7 +63,7 @@ export const TOOL_DEFINITIONS = [
 
   {
     name: "muninn",
-    description: `Run a muninn CLI command. Available: status, reindex, db, fragile, outcome.`,
+    description: `Run a muninn command. Available: status, reindex, db, fragile, outcome, list, show, search.`,
     inputSchema: {
       type: "object" as const,
       properties: {

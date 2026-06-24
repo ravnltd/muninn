@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Dependency tracking commands
  * Import graph building, dependency analysis

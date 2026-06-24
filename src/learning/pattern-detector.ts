@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Pattern Detector — Cross-session pattern analysis
  *

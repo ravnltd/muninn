@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Global database connection management.
  *
@@ -64,6 +65,8 @@ export type DrizzleDb = BunSQLiteDatabase<SchemaType>;
 
 let globalAdapterInstance: DatabaseAdapter | null = null;
 let globalDrizzleInstance: DrizzleDb | null = null;
+// In-flight initialization, shared by concurrent first-callers (see getGlobalDb).
+let globalDbInitPromise: Promise<DatabaseAdapter> | null = null;
 
 // Load config once at module level
 const config = loadConfig();
@@ -82,10 +85,32 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
     return globalAdapterInstance;
   }
 
+  // Memoize the in-flight init so two concurrent first-callers share a single
+  // initialization instead of both passing the null check and racing to create
+  // duplicate adapters / double-run migrations. Reset on failure so a later
+  // call can retry cleanly.
+  if (!globalDbInitPromise) {
+    globalDbInitPromise = buildGlobalDb().catch((err) => {
+      globalDbInitPromise = null;
+      throw err;
+    });
+  }
+  return globalDbInitPromise;
+}
+
+async function buildGlobalDb(): Promise<DatabaseAdapter> {
   const dir = getMuninnHome();
   if (!existsSync(dir)) {
     Bun.spawnSync(["mkdir", "-p", dir]);
   }
+
+  // Build into a LOCAL variable and only publish to the module singleton after
+  // init + schema + migrations fully succeed. If we assigned globalAdapterInstance
+  // before init() and init() threw (e.g. a transient network blip at startup),
+  // the next call would short-circuit at the `if (globalAdapterInstance) return`
+  // guard and hand back an un-initialized adapter forever — permanently bricking
+  // the long-lived MCP server with "init() must be called before queries".
+  let adapter: DatabaseAdapter;
 
   // Create adapter based on config
   if (config.mode === "http") {
@@ -94,20 +119,20 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
     }
     // HTTP adapter — pure fetch, no native modules
     const { HttpAdapter } = await import("../adapters/http.js");
-    globalAdapterInstance = new HttpAdapter({
+    adapter = new HttpAdapter({
       primaryUrl: config.primaryUrl,
       authToken: config.authToken,
     });
-    await globalAdapterInstance.init();
+    await adapter.init();
   } else {
     const db = new Database(GLOBAL_DB_PATH);
     applyReliabilityPragmas(db);
-    globalAdapterInstance = new LocalAdapter(db);
+    adapter = new LocalAdapter(db);
   }
 
   // Ensure global tables exist (use raw DB for schema init)
   if (config.mode === "local") {
-    const rawDb = globalAdapterInstance.raw() as Database;
+    const rawDb = adapter.raw() as Database;
     initGlobalTables(rawDb);
     // Run local migrations (sync)
     const migResult = runMigrations(rawDb);
@@ -116,12 +141,12 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
     }
   } else {
     // For HTTP mode, skip init if schema already exists (fast path)
-    const schemaExists = await checkSchemaExists(globalAdapterInstance);
+    const schemaExists = await checkSchemaExists(adapter);
     if (!schemaExists) {
-      await initGlobalTablesAsync(globalAdapterInstance);
+      await initGlobalTablesAsync(adapter);
     }
     // Run async migrations (works with HTTP adapter)
-    const migResult = await runMigrationsAsync(globalAdapterInstance);
+    const migResult = await runMigrationsAsync(adapter);
     if (!migResult.ok) {
       console.error(`Migration warning: ${migResult.error.message}`);
     } else if (migResult.value.applied.length > 0) {
@@ -132,8 +157,10 @@ export async function getGlobalDb(): Promise<DatabaseAdapter> {
   }
 
   // Repair fts_issues if it was created with wrong columns (missing workaround/resolution)
-  await repairFtsIssues(globalAdapterInstance);
+  await repairFtsIssues(adapter);
 
+  // Publish only after full successful initialization.
+  globalAdapterInstance = adapter;
   return globalAdapterInstance;
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// @muninn — context in .muninn/context/
 
 /**
  * Muninn Background Worker

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Git integration commands
  * Drift detection, conflict checking, git status integration

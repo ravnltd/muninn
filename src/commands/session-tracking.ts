@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Session Tracking Helpers
  * Track file reads, queries, and entity modifications within a session

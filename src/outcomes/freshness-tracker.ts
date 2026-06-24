@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Knowledge Freshness Tracker — v7 Phase 4C
  *
@@ -51,7 +52,7 @@ export async function checkKnowledgeFreshness(
       created_at: string;
     }>(
       `SELECT id, updated_at, created_at FROM decisions
-       WHERE project_id = ? AND archived_at IS NULL AND outcome NOT IN ('failed')`,
+       WHERE project_id = ? AND archived_at IS NULL AND outcome_status NOT IN ('failed')`,
       [projectId],
     );
 

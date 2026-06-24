@@ -1,4 +1,5 @@
 #!/bin/bash
+# @muninn — context in .muninn/context/
 # Install Muninn CLI and MCP server globally
 
 set -e

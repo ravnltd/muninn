@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * First-Run Bootstrap from Git History
  *

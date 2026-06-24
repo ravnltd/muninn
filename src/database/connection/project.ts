@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Project database connection management.
  *
@@ -103,25 +104,28 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
       throw new Error("HTTP mode requires MUNINN_PRIMARY_URL");
     }
 
-    // HTTP adapter — pure fetch, no native modules
+    // HTTP adapter — pure fetch, no native modules.
+    // Build into a local var and publish only after init+schema+migrations
+    // succeed, so a transient init() failure can't poison the singleton.
     const { HttpAdapter } = await import("../adapters/http.js");
-    projectAdapterInstance = new HttpAdapter({
+    const adapter = new HttpAdapter({
       primaryUrl: config.primaryUrl,
       authToken: config.authToken,
     });
-    await projectAdapterInstance.init();
+    await adapter.init();
 
     // Load and execute schema asynchronously
     if (existsSync(SCHEMA_PATH)) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
-      await projectAdapterInstance.exec(schema);
+      await adapter.exec(schema);
     }
 
     // Run async migrations for HTTP mode
-    const migrationResult = await runMigrationsAsync(projectAdapterInstance);
+    const migrationResult = await runMigrationsAsync(adapter);
     if (!migrationResult.ok) {
       console.error(`Migration warning: ${migrationResult.error.message}`);
     }
+    projectAdapterInstance = adapter;
   } else {
     // For local mode, use sync operations
     const db = new Database(dbPath);

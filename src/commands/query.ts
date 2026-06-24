@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Query and search commands
  * Semantic search across project knowledge

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Call Graph Builder — Function-to-function call relationships
  *

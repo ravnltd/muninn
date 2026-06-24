@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Embedding CLI commands
  * Manage vector embeddings for semantic search

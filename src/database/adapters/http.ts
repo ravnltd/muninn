@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * HTTP Database Adapter
  *
@@ -106,7 +107,11 @@ export class HttpAdapter implements DatabaseAdapter {
   private readonly CIRCUIT_BASE_MS = 5_000; // 5s base cooldown (was 30s)
   private readonly CIRCUIT_MAX_MS = 60_000; // 60s max cooldown (was 5min)
   private readonly CIRCUIT_RESET_OPENS_MS = 30_000; // reset opens counter after 30s success
-  private readonly STALE_CACHE_TTL = 300_000; // 5min stale cache during circuit-open
+  // Stale cache is only served while the circuit is open. Bound its age to the
+  // circuit's MAX cooldown (60s) so we never hand back memory older than the
+  // longest outage we'd wait through — previously 5min, which could serve
+  // minutes-stale decisions/learnings after a brief blip.
+  private readonly STALE_CACHE_TTL = 60_000;
 
   // In-memory LRU cache for read queries
   private cache = new Map<string, { data: unknown; expiry: number; lastAccess: number }>();

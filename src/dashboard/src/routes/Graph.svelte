@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 <script lang="ts">
   import { onMount } from "svelte";
   import { getGraph, getRelationships, type GraphData, type GraphNode, type GraphEdge, type RelationshipInfo } from "../lib/api";

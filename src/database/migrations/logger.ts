@@ -10,7 +10,7 @@ export function logMigration(
   dbPath: string,
   version: number,
   name: string,
-  status: "start" | "success" | "failed",
+  status: "start" | "success" | "failed" | "skip-benign",
   error?: string,
 ): void {
   const dir = getMuninnHome();

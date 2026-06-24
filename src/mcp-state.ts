@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Muninn MCP Server — Shared State Module
  *
@@ -262,6 +263,9 @@ export const ALLOWED_PASSTHROUGH_COMMANDS = new Set([
   "db",
   "fragile",
   "outcome",
+  "list",
+  "show",
+  "search",
 ]);
 
 /**

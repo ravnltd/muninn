@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Drizzle ORM Schema
  * Type-safe database schema - single source of truth

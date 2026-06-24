@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Observation commands
  * Lightweight notes-to-self with auto-dedup

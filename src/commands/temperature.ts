@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Temperature System
  * Track entity heat (hot/warm/cold) based on recent reference patterns

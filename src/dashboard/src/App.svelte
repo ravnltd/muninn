@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 <script lang="ts">
   import { getProjects, type ProjectInfo } from "./lib/api";
   import Health from "./routes/Health.svelte";

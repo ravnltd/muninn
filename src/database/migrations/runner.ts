@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Migration Runner — Version management and atomic migration application
  *
@@ -224,12 +225,16 @@ async function applyMigrationAsync(
         await adapter.run(stmt);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        // Skip benign "already exists" errors (idempotent migrations)
+        // Skip benign "already exists" errors (idempotent re-runs). Match
+        // case-insensitively — sqld/libsql may phrase/case these differently
+        // than bun:sqlite. Log every skip so a silently half-applied migration
+        // is diagnosable instead of invisible.
+        const lower = msg.toLowerCase();
         if (
-          msg.includes("duplicate column") ||
-          msg.includes("already exists") ||
-          msg.includes("table already exists")
+          lower.includes("duplicate column") ||
+          lower.includes("already exists")
         ) {
+          logMigration(label, migration.version, migration.name, "skip-benign", msg);
           continue;
         }
         throw e;

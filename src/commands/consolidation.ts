@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Consolidation system
  * Groups cold entities into summary records without deleting originals

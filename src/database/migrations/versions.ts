@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Migration Versions — Immutable migration definitions
  *
@@ -2360,6 +2361,35 @@ export const MIGRATIONS: Migration[] = [
         !!beliefs &&
         !!predictions
       );
+    },
+  },
+  {
+    version: 47,
+    name: "decisions_updated_at",
+    description: "Add missing updated_at column to decisions table",
+    up: `
+      ALTER TABLE decisions ADD COLUMN updated_at DATETIME DEFAULT NULL;
+    `,
+    validate: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(decisions)")
+        .all();
+      return cols.some((c) => c.name === "updated_at");
+    },
+  },
+  {
+    version: 48,
+    name: "durability_markers",
+    description: "Add durability column to decisions and learnings for permanent/project/session scoping",
+    up: `
+      ALTER TABLE decisions ADD COLUMN durability TEXT DEFAULT 'project';
+      ALTER TABLE learnings ADD COLUMN durability TEXT DEFAULT 'project';
+    `,
+    validate: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(decisions)")
+        .all();
+      return cols.some((c) => c.name === "durability");
     },
   },
 ];

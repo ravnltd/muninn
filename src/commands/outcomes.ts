@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Outcome Tracking
  * Track whether architectural decisions worked out over time.

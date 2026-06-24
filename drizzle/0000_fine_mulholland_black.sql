@@ -1,3 +1,4 @@
+-- @muninn — context in .muninn/context/
 CREATE TABLE `blast_radius` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`project_id` integer NOT NULL,

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Global commands
  * Commands that use global DB without requiring a project:

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Shared types for Muninn Cloud
  *

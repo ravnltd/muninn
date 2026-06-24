@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Database connection management — thin re-export.
  *

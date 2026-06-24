@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * CLAUDE.md template for project initialization
  * Embedded as a string for single-binary distribution
@@ -115,6 +116,9 @@ muninn_file_add          # Update file knowledge
 muninn_decision_add      # Record significant choices
 muninn_learn_add         # Save insights
 \`\`\`
+
+### Knowledge Sidecars
+These are auto-injected when you read code files. Follow the rules in sidecars.
 
 *Run \`muninn --help\` for full CLI reference.*
 ${MUNINN_SECTION_END}

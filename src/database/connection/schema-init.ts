@@ -303,6 +303,7 @@ const GLOBAL_DDL = `
       outcome_at TEXT,
       check_after_sessions INTEGER DEFAULT 5,
       sessions_since INTEGER DEFAULT 0,
+      durability TEXT DEFAULT 'project',
       archived_at TEXT,
       consolidated_into INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -364,6 +365,7 @@ const GLOBAL_DDL = `
       embedding BLOB,
       temperature TEXT DEFAULT 'cold',
       last_referenced_at TEXT,
+      durability TEXT DEFAULT 'project',
       archived_at TEXT,
       consolidated_into INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

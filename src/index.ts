@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// @muninn — context in .muninn/context/
 /**
  * Muninn — Elite Mode
  * Main CLI entry point
@@ -25,7 +26,8 @@ import { handleEnrichCommand, handleApproveCommand, handleEnrichmentStatusComman
 import { handleFocusCommand } from "./commands/focus";
 import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { handleDebtCommand, handlePatternCommand, handleStackCommand } from "./commands/global";
-import { hookBrain, hookCheck, hookInit, hookPostEdit } from "./commands/hooks";
+import { hookBrain, hookCheck, hookInit, hookPostEdit, hookReadContext, hookProjectBrief } from "./commands/hooks";
+import { sidecarsGenerate, sidecarsClean, sidecarsShow } from "./commands/sidecars";
 import { handleInfraCommand } from "./commands/infra";
 import { handleNativeCommand } from "./commands/native";
 import { handleNetworkCommand } from "./commands/network";
@@ -654,8 +656,42 @@ async function main(): Promise<void> {
           case "brain":
             await hookBrain(db, projectId, process.cwd());
             break;
+          case "read-context":
+            if (!subArgs[1]) {
+              console.error("Usage: muninn hook read-context <file>");
+              process.exit(1);
+            }
+            await hookReadContext(db, projectId, subArgs[1]);
+            break;
+          case "project-brief":
+            await hookProjectBrief(db, projectId);
+            break;
           default:
-            console.error("Usage: muninn hook <check|init|post-edit|brain>");
+            console.error("Usage: muninn hook <check|init|post-edit|read-context|project-brief|brain>");
+            process.exit(1);
+        }
+        break;
+      }
+
+      // Knowledge sidecars
+      case "sidecars": {
+        const sidecarCmd = subArgs[0];
+        switch (sidecarCmd) {
+          case "generate":
+            await sidecarsGenerate(db, projectId, process.cwd());
+            break;
+          case "clean":
+            await sidecarsClean(process.cwd());
+            break;
+          case "show":
+            if (!subArgs[1]) {
+              console.error("Usage: muninn sidecars show <file>");
+              process.exit(1);
+            }
+            await sidecarsShow(db, projectId, subArgs[1]);
+            break;
+          default:
+            console.error("Usage: muninn sidecars <generate|clean|show>");
             process.exit(1);
         }
         break;

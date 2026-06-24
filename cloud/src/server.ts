@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Muninn Cloud — Hono Server Entry Point
  *

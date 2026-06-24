@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Focus commands
  * Set the current work area to prioritize related results

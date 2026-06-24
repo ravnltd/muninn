@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * API client for the Muninn dashboard
  */

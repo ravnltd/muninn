@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Muninn Dashboard Server
  * Hono-based API serving project data + static dashboard assets

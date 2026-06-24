@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Session State — Hook Communication Layer
  *

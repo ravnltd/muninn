@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Fast Startup Command
  * Combines resume + smart-status + session-start into a single process.

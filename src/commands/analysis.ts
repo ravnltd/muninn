@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Analysis commands
  * Project analysis, code review, status display

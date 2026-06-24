@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Active Inference Engine
  * Generates cross-session insights by analyzing patterns in the project data.

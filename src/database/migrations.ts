@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Database Migration System — Re-export from split modules
  *

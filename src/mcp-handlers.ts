@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Muninn MCP Handlers — In-Process
  *
@@ -84,7 +85,16 @@ export async function handleRecall(
 export async function handleRemember(
   db: DatabaseAdapter,
   projectId: number,
-  params: { content: string; type?: "decision" | "learning"; files?: string[] },
+  params: {
+    content: string;
+    type?: "decision" | "learning";
+    files?: string[];
+    id?: number;
+    supersedes?: number;
+    alternatives?: string[];
+    revisit_when?: string;
+    durability?: "permanent" | "project" | "session";
+  },
 ): Promise<string> {
   const { remember, formatRememberResult } = await import("./v9/remember.js");
   const result = await remember(db, projectId, params);
@@ -206,6 +216,21 @@ export async function handlePassthrough(
       case "db": {
         const { handleDatabaseCommand } = await import("./commands/database");
         handleDatabaseCommand(db, args);
+        break;
+      }
+      case "list": {
+        const { handleListCommand } = await import("./commands/list");
+        await handleListCommand(db, projectId, args);
+        break;
+      }
+      case "show": {
+        const { handleShowCommand } = await import("./commands/list");
+        await handleShowCommand(db, projectId, args);
+        break;
+      }
+      case "search": {
+        const { handleSearchCommand } = await import("./commands/list");
+        await handleSearchCommand(db, projectId, args);
         break;
       }
       default:

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Session Analyzer — Tool-log-based session analysis
  *

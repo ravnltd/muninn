@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Help text and display functions
  * Extracted from index.ts for maintainability

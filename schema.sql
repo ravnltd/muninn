@@ -1,3 +1,4 @@
+-- @muninn — context in .muninn/context/
 -- Muninn Database Schema
 -- Auto-generated from database at migration v45
 -- Generated: 2026-03-20
@@ -343,7 +344,7 @@ CREATE TABLE decisions (
     decided_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     embedding BLOB,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-, invariant TEXT, constraint_type TEXT DEFAULT 'should_hold', temperature TEXT DEFAULT 'cold', last_referenced_at DATETIME, outcome_status TEXT DEFAULT 'pending', outcome_notes TEXT, outcome_at DATETIME, check_after_sessions INTEGER DEFAULT 5, sessions_since INTEGER DEFAULT 0, archived_at TEXT, consolidated_into INTEGER, content_hash_snapshot TEXT);
+, invariant TEXT, constraint_type TEXT DEFAULT 'should_hold', temperature TEXT DEFAULT 'cold', last_referenced_at DATETIME, outcome_status TEXT DEFAULT 'pending', outcome_notes TEXT, outcome_at DATETIME, check_after_sessions INTEGER DEFAULT 5, sessions_since INTEGER DEFAULT 0, archived_at TEXT, consolidated_into INTEGER, content_hash_snapshot TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);
 
 CREATE TABLE deployments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Infrastructure queries
  * Optimized queries for server/service/route management

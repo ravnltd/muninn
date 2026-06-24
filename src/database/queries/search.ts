@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Search and FTS queries
  * Full-text search and semantic query functionality

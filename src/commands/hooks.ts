@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Hook commands
  * Optimized for automation with proper exit codes and concise output
@@ -422,6 +423,218 @@ export async function hookBrain(
   }
 
   console.error("Ready. Use muninn_query to search, muninn_check before editing.\n");
+}
+
+// ============================================================================
+// Hook Read-Context Command
+// Post-read injection — only speaks when there's something non-obvious
+// ============================================================================
+
+interface ReadContextLine {
+  type: "fragility" | "issue" | "decision" | "cochange";
+  text: string;
+}
+
+export async function hookReadContext(
+  db: DatabaseAdapter,
+  projectId: number,
+  filePath: string
+): Promise<void> {
+  const lines: ReadContextLine[] = [];
+
+  // Run all queries in parallel
+  const [fileRecord, issues, decisions, cochangersA, cochangersB] =
+    await Promise.all([
+      db.get<{
+        fragility: number;
+        fragility_reason: string | null;
+      }>(
+        `SELECT fragility, fragility_reason FROM files
+         WHERE project_id = ? AND path = ?`,
+        [projectId, filePath]
+      ),
+      db.all<{ id: number; title: string; severity: number }>(
+        `SELECT id, title, severity FROM issues
+         WHERE project_id = ? AND status = 'open'
+         AND (affected_files LIKE ? OR related_symbols LIKE ?)
+         ORDER BY severity DESC LIMIT 2`,
+        [projectId, `%${filePath}%`, `%${filePath}%`]
+      ),
+      db.all<{ id: number; title: string }>(
+        `SELECT id, title FROM decisions
+         WHERE project_id = ? AND status = 'active'
+         AND affects LIKE ?
+         ORDER BY created_at DESC LIMIT 2`,
+        [projectId, `%${filePath}%`]
+      ),
+      db.all<{ file_b: string; cochange_count: number }>(
+        `SELECT file_b, cochange_count FROM file_correlations
+         WHERE project_id = ? AND file_a = ? AND cochange_count >= 3
+         ORDER BY cochange_count DESC LIMIT 3`,
+        [projectId, filePath]
+      ),
+      db.all<{ file_a: string; cochange_count: number }>(
+        `SELECT file_a, cochange_count FROM file_correlations
+         WHERE project_id = ? AND file_b = ? AND cochange_count >= 3
+         ORDER BY cochange_count DESC LIMIT 3`,
+        [projectId, filePath]
+      ),
+    ]);
+
+  // Fragility (only surface if >= 5)
+  if (fileRecord && fileRecord.fragility >= 5) {
+    const reason = fileRecord.fragility_reason
+      ? ` — ${fileRecord.fragility_reason}`
+      : "";
+    lines.push({
+      type: "fragility",
+      text: `FRAGILITY ${fileRecord.fragility}/10${reason}`,
+    });
+  }
+
+  // Open issues
+  for (const issue of issues) {
+    lines.push({
+      type: "issue",
+      text: `ISSUE #${issue.id}: ${issue.title} (sev ${issue.severity})`,
+    });
+  }
+
+  // Constraining decisions
+  for (const d of decisions) {
+    lines.push({
+      type: "decision",
+      text: `DECISION D${d.id}: ${d.title}`,
+    });
+  }
+
+  // Co-changers (merge both directions, filter to project-relative paths)
+  const cochangers = [
+    ...cochangersA.map((c) => ({ path: c.file_b, count: c.cochange_count })),
+    ...cochangersB.map((c) => ({ path: c.file_a, count: c.cochange_count })),
+  ]
+    .filter((c) => !c.path.startsWith("/") && !c.path.startsWith("."))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3);
+
+  // Only show co-changers if there's already a signal, or correlation is very strong
+  const hasOtherSignal = lines.length > 0;
+  if (cochangers.length > 0 && (hasOtherSignal || cochangers[0].count >= 5)) {
+    lines.push({
+      type: "cochange",
+      text: `CO-CHANGES WITH: ${cochangers.map((c) => c.path).join(", ")}`,
+    });
+  }
+
+  // Only output if we have something worth saying
+  if (lines.length === 0) return;
+
+  // Output to stdout (injected into Claude's context)
+  const output = [`[muninn:${filePath}]`];
+  for (const line of lines) {
+    output.push(`  ${line.text}`);
+  }
+  console.log(output.join("\n"));
+}
+
+// ============================================================================
+// Hook Project Brief Command
+// Lightweight project orientation for session start
+// ============================================================================
+
+interface ProjectBrief {
+  hotFiles: Array<{ path: string; fragility: number }>;
+  activeDecisions: Array<{ id: number; title: string }>;
+  openIssueCount: number;
+  recentGoals: string[];
+  foundationalLearnings: Array<{ title: string; content: string }>;
+}
+
+export async function hookProjectBrief(
+  db: DatabaseAdapter,
+  projectId: number
+): Promise<ProjectBrief> {
+  const [hotFiles, activeDecisions, openIssueCount, recentSessions, foundational] =
+    await Promise.all([
+      // Hot/warm files first, fallback to high-fragility recently-referenced files
+      db.all<{ path: string; fragility: number }>(
+        `SELECT path, fragility FROM files
+         WHERE project_id = ? AND (
+           temperature IN ('hot', 'warm')
+           OR (fragility >= 7 AND last_referenced_at IS NOT NULL)
+         )
+         ORDER BY
+           CASE temperature WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 ELSE 2 END,
+           fragility DESC
+         LIMIT 5`,
+        [projectId]
+      ),
+      db.all<{ id: number; title: string }>(
+        `SELECT id, title FROM decisions
+         WHERE project_id = ? AND status = 'active'
+         ORDER BY created_at DESC
+         LIMIT 5`,
+        [projectId]
+      ),
+      db.get<{ count: number }>(
+        `SELECT COUNT(*) as count FROM issues
+         WHERE project_id = ? AND status = 'open'`,
+        [projectId]
+      ),
+      db.all<{ goal: string }>(
+        `SELECT DISTINCT goal FROM sessions
+         WHERE project_id = ? AND goal IS NOT NULL
+         ORDER BY started_at DESC
+         LIMIT 5`,
+        [projectId]
+      ),
+      db.all<{ title: string; content: string }>(
+        `SELECT title, content FROM learnings
+         WHERE project_id = ? AND foundational = 1 AND confidence >= 7
+         ORDER BY times_applied DESC
+         LIMIT 5`,
+        [projectId]
+      ),
+    ]);
+
+  const brief: ProjectBrief = {
+    hotFiles,
+    activeDecisions,
+    openIssueCount: openIssueCount?.count ?? 0,
+    recentGoals: recentSessions.map((s) => s.goal),
+    foundationalLearnings: foundational,
+  };
+
+  // Output markdown to stdout
+  const lines: string[] = [];
+
+  if (hotFiles.length > 0) {
+    lines.push(
+      `Hot: ${hotFiles.map((f) => `${f.path}${f.fragility >= 7 ? " (FRAGILE)" : ""}`).join(", ")}`
+    );
+  }
+
+  if (activeDecisions.length > 0) {
+    lines.push(
+      `Decisions: ${activeDecisions.map((d) => `D${d.id} ${d.title.substring(0, 50)}`).join(" | ")}`
+    );
+  }
+
+  if (brief.openIssueCount > 0) {
+    lines.push(`Issues: ${brief.openIssueCount} open`);
+  }
+
+  if (foundational.length > 0) {
+    lines.push(
+      `Key learnings: ${foundational.map((l) => l.title).join(", ")}`
+    );
+  }
+
+  if (lines.length > 0) {
+    console.log(lines.join("\n"));
+  }
+
+  return brief;
 }
 
 // ============================================================================

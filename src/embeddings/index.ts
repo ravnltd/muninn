@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Core embedding module
  * Provides embedding generation, serialization, and similarity functions

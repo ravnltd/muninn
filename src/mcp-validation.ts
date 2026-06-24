@@ -114,7 +114,11 @@ export const RecallInput = z.object({
   cwd: SafeCwd,
 }).refine(
   (data) => data.files || data.query || data.task,
-  { message: "Provide at least one of: files, query, or task" },
+  {
+    message:
+      'recall needs exactly one mode — files: ["path.ts"] for pre-edit warnings, ' +
+      'query: "search terms" to search memory, or task: "what you are planning" for planning context',
+  },
 );
 
 /**
@@ -124,6 +128,11 @@ export const RememberInput = z.object({
   content: NaturalText,
   type: z.enum(["decision", "learning"]).optional(),
   files: z.array(SafePath).max(20).optional(),
+  id: z.number().int().positive().optional(),
+  supersedes: z.number().int().positive().optional(),
+  alternatives: z.array(ShortNaturalText).max(10).optional(),
+  revisit_when: ShortNaturalText.optional(),
+  durability: z.enum(["permanent", "project", "session"]).optional(),
   cwd: SafeCwd,
 });
 
@@ -171,6 +180,11 @@ export function validateInput<T>(
   if (result.success) {
     return { success: true, data: result.data };
   }
-  const errors = result.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
-  return { success: false, error: `Validation failed: ${errors}` };
+  const errors = result.error.issues
+    .map((e) => `${e.path.join(".") || "input"}: ${e.message}`)
+    .join("; ");
+  return {
+    success: false,
+    error: `Invalid input — fix and retry: ${errors}`,
+  };
 }

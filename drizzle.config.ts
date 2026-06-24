@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({

@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Vector search queries
  * Semantic similarity search using embeddings

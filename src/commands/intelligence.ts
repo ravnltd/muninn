@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Intelligence commands
  * Smart status, pre-edit checks, impact analysis

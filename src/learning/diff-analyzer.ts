@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Diff Analyzer — Automatic commit intent analysis
  *

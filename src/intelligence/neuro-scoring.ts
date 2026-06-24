@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Neuro-Aware Memory Scoring — state-dependent, emotionally weighted retrieval.
  *

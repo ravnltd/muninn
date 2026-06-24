@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Redis client for Muninn — used for pub/sub bridge with Huginn.
  *

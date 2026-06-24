@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// @muninn — context in .muninn/context/
 
 /**
  * Muninn — MCP Server v9 (Simplified)
@@ -25,7 +26,6 @@ import {
   RememberInput,
   TrackInput,
   PassthroughInput,
-  SafePassthroughArg,
   validateInput,
 } from "./mcp-validation.js";
 import { createToolCallTimer } from "./ingestion/tool-logger.js";
@@ -162,16 +162,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(
             `Command "${subcommand}" not available. Allowed: ${[...ALLOWED_PASSTHROUGH_COMMANDS].sort().join(", ")}`
           );
-        }
-
-        // Validate each argument for shell metacharacters
-        for (let i = 1; i < parsedArgs.length; i++) {
-          const argResult = SafePassthroughArg.safeParse(parsedArgs[i]);
-          if (!argResult.success) {
-            throw new Error(
-              `Invalid argument at position ${i}: ${argResult.error.issues[0]?.message || "validation failed"}`
-            );
-          }
         }
 
         const passthroughCwd = validation.data.cwd || cwd;

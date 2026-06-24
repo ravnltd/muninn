@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Network commands
  * Manage HTTP mode and health monitoring

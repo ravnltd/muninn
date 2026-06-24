@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Validation utilities using Zod
  * Provides type-safe validation for CLI inputs and data

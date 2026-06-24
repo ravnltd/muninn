@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Error handling utilities
  * Provides structured error handling and logging

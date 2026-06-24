@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Temporal Intelligence
  * Applies time-aware scoring to search results, tracks file velocity,

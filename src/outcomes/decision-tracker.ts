@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Decision Outcome Auto-Tracker — Automatic decision validation
  *

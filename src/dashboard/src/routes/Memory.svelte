@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 <script lang="ts">
   import {
     getFiles, getDecisions, getLearnings, getIssues,

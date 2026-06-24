@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * AST Parser — TypeScript Compiler API for Deep Analysis
  *

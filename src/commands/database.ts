@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Database commands
  * Handles: db check, version, migrate, errors, optimize

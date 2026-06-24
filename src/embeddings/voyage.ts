@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Voyage AI embedding client
  * Uses voyage-3-lite model (512 dimensions)

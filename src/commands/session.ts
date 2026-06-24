@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Session commands
  * Track work sessions with goals, outcomes, and next steps

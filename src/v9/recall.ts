@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * v9 Recall — The Only Retrieval Tool
  *
@@ -41,6 +42,7 @@ interface RecallSearchResult {
   confidence: number;
   stage?: string;
   neuroSnapshot?: string;
+  source?: "fts" | "vector";
 }
 
 interface RecallResult {
@@ -51,6 +53,14 @@ interface RecallResult {
   warnings: string[];
   /** Serialized result IDs for retrieval feedback tracking */
   resultIds: string | null;
+  searchMeta?: {
+    strategy: "fts" | "vector" | "hybrid";
+    queryUsed: string;
+    totalFound: number;
+    returned: number;
+    ftsHits: number;
+    vectorHits: number;
+  };
 }
 
 // ============================================================================
@@ -266,13 +276,15 @@ async function recallSearch(
   // Merge results: vector takes priority, deduplicate by type+id
   const seen = new Set<string>();
   const merged: RecallSearchResult[] = [];
+  const rawFtsHits = ftsResults.length;
+  const rawVectorHits = vectorResults.length;
 
   // Vector results first (higher quality)
   for (const r of vectorResults) {
     const key = `${r.type}:${r.id}`;
     if (!seen.has(key)) {
       seen.add(key);
-      merged.push(r);
+      merged.push({ ...r, source: "vector" });
     }
   }
 
@@ -281,9 +293,11 @@ async function recallSearch(
     const key = `${r.type}:${r.id}`;
     if (!seen.has(key)) {
       seen.add(key);
-      merged.push(r);
+      merged.push({ ...r, source: "fts" });
     }
   }
+
+  const totalFound = merged.length;
 
   // Apply retrieval boosts from feedback loop
   const boosts = await getRetrievalBoostsIfAvailable(db, projectId);
@@ -293,6 +307,8 @@ async function recallSearch(
   // Collect result IDs for feedback tracking
   const ids = final.map((r) => `${r.type}:${r.id}`);
 
+  const strategy = rawVectorHits > 0 && rawFtsHits > 0 ? "hybrid" : rawVectorHits > 0 ? "vector" : "fts";
+
   return {
     mode: "search",
     files: [],
@@ -300,6 +316,14 @@ async function recallSearch(
     relatedFiles: [],
     warnings: final.length === 0 ? ["No results found"] : [],
     resultIds: ids.length > 0 ? JSON.stringify(ids) : null,
+    searchMeta: {
+      strategy,
+      queryUsed: escapeFtsQuery(query),
+      totalFound,
+      returned: final.length,
+      ftsHits: rawFtsHits,
+      vectorHits: rawVectorHits,
+    },
   };
 }
 
@@ -476,19 +500,21 @@ async function recallPlan(
   // Merge knowledge results
   const seen = new Set<string>();
   const results: RecallSearchResult[] = [];
+  const rawFtsHits = ftsResults.length;
+  const rawVectorHits = vectorKnowledgeResults.length;
 
   for (const r of vectorKnowledgeResults) {
     const key = `${r.type}:${r.id}`;
     if (!seen.has(key)) {
       seen.add(key);
-      results.push(r);
+      results.push({ ...r, source: "vector" });
     }
   }
   for (const r of ftsResults) {
     const key = `${r.type}:${r.id}`;
     if (!seen.has(key)) {
       seen.add(key);
-      results.push(r);
+      results.push({ ...r, source: "fts" });
     }
   }
 
@@ -510,6 +536,8 @@ async function recallPlan(
     }
   }
 
+  const totalFound = results.length;
+
   // Apply boosts and stage ranking
   const boosts = await getRetrievalBoostsIfAvailable(db, projectId);
   const boosted = applyBoostsAndStageRanking(results, boosts);
@@ -522,6 +550,8 @@ async function recallPlan(
     ...relatedFiles.map((f) => `file:${f.path}`),
   ];
 
+  const strategy = rawVectorHits > 0 && rawFtsHits > 0 ? "hybrid" : rawVectorHits > 0 ? "vector" : "fts";
+
   return {
     mode: "plan",
     files: [],
@@ -529,6 +559,14 @@ async function recallPlan(
     relatedFiles,
     warnings: [],
     resultIds: ids.length > 0 ? JSON.stringify(ids) : null,
+    searchMeta: {
+      strategy,
+      queryUsed: escapeFtsQuery(task),
+      totalFound,
+      returned: finalResults.length,
+      ftsHits: rawFtsHits,
+      vectorHits: rawVectorHits,
+    },
   };
 }
 
@@ -747,94 +785,86 @@ function escapeFtsQuery(query: string): string {
 export function formatRecallResult(result: RecallResult): string {
   const sections: string[] = [];
 
-  // Warnings first
+  // Warnings first — these are the things to act on before editing.
   if (result.warnings.length > 0) {
     sections.push("WARNINGS:\n" + result.warnings.map((w) => `  ! ${w}`).join("\n"));
   }
 
-  // Files mode
+  // Files mode — one block per file, related context indented beneath it so the
+  // scoping (this decision/issue/learning belongs to THIS file) is unambiguous.
   if (result.mode === "files") {
     for (const f of result.files) {
-      const parts = [f.path];
-      if (f.fragility > 0) parts.push(`frag:${f.fragility}`);
-      if (f.type) parts.push(f.type);
-      if (f.purpose) parts.push(f.purpose.slice(0, 50));
-      sections.push(`F[${parts.join("|")}]`);
+      const meta: string[] = [];
+      if (f.fragility > 0) meta.push(`fragility ${f.fragility}/10`);
+      if (f.type) meta.push(f.type);
+      const metaStr = meta.length > 0 ? `  [${meta.join(" · ")}]` : "";
+      const purpose = f.purpose ? `  ${f.purpose.slice(0, 60)}` : "";
+      sections.push(`FILE ${f.path}${metaStr}${purpose}`);
 
       if (f.cochangers.length > 0) {
-        sections.push(`  co-changes: ${f.cochangers.map((c) => `${c.file} (${c.count}x)`).join(", ")}`);
+        sections.push(`  co-changes with: ${f.cochangers.map((c) => `${c.file} (${c.count}x)`).join(", ")}`);
       }
-
       for (const d of f.decisions) {
-        sections.push(`  D[${d.title.slice(0, 60)}]`);
+        sections.push(`  decision: ${d.title.slice(0, 70)}`);
       }
-
       for (const i of f.issues) {
-        sections.push(`  I[#${i.id}|sev:${i.severity}|${i.title.slice(0, 40)}]`);
+        sections.push(`  issue #${i.id} [sev ${i.severity}]: ${i.title.slice(0, 60)}`);
       }
-
       for (const l of f.learnings) {
-        const cat = l.category ? `${l.category}|` : "";
-        sections.push(`  K[${cat}${l.title.slice(0, 50)}|conf:${l.confidence}]`);
+        const cat = l.category ? `[${l.category}] ` : "";
+        sections.push(`  learning: ${cat}${l.title.slice(0, 60)} (conf ${l.confidence})`);
       }
-
       if (f.blastRadius) {
         const b = f.blastRadius;
-        sections.push(`  B[score:${b.score}|direct:${b.direct}|trans:${b.transitive}|tests:${b.tests}|risk:${b.risk}]`);
+        sections.push(
+          `  blast-radius: score ${b.score} · direct ${b.direct} · transitive ${b.transitive} · tests ${b.tests} · risk ${b.risk}`,
+        );
       }
     }
   }
 
-  // Search/plan results
+  // Search/plan results — grouped under labeled headers, most useful first.
   if (result.results.length > 0) {
-    const decisions = result.results.filter((r) => r.type === "decision");
-    const learnings = result.results.filter((r) => r.type === "learning");
-    const issues = result.results.filter((r) => r.type === "issue");
-    const files = result.results.filter((r) => r.type === "file");
+    const group = (
+      label: string,
+      items: typeof result.results,
+      render: (r: (typeof result.results)[number]) => string[],
+    ): void => {
+      if (items.length === 0) return;
+      sections.push(`${label}:`);
+      for (const item of items) sections.push(...render(item));
+    };
 
-    if (decisions.length > 0) {
-      for (const d of decisions) {
-        const conf = Math.round(d.confidence * 100);
-        sections.push(`D[${d.title.slice(0, 60)}|${conf}%]`);
-        if (d.content) sections.push(`  ${d.content.slice(0, 80)}`);
-      }
-    }
+    group("DECISIONS", result.results.filter((r) => r.type === "decision"), (d) => {
+      const lines = [`  ${d.title.slice(0, 70)} (${Math.round(d.confidence * 100)}%)`];
+      if (d.content) lines.push(`    ${d.content.slice(0, 100)}`);
+      return lines;
+    });
 
-    if (learnings.length > 0) {
-      for (const l of learnings) {
-        const conf = Math.round(l.confidence * 100);
-        sections.push(`K[${l.title.slice(0, 60)}|conf:${conf}%]`);
-        if (l.content) sections.push(`  ${l.content.slice(0, 80)}`);
-      }
-    }
+    group("LEARNINGS", result.results.filter((r) => r.type === "learning"), (l) => {
+      const lines = [`  ${l.title.slice(0, 70)} (${Math.round(l.confidence * 100)}%)`];
+      if (l.content) lines.push(`    ${l.content.slice(0, 100)}`);
+      return lines;
+    });
 
-    if (issues.length > 0) {
-      for (const i of issues) {
-        sections.push(`I[#${i.id}|${i.title.slice(0, 50)}]`);
-      }
-    }
+    group("ISSUES", result.results.filter((r) => r.type === "issue"), (i) => [
+      `  #${i.id} ${i.title.slice(0, 60)}`,
+    ]);
 
-    if (files.length > 0) {
-      for (const f of files) {
-        sections.push(`F[${f.title}|${f.content?.slice(0, 40) ?? ""}]`);
-      }
-    }
+    group("FILES", result.results.filter((r) => r.type === "file"), (f) => [
+      `  ${f.title}${f.content ? ` — ${f.content.slice(0, 60)}` : ""}`,
+    ]);
 
-    const cogEvents = result.results.filter((r) => r.type === "cognitive_event");
-    if (cogEvents.length > 0) {
-      for (const ce of cogEvents) {
-        sections.push(`CE[${ce.title}|${ce.content?.slice(0, 80) ?? ""}]`);
-      }
-    }
+    // Huginn cognitive bridge (populated by an external process; may be empty).
+    group("COGNITIVE EVENTS", result.results.filter((r) => r.type === "cognitive_event"), (ce) => [
+      `  ${ce.title} ${ce.content?.slice(0, 90) ?? ""}`,
+    ]);
 
-    const beliefs = result.results.filter((r) => r.type === "belief");
-    if (beliefs.length > 0) {
-      for (const b of beliefs) {
-        const conf = Math.round(b.confidence * 100);
-        sections.push(`B[${b.title}|conf:${conf}%]`);
-        if (b.content) sections.push(`  ${b.content.slice(0, 100)}`);
-      }
-    }
+    group("BELIEFS", result.results.filter((r) => r.type === "belief"), (b) => {
+      const lines = [`  ${b.title} (${Math.round(b.confidence * 100)}%)`];
+      if (b.content) lines.push(`    ${b.content.slice(0, 110)}`);
+      return lines;
+    });
   }
 
   // Related files (plan mode)
@@ -844,6 +874,14 @@ export function formatRecallResult(result: RecallResult): string {
       const sim = f.similarity > 0 ? ` (${Math.round(f.similarity * 100)}%)` : "";
       sections.push(`  ${f.path}${sim} — ${f.reason}`);
     }
+  }
+
+  // Search metadata footer
+  if (result.searchMeta) {
+    const m = result.searchMeta;
+    sections.push(
+      `--- search: ${m.strategy} | query: "${m.queryUsed}" | ${m.totalFound} found, ${m.returned} returned | fts:${m.ftsHits} vector:${m.vectorHits} ---`,
+    );
   }
 
   if (sections.length === 0) {

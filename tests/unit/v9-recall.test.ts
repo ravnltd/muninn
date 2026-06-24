@@ -138,10 +138,10 @@ describe("v9 Recall", () => {
 
     const formatted = formatRecallResult(result);
     expect(formatted).toContain("WARNINGS:");
-    expect(formatted).toContain("F[src/auth.ts|frag:8|module|Auth logic]");
-    expect(formatted).toContain("co-changes:");
-    expect(formatted).toContain("D[Use JWT]");
-    expect(formatted).toContain("I[#1|sev:7|Timeout bug]");
-    expect(formatted).toContain("B[score:45|direct:3|trans:12|tests:2|risk:medium]");
+    expect(formatted).toContain("FILE src/auth.ts  [fragility 8/10 · module]  Auth logic");
+    expect(formatted).toContain("co-changes with:");
+    expect(formatted).toContain("decision: Use JWT");
+    expect(formatted).toContain("issue #1 [sev 7]: Timeout bug");
+    expect(formatted).toContain("blast-radius: score 45 · direct 3 · transitive 12 · tests 2 · risk medium");
   });
 });

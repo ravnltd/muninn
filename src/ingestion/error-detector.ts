@@ -1,3 +1,4 @@
+// @muninn — context in .muninn/context/
 /**
  * Error Event Detector — Regex-only error detection from Bash output
  *

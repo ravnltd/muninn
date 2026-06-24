@@ -1,3 +1,4 @@
+-- @muninn — context in .muninn/context/
 -- Muninn Cloud Management Database Schema
 -- Stores tenant metadata, auth, and billing. NOT customer data.
 
