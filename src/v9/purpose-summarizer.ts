@@ -75,14 +75,20 @@ export async function summarizePurposes(
   return { updated, candidates: candidates.length, skipped: null };
 }
 
-/** Count files that still need a purpose — used to decide whether to queue the job. */
-export async function countPurposeCandidates(db: DatabaseAdapter, projectId: number): Promise<number> {
-  const row = await db.get<{ cnt: number }>(
-    `SELECT COUNT(*) as cnt FROM files
+/** Count files the summarizer would actually process — used to decide whether
+ *  to queue the job. Must apply the same filters as findPurposeCandidates, or
+ *  refresh re-queues no-op jobs forever for non-code/deleted files. */
+export async function countPurposeCandidates(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string,
+): Promise<number> {
+  const rows = await db.all<{ path: string }>(
+    `SELECT path FROM files
      WHERE project_id = ? AND status = 'active' AND (${JUNK_PURPOSE_WHERE})`,
     [projectId],
   );
-  return row?.cnt ?? 0;
+  return rows.filter((r) => CODE_EXTENSIONS.test(r.path) && existsSync(join(projectPath, r.path))).length;
 }
 
 /** Purposes the structural capture path produces that carry no information. */

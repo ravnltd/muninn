@@ -699,7 +699,7 @@ async function main(): Promise<void> {
             // Queue LLM purpose summarization when the map has junk purposes
             try {
               const { countPurposeCandidates } = await import("./v9/purpose-summarizer");
-              const missing = await countPurposeCandidates(db, projectId);
+              const missing = await countPurposeCandidates(db, projectId, process.cwd());
               if (missing > 0) {
                 await db.run(`INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`, [
                   "summarize_purposes",
