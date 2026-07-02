@@ -35,6 +35,14 @@ type JobHandler = (db: DatabaseAdapter, payload: Record<string, unknown>) => Pro
 // ============================================================================
 
 const JOB_HANDLERS: Record<string, JobHandler> = {
+  // v10: LLM one-line file purposes feeding the prompt map
+  async summarize_purposes(db, payload) {
+    const { summarizePurposes } = await import("./v9/purpose-summarizer");
+    const projectId = payload.projectId as number;
+    const projectPath = payload.projectPath as string;
+    await summarizePurposes(db, projectId, projectPath);
+  },
+
   async analyze_commit(db, payload) {
     const { processCommit } = await import("./ingestion/git-hook");
     const projectId = payload.projectId as number;

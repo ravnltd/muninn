@@ -696,6 +696,23 @@ async function main(): Promise<void> {
               await assignSessionNumber(db, projectId, newSessionId);
             }
             const result = await refreshContextCache(db, projectId, process.cwd());
+            // Queue LLM purpose summarization when the map has junk purposes
+            try {
+              const { countPurposeCandidates } = await import("./v9/purpose-summarizer");
+              const missing = await countPurposeCandidates(db, projectId);
+              if (missing > 0) {
+                await db.run(`INSERT INTO work_queue (job_type, payload) VALUES (?, ?)`, [
+                  "summarize_purposes",
+                  JSON.stringify({ projectId, projectPath: process.cwd() }),
+                ]);
+                const workerPath = new URL("./worker.ts", import.meta.url).pathname;
+                Bun.spawn(["bun", "run", workerPath, "--once", "--type", "summarize_purposes"], {
+                  stdio: ["ignore", "ignore", "ignore"],
+                }).unref();
+              }
+            } catch {
+              // Purpose summarization is best-effort
+            }
             outputJson(result);
             break;
           }

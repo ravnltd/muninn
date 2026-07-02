@@ -70,16 +70,77 @@ export async function refreshContextCache(
   const filesDir = join(contextDir, FILES_DIR);
   mkdirSync(filesDir, { recursive: true });
 
-  const [sessionStart, bundleResult] = await Promise.all([
+  const [sessionStart, bundleResult, map] = await Promise.all([
     generateSessionStart(db, projectId),
     generateFileBundles(db, projectId, projectPath, filesDir),
+    generatePromptMap(db, projectId),
   ]);
 
   writeFileSync(join(contextDir, "session-start.md"), sessionStart);
+  writeFileSync(join(contextDir, "map.json"), JSON.stringify(map));
   writeMeta(contextDir, bundleResult);
   const cleaned = cleanLegacySidecars(contextDir);
 
   return { ...bundleResult, cleaned };
+}
+
+// ============================================================================
+// Prompt Map — compact index for the UserPromptSubmit task-map hook
+// ============================================================================
+
+/** Shape consumed by src/v9/prompt-map.ts (which must stay database-free). */
+export interface PromptMap {
+  version: 1;
+  generatedAt: string;
+  files: Array<{ p: string; purpose: string | null; t: string | null; frag: number; sym: string[] }>;
+  rel: Array<[string, string, number]>;
+}
+
+const MAX_SYMBOLS_PER_FILE = 12;
+
+async function generatePromptMap(db: DatabaseAdapter, projectId: number): Promise<PromptMap> {
+  const [files, symbols, correlations] = await Promise.all([
+    db.all<{ path: string; purpose: string | null; type: string | null; fragility: number }>(
+      `SELECT path, purpose, type, fragility FROM files
+       WHERE project_id = ? AND status = 'active'`,
+      [projectId],
+    ),
+    db.all<{ path: string; name: string }>(
+      `SELECT f.path, s.name FROM symbols s
+       JOIN files f ON s.file_id = f.id
+       WHERE f.project_id = ? AND f.status = 'active'`,
+      [projectId],
+    ),
+    db.all<{ file_a: string; file_b: string; cochange_count: number }>(
+      `SELECT file_a, file_b, cochange_count FROM file_correlations
+       WHERE project_id = ? AND cochange_count >= 3`,
+      [projectId],
+    ),
+  ]);
+
+  const symbolsByFile = new Map<string, string[]>();
+  for (const s of symbols) {
+    const list = symbolsByFile.get(s.path) ?? [];
+    if (list.length < MAX_SYMBOLS_PER_FILE) list.push(s.name);
+    symbolsByFile.set(s.path, list);
+  }
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    files: files
+      .filter((f) => isProjectRelativePath(f.path))
+      .map((f) => ({
+        p: f.path,
+        purpose: f.purpose,
+        t: f.type,
+        frag: f.fragility,
+        sym: symbolsByFile.get(f.path) ?? [],
+      })),
+    rel: correlations
+      .filter((c) => isProjectRelativePath(c.file_a) && isProjectRelativePath(c.file_b))
+      .map((c) => [c.file_a, c.file_b, c.cochange_count]),
+  };
 }
 
 /** Refresh the bundle for a single file (post-edit fast path). */

@@ -112,6 +112,17 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
       ],
     },
   ],
+  UserPromptSubmit: [
+    {
+      matcher: "*",
+      hooks: [
+        {
+          type: "command",
+          command: "~/.claude/hooks/context-integration/user-prompt-map.sh",
+        },
+      ],
+    },
+  ],
   SessionStart: [
     {
       matcher: "*",
@@ -136,8 +147,10 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
   ],
 }
 
-/** Hook types that were removed in v9 — clean up from settings.json */
-const REMOVED_HOOK_TYPES = ["PreToolUse", "UserPromptSubmit"]
+/** Hook types that were removed in v9 — clean up from settings.json.
+ *  UserPromptSubmit returned in v10 (task map); its stale entries are
+ *  replaced by the normal register loop below. */
+const REMOVED_HOOK_TYPES = ["PreToolUse"]
 
 /** Check if a hook group contains a context-integration command */
 function isMuninnHookGroup(group: { hooks?: Array<{ command?: string }> }): boolean {
