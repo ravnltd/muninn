@@ -2406,4 +2406,33 @@ export const MIGRATIONS: Migration[] = [
       return cols.some((c) => c.name === "machine");
     },
   },
+  {
+    version: 50,
+    name: "injection_ledger",
+    description:
+      "Log hook context injections for the learned-relevance feedback loop and token ledger (v10). " +
+      "Named injection_ledger because a legacy v7 context_injections table already exists with a different shape.",
+    up: `
+      CREATE TABLE IF NOT EXISTS injection_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        target TEXT NOT NULL,
+        bytes INTEGER DEFAULT 0,
+        acted INTEGER DEFAULT NULL,
+        injected_at TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_injection_ledger_project ON injection_ledger(project_id, kind);
+      CREATE INDEX IF NOT EXISTS idx_injection_ledger_target ON injection_ledger(project_id, target);
+    `,
+    validate: (db) => {
+      const table = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'injection_ledger'",
+        )
+        .get();
+      return !!table;
+    },
+  },
 ];

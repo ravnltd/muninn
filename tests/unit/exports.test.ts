@@ -7,11 +7,11 @@
 import { describe, expect, test } from "bun:test";
 
 describe("Export Snapshots", () => {
-  test("MIGRATIONS array has 49 entries", async () => {
+  test("MIGRATIONS array has 50 entries", async () => {
     const { MIGRATIONS } = await import("../../src/database/migrations");
-    expect(MIGRATIONS).toHaveLength(49);
+    expect(MIGRATIONS).toHaveLength(50);
     expect(MIGRATIONS[0].version).toBe(1);
-    expect(MIGRATIONS[48].version).toBe(49);
+    expect(MIGRATIONS[49].version).toBe(50);
   });
 
   test("TOOL_DEFINITIONS array has 4 tools", async () => {

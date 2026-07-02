@@ -21,7 +21,7 @@
  */
 
 import type { DatabaseAdapter } from "../database/adapter.js";
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
@@ -70,6 +70,8 @@ export async function refreshContextCache(
   const contextDir = join(projectPath, CONTEXT_DIR);
   const filesDir = join(contextDir, FILES_DIR);
   mkdirSync(filesDir, { recursive: true });
+
+  await ingestInjectionLog(db, projectId, projectPath).catch(() => undefined);
 
   const [sessionStart, bundleResult, map, globalContext] = await Promise.all([
     generateSessionStart(db, projectId),
@@ -353,7 +355,10 @@ async function generateFileBundles(
   filesDir: string,
 ): Promise<{ bundles: number; skipped: number }> {
   // Bulk-load once — sqld serializes requests, so per-file queries take minutes.
-  const project = await loadProjectContextData(db, projectId);
+  const [project, suppressed] = await Promise.all([
+    loadProjectContextData(db, projectId),
+    getSuppressedTargets(db, projectId),
+  ]);
   const candidates = qualifyingPathsFrom(project);
   const onDisk = candidates.filter((p) => {
     const full = join(projectPath, p);
@@ -365,7 +370,15 @@ async function generateFileBundles(
   const written = new Set<string>();
 
   for (const filePath of onDisk) {
-    const content = formatFileBundle(buildBundleData(filePath, project));
+    const data = buildBundleData(filePath, project);
+    // Learned relevance: repeatedly ignored bundles stop firing — unless they
+    // carry fragility or open-issue warnings, which earn their tokens by
+    // preventing edits rather than causing them.
+    if (suppressed.has(filePath) && data.fragility < FRAGILITY_THRESHOLD && data.issues.length === 0) {
+      skipped++;
+      continue;
+    }
+    const content = formatFileBundle(data);
     if (!content) {
       skipped++;
       continue;
@@ -608,6 +621,126 @@ export function formatFileBundle(data: FileBundleData): string | null {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+// ============================================================================
+// Learned Relevance — injection feedback loop + token ledger
+// ============================================================================
+
+interface InjectionLogEntry {
+  ts: string;
+  kind: string;
+  target: string;
+  bytes: number;
+}
+
+export interface InjectionStats {
+  injections: number;
+  tokens: number;
+  actedRate: number | null;
+}
+
+/**
+ * Ingest the local injection ledger written by hooks. "Acted" = the injected
+ * file (or a mapped file) was subsequently edited in the most recent session —
+ * the honest signal for whether an injection changed behavior.
+ */
+export async function ingestInjectionLog(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string,
+): Promise<number> {
+  const logPath = join(projectPath, CONTEXT_DIR, "injections.log");
+  if (!existsSync(logPath)) return 0;
+
+  const raw = readFileSync(logPath, "utf-8");
+  const entries: InjectionLogEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as InjectionLogEntry;
+      if (parsed.kind && parsed.target) entries.push(parsed);
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  if (entries.length === 0) {
+    unlinkSync(logPath);
+    return 0;
+  }
+
+  const touched = await latestSessionFiles(db, projectId);
+  const statements = entries.map((e) => ({
+    sql: `INSERT INTO injection_ledger (project_id, kind, target, bytes, acted, injected_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    params: [projectId, e.kind, e.target, e.bytes ?? 0, touched.has(e.target) ? 1 : 0, e.ts ?? null],
+  }));
+  await db.batch(statements);
+  unlinkSync(logPath);
+  return entries.length;
+}
+
+async function latestSessionFiles(db: DatabaseAdapter, projectId: number): Promise<Set<string>> {
+  const session = await db.get<{ files_touched: string | null }>(
+    `SELECT files_touched FROM sessions WHERE project_id = ?
+     ORDER BY started_at DESC LIMIT 1`,
+    [projectId],
+  );
+  const touched = new Set<string>();
+  if (session?.files_touched) {
+    try {
+      const parsed = JSON.parse(session.files_touched) as unknown;
+      if (Array.isArray(parsed)) for (const p of parsed) if (typeof p === "string") touched.add(p);
+    } catch {
+      // Malformed history — treat as no edits
+    }
+  }
+  return touched;
+}
+
+/**
+ * Files whose bundles were injected repeatedly and never preceded an edit.
+ * Fragility and open-issue context always survives — a warning that stops an
+ * edit is doing its job precisely by NOT being "acted on".
+ */
+async function getSuppressedTargets(db: DatabaseAdapter, projectId: number): Promise<Set<string>> {
+  try {
+    const rows = await db.all<{ target: string }>(
+      `SELECT target FROM injection_ledger
+       WHERE project_id = ? AND kind = 'file'
+       GROUP BY target
+       HAVING COUNT(*) >= 5 AND COALESCE(SUM(acted), 0) = 0`,
+      [projectId],
+    );
+    return new Set(rows.map((r) => r.target));
+  } catch {
+    return new Set(); // Table may predate migration v50 on this hub
+  }
+}
+
+/** Token ledger for `muninn status` — factual injected/acted numbers. */
+export async function getInjectionStats(
+  db: DatabaseAdapter,
+  projectId: number,
+  days = 7,
+): Promise<InjectionStats | null> {
+  try {
+    const row = await db.get<{ n: number; bytes: number; acted: number; resolved: number }>(
+      `SELECT COUNT(*) as n, COALESCE(SUM(bytes), 0) as bytes,
+              COALESCE(SUM(acted), 0) as acted, COUNT(acted) as resolved
+       FROM injection_ledger
+       WHERE project_id = ? AND created_at >= datetime('now', ?)`,
+      [projectId, `-${days} days`],
+    );
+    if (!row || row.n === 0) return null;
+    return {
+      injections: row.n,
+      tokens: Math.round(row.bytes / 4),
+      actedRate: row.resolved > 0 ? row.acted / row.resolved : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================

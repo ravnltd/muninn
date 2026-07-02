@@ -12,7 +12,8 @@
  * Silence (empty stdout) on any failure or weak match.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { PromptMap } from "./context-cache.js";
 
 // ============================================================================
@@ -187,7 +188,24 @@ function runCli(): void {
     }
   }
 
-  process.stdout.write(formatTaskMap(matches, map));
+  const output = formatTaskMap(matches, map);
+  logInjection(mapPath, matches, output.length);
+  process.stdout.write(output);
+}
+
+/** Feedback ledger: one row per mapped file; context refresh ingests it. */
+function logInjection(mapPath: string, matches: MatchedFile[], totalBytes: number): void {
+  try {
+    const logPath = join(dirname(mapPath), "injections.log");
+    const ts = new Date().toISOString();
+    const share = Math.ceil(totalBytes / matches.length);
+    const lines = matches
+      .map((m) => JSON.stringify({ ts, kind: "map", target: m.path, bytes: share }))
+      .join("\n");
+    appendFileSync(logPath, `${lines}\n`);
+  } catch {
+    // Best-effort — never block the injection
+  }
 }
 
 if (import.meta.main) {

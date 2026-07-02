@@ -181,6 +181,18 @@ export function createTestDb(): TestDb {
     );
     CREATE INDEX idx_sessions_project ON sessions(project_id);
 
+    -- v10: injection feedback ledger
+    CREATE TABLE injection_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      target TEXT NOT NULL,
+      bytes INTEGER DEFAULT 0,
+      acted INTEGER DEFAULT NULL,
+      injected_at TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Learnings
     CREATE TABLE learnings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

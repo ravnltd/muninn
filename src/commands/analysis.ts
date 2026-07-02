@@ -566,6 +566,23 @@ export async function showStatus(db: DatabaseAdapter, projectId: number): Promis
     }
   }
 
+  // v10 token ledger — what push delivery injected and whether it changed behavior
+  let injectionStats = null;
+  try {
+    const { getInjectionStats } = await import("../v9/context-cache.js");
+    injectionStats = await getInjectionStats(db, projectId, 7);
+    if (injectionStats) {
+      console.error("\n💉 Context Injections (7d):");
+      console.error(`  Injections: ${injectionStats.injections}`);
+      console.error(`  Tokens injected: ~${injectionStats.tokens}`);
+      if (injectionStats.actedRate !== null) {
+        console.error(`  Acted on: ${Math.round(injectionStats.actedRate * 100)}% (edits followed injection)`);
+      }
+    }
+  } catch {
+    // Ledger is optional
+  }
+
   console.error("");
 
   outputJson({
@@ -573,6 +590,7 @@ export async function showStatus(db: DatabaseAdapter, projectId: number): Promis
     fragileFiles,
     openIssues,
     recentDecisions,
+    injectionStats,
     network: networkHealth ? {
       mode: networkHealth.mode,
       connected: networkHealth.connected,

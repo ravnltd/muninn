@@ -33,5 +33,9 @@ touch "$mark" 2>/dev/null
 ctx=$(cat "$bundle" 2>/dev/null)
 [ -z "$ctx" ] && exit 0
 
+# Feedback ledger: record the injection locally; context refresh ingests it
+printf '{"ts":"%s","kind":"file","target":"%s","bytes":%d}\n' \
+  "$(date -u +%FT%TZ)" "$rel" "${#ctx}" >> "$root/.muninn/context/injections.log" 2>/dev/null || true
+
 jq -cn --arg ctx "[muninn: $rel]
 $ctx" '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $ctx}}'
