@@ -669,7 +669,7 @@ export async function ingestInjectionLog(
     return 0;
   }
 
-  const touched = await latestSessionFiles(db, projectId);
+  const touched = await latestSessionFiles(db, projectId, projectPath);
   const statements = entries.map((e) => ({
     sql: `INSERT INTO injection_ledger (project_id, kind, target, bytes, acted, injected_at)
           VALUES (?, ?, ?, ?, ?, ?)`,
@@ -680,7 +680,11 @@ export async function ingestInjectionLog(
   return entries.length;
 }
 
-async function latestSessionFiles(db: DatabaseAdapter, projectId: number): Promise<Set<string>> {
+async function latestSessionFiles(
+  db: DatabaseAdapter,
+  projectId: number,
+  projectPath: string,
+): Promise<Set<string>> {
   const session = await db.get<{ files_touched: string | null }>(
     `SELECT files_touched FROM sessions WHERE project_id = ?
      ORDER BY started_at DESC LIMIT 1`,
@@ -690,7 +694,16 @@ async function latestSessionFiles(db: DatabaseAdapter, projectId: number): Promi
   if (session?.files_touched) {
     try {
       const parsed = JSON.parse(session.files_touched) as unknown;
-      if (Array.isArray(parsed)) for (const p of parsed) if (typeof p === "string") touched.add(p);
+      if (Array.isArray(parsed)) {
+        // files_touched holds absolute paths; injection log targets are
+        // repo-relative — index both forms or repo files never resolve acted.
+        const prefix = projectPath.endsWith("/") ? projectPath : `${projectPath}/`;
+        for (const p of parsed) {
+          if (typeof p !== "string") continue;
+          touched.add(p);
+          if (p.startsWith(prefix)) touched.add(p.slice(prefix.length));
+        }
+      }
     } catch {
       // Malformed history — treat as no edits
     }

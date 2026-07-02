@@ -64,6 +64,22 @@ describe("ingestInjectionLog", () => {
     ]);
   });
 
+  test("resolves acted when files_touched holds absolute paths (hook targets are relative)", async () => {
+    // Production shape: session digests record absolute Edit paths, while
+    // post-read-context.sh logs repo-relative targets.
+    seedSession([join(testDb.tempDir, "src/a.ts")]);
+    writeLog([{ ts: "2026-07-01T00:00:00Z", kind: "file", target: "src/a.ts", bytes: 400 }]);
+
+    await ingestInjectionLog(testDb.db, testDb.projectId, testDb.tempDir);
+
+    const row = testDb.rawDb
+      .query<{ acted: number }, [number]>(
+        `SELECT acted FROM injection_ledger WHERE project_id = ? AND target = 'src/a.ts'`,
+      )
+      .get(testDb.projectId);
+    expect(row?.acted).toBe(1);
+  });
+
   test("missing log is a no-op", async () => {
     expect(await ingestInjectionLog(testDb.db, testDb.projectId, testDb.tempDir)).toBe(0);
   });
