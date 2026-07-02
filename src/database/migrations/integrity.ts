@@ -53,12 +53,9 @@ const REQUIRED_PROJECT_TABLES = [
   "strategy_catalog",
   "workflow_predictions",
   "impact_tracking",
-  "ab_tests",
   "knowledge_freshness",
   "agent_intents",
-  "agent_profiles",
-  "agent_handoffs",
-  "agent_scratchpad",
+  "injection_ledger",
 ];
 
 const REQUIRED_TABLES = REQUIRED_PROJECT_TABLES;

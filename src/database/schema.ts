@@ -280,23 +280,7 @@ export const decisionLinks = sqliteTable(
   ]
 );
 
-export const modeTransitions = sqliteTable(
-  "mode_transitions",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    projectId: integer("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    fromMode: text("from_mode"),
-    toMode: text("to_mode").notNull(),
-    reason: text("reason"),
-    transitionedAt: text("transitioned_at").default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => [
-    index("idx_mode_transitions_project").on(table.projectId),
-    index("idx_mode_transitions_time").on(table.transitionedAt),
-  ]
-);
+// mode_transitions dropped in migration v51 (dead table — v10 schema diet)
 
 // ============================================================================
 // CONSOLIDATION TABLES
@@ -428,32 +412,7 @@ export const serviceDeps = sqliteTable(
   ]
 );
 
-export const deployments = sqliteTable(
-  "deployments",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    serviceId: integer("service_id")
-      .notNull()
-      .references(() => services.id, { onDelete: "cascade" }),
-    version: text("version").notNull(),
-    previousVersion: text("previous_version"),
-    deployedBy: text("deployed_by"),
-    deployMethod: text("deploy_method"),
-    status: text("status", { enum: ["pending", "in_progress", "success", "failed", "rolled_back"] }).default("pending"),
-    startedAt: text("started_at").default(sql`CURRENT_TIMESTAMP`),
-    completedAt: text("completed_at"),
-    durationSeconds: integer("duration_seconds"),
-    output: text("output"),
-    error: text("error"),
-    rollbackVersion: text("rollback_version"),
-    notes: text("notes"),
-  },
-  (table) => [
-    index("idx_deployments_service").on(table.serviceId),
-    index("idx_deployments_status").on(table.status),
-    index("idx_deployments_service_time").on(table.serviceId, table.startedAt),
-  ]
-);
+// deployments dropped in migration v51 (dead table — v10 schema diet)
 
 export const infraEvents = sqliteTable(
   "infra_events",
@@ -855,14 +814,7 @@ export const patterns = sqliteTable("patterns", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const qualityStandards = sqliteTable("quality_standards", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  category: text("category").notNull(),
-  rule: text("rule").notNull(),
-  severity: text("severity").default("warning"),
-  autoFixable: integer("auto_fixable").default(0),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-});
+// quality_standards dropped in migration v51 (dead table — v10 schema diet)
 
 export const techDebt = sqliteTable("tech_debt", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -919,9 +871,6 @@ export type NewService = typeof services.$inferInsert;
 
 export type Route = typeof routes.$inferSelect;
 export type NewRoute = typeof routes.$inferInsert;
-
-export type Deployment = typeof deployments.$inferSelect;
-export type NewDeployment = typeof deployments.$inferInsert;
 
 export type InfraEvent = typeof infraEvents.$inferSelect;
 export type NewInfraEvent = typeof infraEvents.$inferInsert;

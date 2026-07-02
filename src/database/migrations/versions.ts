@@ -2435,4 +2435,29 @@ export const MIGRATIONS: Migration[] = [
       return !!table;
     },
   },
+  {
+    version: 51,
+    name: "schema_diet_drop_dead_tables",
+    description:
+      "v10 schema diet: drop the 7 tables no runtime code path reads or writes " +
+      "(verified by full-codebase audit; all had 0 rows on the hub at drop time)",
+    up: `
+      DROP TABLE IF EXISTS agent_handoffs;
+      DROP TABLE IF EXISTS agent_profiles;
+      DROP TABLE IF EXISTS agent_scratchpad;
+      DROP TABLE IF EXISTS deployments;
+      DROP TABLE IF EXISTS mode_transitions;
+      DROP TABLE IF EXISTS quality_standards;
+      DROP TABLE IF EXISTS ab_tests;
+    `,
+    validate: (db) => {
+      const remaining = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN " +
+            "('agent_handoffs','agent_profiles','agent_scratchpad','deployments','mode_transitions','quality_standards','ab_tests')",
+        )
+        .all();
+      return remaining.length === 0;
+    },
+  },
 ];

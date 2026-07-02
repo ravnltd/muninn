@@ -38,15 +38,6 @@ const GLOBAL_DDL = `
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS quality_standards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      category TEXT NOT NULL,
-      rule TEXT NOT NULL,
-      severity TEXT DEFAULT 'warning',
-      auto_fixable INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS tech_debt (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project_path TEXT NOT NULL,
@@ -189,23 +180,6 @@ const GLOBAL_DDL = `
       required INTEGER DEFAULT 1,
       notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS deployments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-      version TEXT NOT NULL,
-      previous_version TEXT,
-      deployed_by TEXT,
-      deploy_method TEXT,
-      status TEXT DEFAULT 'pending',
-      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      completed_at DATETIME,
-      duration_seconds INTEGER,
-      output TEXT,
-      error TEXT,
-      rollback_version TEXT,
-      notes TEXT
     );
 
     CREATE TABLE IF NOT EXISTS infra_events (
