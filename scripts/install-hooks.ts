@@ -134,6 +134,17 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
       ],
     },
   ],
+  PreCompact: [
+    {
+      matcher: "*",
+      hooks: [
+        {
+          type: "command",
+          command: "~/.claude/hooks/context-integration/pre-compact-digest.sh",
+        },
+      ],
+    },
+  ],
   Stop: [
     {
       matcher: "*",

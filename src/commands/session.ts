@@ -55,12 +55,13 @@ export async function sessionStart(db: DatabaseAdapter, projectId: number, goal:
   // Decay temperatures on session start
   await decayTemperatures(db, projectId);
 
+  const { hostname } = await import("node:os");
   const result = await db.run(
     `
-    INSERT INTO sessions (project_id, goal)
-    VALUES (?, ?)
+    INSERT INTO sessions (project_id, goal, machine)
+    VALUES (?, ?, ?)
   `,
-    [projectId, goal]
+    [projectId, goal, hostname()]
   );
 
   const sessionId = Number(result.lastInsertRowid);

@@ -22,6 +22,7 @@
 
 import type { DatabaseAdapter } from "../database/adapter.js";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 // ============================================================================
@@ -70,18 +71,92 @@ export async function refreshContextCache(
   const filesDir = join(contextDir, FILES_DIR);
   mkdirSync(filesDir, { recursive: true });
 
-  const [sessionStart, bundleResult, map] = await Promise.all([
+  const [sessionStart, bundleResult, map, globalContext] = await Promise.all([
     generateSessionStart(db, projectId),
     generateFileBundles(db, projectId, projectPath, filesDir),
     generatePromptMap(db, projectId),
+    generateGlobalContext(db),
   ]);
 
   writeFileSync(join(contextDir, "session-start.md"), sessionStart);
   writeFileSync(join(contextDir, "map.json"), JSON.stringify(map));
+  writeGlobalContext(globalContext);
   writeMeta(contextDir, bundleResult);
   const cleaned = cleanLegacySidecars(contextDir);
 
   return { ...bundleResult, cleaned };
+}
+
+// ============================================================================
+// Global Tier — cross-project forever memory, written machine-wide
+// ============================================================================
+
+/** Home-level path so brand-new projects get global context on day one. */
+export function globalContextPath(): string {
+  return join(homedir(), ".muninn", "context", "global.md");
+}
+
+function writeGlobalContext(content: string): void {
+  try {
+    const path = globalContextPath();
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  } catch {
+    // Global tier is best-effort — never fail a refresh over it
+  }
+}
+
+/**
+ * Quality-gated: permanent-durability memories are explicitly marked
+ * forever-relevant; global learnings must have proven themselves
+ * (confidence >= 7 and applied more than once) — the table holds hundreds
+ * of auto-generated observations that would be pure noise.
+ */
+async function generateGlobalContext(db: DatabaseAdapter): Promise<string> {
+  const [permanentDecisions, permanentLearnings, provenGlobals] = await Promise.all([
+    db.all<{ id: number; title: string; decision: string }>(
+      `SELECT id, title, decision FROM decisions
+       WHERE durability = 'permanent' AND status = 'active'
+       ORDER BY decided_at DESC LIMIT 5`,
+      [],
+    ).catch(() => []),
+    db.all<{ title: string; content: string }>(
+      `SELECT title, content FROM learnings
+       WHERE durability = 'permanent' AND archived_at IS NULL
+       ORDER BY created_at DESC LIMIT 5`,
+      [],
+    ).catch(() => []),
+    db.all<{ category: string; title: string; content: string }>(
+      `SELECT category, title, content FROM global_learnings
+       WHERE confidence >= 7 AND times_applied >= 2
+       ORDER BY times_applied DESC, confidence DESC LIMIT 8`,
+      [],
+    ).catch(() => []),
+  ]);
+
+  const lines: string[] = ["## Muninn global memory (applies across all projects and machines)"];
+
+  if (permanentDecisions.length > 0) {
+    lines.push("", "Standing decisions:");
+    for (const d of permanentDecisions) {
+      lines.push(`- ${d.title}${differs(d.title, d.decision) ? ` — ${cap(d.decision, 300)}` : ""}`);
+    }
+  }
+  if (permanentLearnings.length > 0) {
+    lines.push("", "Permanent learnings:");
+    for (const l of permanentLearnings) {
+      lines.push(`- ${l.title}${differs(l.title, l.content) ? ` — ${cap(l.content, 300)}` : ""}`);
+    }
+  }
+  if (provenGlobals.length > 0) {
+    lines.push("", "Proven cross-project patterns:");
+    for (const g of provenGlobals) {
+      lines.push(`- [${g.category}] ${g.title}${differs(g.title, g.content) ? ` — ${cap(g.content, 200)}` : ""}`);
+    }
+  }
+
+  if (lines.length === 1) return "";
+  return `${lines.join("\n")}\n`;
 }
 
 // ============================================================================
@@ -234,8 +309,37 @@ async function generateSessionStart(db: DatabaseAdapter, projectId: number): Pro
     }
   }
 
+  const elsewhere = await recentWorkElsewhere(db, projectId);
+  if (elsewhere.length > 0) {
+    lines.push("", "Recent work elsewhere:");
+    lines.push(...elsewhere);
+  }
+
   lines.push("", "Per-file context is injected automatically when you read files. For anything else: recall({ query|task|files }).");
   return `${lines.join("\n")}\n`;
+}
+
+/** Cross-project, cross-machine awareness — what happened recently outside this repo. */
+async function recentWorkElsewhere(db: DatabaseAdapter, projectId: number): Promise<string[]> {
+  try {
+    const sessions = await db.all<{
+      name: string; goal: string | null; outcome: string | null; ended_at: string; machine: string | null;
+    }>(
+      `SELECT p.name, s.goal, s.outcome, s.ended_at, s.machine
+       FROM sessions s JOIN projects p ON s.project_id = p.id
+       WHERE s.project_id != ? AND s.ended_at >= datetime('now', '-14 days')
+       AND s.goal IS NOT NULL AND s.goal NOT LIKE 'Auto-started%' AND s.goal NOT LIKE 'New session%'
+       ORDER BY s.ended_at DESC LIMIT 4`,
+      [projectId],
+    );
+    return sessions.map((s) => {
+      const where = s.machine ? ` on ${s.machine}` : "";
+      const outcome = s.outcome ? ` — ${firstSentence(s.outcome)}` : "";
+      return `- ${s.name}${where} (${s.ended_at.slice(0, 10)}): ${sentence(s.goal)}${outcome}`;
+    });
+  } catch {
+    return []; // machine column may predate migration v49 on this hub
+  }
 }
 
 // ============================================================================

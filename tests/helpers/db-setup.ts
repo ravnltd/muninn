@@ -176,7 +176,8 @@ export function createTestDb(): TestDb {
       learnings TEXT,
       next_steps TEXT,
       success INTEGER,
-      session_number INTEGER
+      session_number INTEGER,
+      machine TEXT
     );
     CREATE INDEX idx_sessions_project ON sessions(project_id);
 

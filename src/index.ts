@@ -447,6 +447,17 @@ async function main(): Promise<void> {
             await assignSessionNumber(db, projectId, newSessionId);
             break;
           }
+          case "digest": {
+            // v10: persist a transcript digest before context compaction
+            if (!subArgs[1]) {
+              console.error("Usage: muninn session digest <transcript-path>");
+              process.exit(1);
+            }
+            const { digestTranscript } = await import("./v9/session-digest");
+            const digestResult = await digestTranscript(db, projectId, subArgs[1]);
+            outputJson(digestResult);
+            break;
+          }
           case "end": {
             // Use enhanced session end with auto-learning extraction
             await sessionEndEnhanced(db, projectId, parseInt(subArgs[1], 10), subArgs.slice(2));

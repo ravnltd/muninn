@@ -17,6 +17,13 @@ else
   echo "Muninn: no cached context yet for this project — indexing in background. Per-file context will appear as you work."
 fi
 
+# Global tier: cross-project forever memory (machine-wide, exists even in new repos)
+GLOBAL="$HOME/.muninn/context/global.md"
+if [ -s "$GLOBAL" ]; then
+  echo ""
+  cat "$GLOBAL"
+fi
+
 # --- STDERR: user-facing notices from cached metadata ---
 if [ -f "$CACHE/meta.json" ] && command -v jq >/dev/null 2>&1; then
   GENERATED=$(jq -r '.generatedAt // empty' "$CACHE/meta.json" 2>/dev/null)

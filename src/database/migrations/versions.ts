@@ -2392,4 +2392,18 @@ export const MIGRATIONS: Migration[] = [
       return cols.some((c) => c.name === "durability");
     },
   },
+  {
+    version: 49,
+    name: "session_machine",
+    description: "Record which machine a session ran on for cross-server orientation (v10 forever memory)",
+    up: `
+      ALTER TABLE sessions ADD COLUMN machine TEXT DEFAULT NULL;
+    `,
+    validate: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(sessions)")
+        .all();
+      return cols.some((c) => c.name === "machine");
+    },
+  },
 ];
