@@ -28,6 +28,7 @@ import { detectDrift, getGitInfo, syncFileHashes } from "./commands/git";
 import { handleDebtCommand, handlePatternCommand, handleStackCommand } from "./commands/global";
 import { hookBrain, hookCheck, hookInit, hookPostEdit, hookReadContext, hookProjectBrief } from "./commands/hooks";
 import { sidecarsGenerate, sidecarsClean, sidecarsShow } from "./commands/sidecars";
+import { refreshContextCache, refreshFileBundle } from "./v9/context-cache";
 import { handleInfraCommand } from "./commands/infra";
 import { handleNativeCommand } from "./commands/native";
 import { handleNetworkCommand } from "./commands/network";
@@ -668,6 +669,48 @@ async function main(): Promise<void> {
             break;
           default:
             console.error("Usage: muninn hook <check|init|post-edit|read-context|project-brief|brain>");
+            process.exit(1);
+        }
+        break;
+      }
+
+      // v10 context cache — precomputed push-delivery context for hooks
+      case "context": {
+        const contextCmd = subArgs[0];
+        switch (contextCmd) {
+          case "refresh": {
+            const fileFlag = subArgs.indexOf("--file");
+            const singleFile = fileFlag !== -1 ? subArgs[fileFlag + 1] : undefined;
+            if (singleFile) {
+              const wrote = await refreshFileBundle(db, projectId, process.cwd(), singleFile);
+              outputJson({ file: singleFile, bundle: wrote });
+              break;
+            }
+            // Ensure a session exists so post-edit co-change capture has a home.
+            const activeSession = await db.get<{ id: number }>(
+              `SELECT id FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+              [projectId]
+            );
+            if (!activeSession) {
+              const newSessionId = await sessionStart(db, projectId, "Auto-started session");
+              await assignSessionNumber(db, projectId, newSessionId);
+            }
+            const result = await refreshContextCache(db, projectId, process.cwd());
+            outputJson(result);
+            break;
+          }
+          case "show":
+            if (!subArgs[1]) {
+              console.error("Usage: muninn context show <file>");
+              process.exit(1);
+            }
+            await sidecarsShow(db, projectId, subArgs[1]);
+            break;
+          case "clean":
+            await sidecarsClean(process.cwd());
+            break;
+          default:
+            console.error("Usage: muninn context <refresh [--file <path>]|show <file>|clean>");
             process.exit(1);
         }
         break;

@@ -782,6 +782,14 @@ function escapeFtsQuery(query: string): string {
 // Formatter
 // ============================================================================
 
+/** Cap at a word boundary — never truncate mid-word into unreadable fragments. */
+function cap(text: string, max: number): string {
+  const clean = text.trim().replace(/\s+/g, " ");
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), max - 20))}…`;
+}
+
 export function formatRecallResult(result: RecallResult): string {
   const sections: string[] = [];
 
@@ -798,21 +806,22 @@ export function formatRecallResult(result: RecallResult): string {
       if (f.fragility > 0) meta.push(`fragility ${f.fragility}/10`);
       if (f.type) meta.push(f.type);
       const metaStr = meta.length > 0 ? `  [${meta.join(" · ")}]` : "";
-      const purpose = f.purpose ? `  ${f.purpose.slice(0, 60)}` : "";
+      const purpose = f.purpose ? `  ${cap(f.purpose, 160)}` : "";
       sections.push(`FILE ${f.path}${metaStr}${purpose}`);
 
       if (f.cochangers.length > 0) {
         sections.push(`  co-changes with: ${f.cochangers.map((c) => `${c.file} (${c.count}x)`).join(", ")}`);
       }
       for (const d of f.decisions) {
-        sections.push(`  decision: ${d.title.slice(0, 70)}`);
+        sections.push(`  decision D${d.id}: ${d.title}`);
       }
       for (const i of f.issues) {
-        sections.push(`  issue #${i.id} [sev ${i.severity}]: ${i.title.slice(0, 60)}`);
+        sections.push(`  issue #${i.id} [sev ${i.severity}]: ${i.title}`);
       }
       for (const l of f.learnings) {
         const cat = l.category ? `[${l.category}] ` : "";
-        sections.push(`  learning: ${cat}${l.title.slice(0, 60)} (conf ${l.confidence})`);
+        sections.push(`  learning: ${cat}${l.title} (conf ${l.confidence})`);
+        if (l.content && l.content !== l.title) sections.push(`    ${cap(l.content, 300)}`);
       }
       if (f.blastRadius) {
         const b = f.blastRadius;
@@ -836,23 +845,23 @@ export function formatRecallResult(result: RecallResult): string {
     };
 
     group("DECISIONS", result.results.filter((r) => r.type === "decision"), (d) => {
-      const lines = [`  ${d.title.slice(0, 70)} (${Math.round(d.confidence * 100)}%)`];
-      if (d.content) lines.push(`    ${d.content.slice(0, 100)}`);
+      const lines = [`  D${d.id}: ${d.title} (${Math.round(d.confidence * 100)}%)`];
+      if (d.content && d.content !== d.title) lines.push(`    ${cap(d.content, 400)}`);
       return lines;
     });
 
     group("LEARNINGS", result.results.filter((r) => r.type === "learning"), (l) => {
-      const lines = [`  ${l.title.slice(0, 70)} (${Math.round(l.confidence * 100)}%)`];
-      if (l.content) lines.push(`    ${l.content.slice(0, 100)}`);
+      const lines = [`  ${l.title} (${Math.round(l.confidence * 100)}%)`];
+      if (l.content && l.content !== l.title) lines.push(`    ${cap(l.content, 400)}`);
       return lines;
     });
 
     group("ISSUES", result.results.filter((r) => r.type === "issue"), (i) => [
-      `  #${i.id} ${i.title.slice(0, 60)}`,
+      `  #${i.id} ${i.title}`,
     ]);
 
     group("FILES", result.results.filter((r) => r.type === "file"), (f) => [
-      `  ${f.title}${f.content ? ` — ${f.content.slice(0, 60)}` : ""}`,
+      `  ${f.title}${f.content ? ` — ${cap(f.content, 160)}` : ""}`,
     ]);
 
     // Huginn cognitive bridge (populated by an external process; may be empty).
@@ -876,13 +885,8 @@ export function formatRecallResult(result: RecallResult): string {
     }
   }
 
-  // Search metadata footer
-  if (result.searchMeta) {
-    const m = result.searchMeta;
-    sections.push(
-      `--- search: ${m.strategy} | query: "${m.queryUsed}" | ${m.totalFound} found, ${m.returned} returned | fts:${m.ftsHits} vector:${m.vectorHits} ---`,
-    );
-  }
+  // No diagnostic footer — search metadata stays in RecallResult for callers
+  // that need it, but never spends the model's tokens.
 
   if (sections.length === 0) {
     return "No relevant context found.";

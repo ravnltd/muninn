@@ -140,7 +140,7 @@ describe("v9 Recall", () => {
     expect(formatted).toContain("WARNINGS:");
     expect(formatted).toContain("FILE src/auth.ts  [fragility 8/10 · module]  Auth logic");
     expect(formatted).toContain("co-changes with:");
-    expect(formatted).toContain("decision: Use JWT");
+    expect(formatted).toContain("decision D1: Use JWT");
     expect(formatted).toContain("issue #1 [sev 7]: Timeout bug");
     expect(formatted).toContain("blast-radius: score 45 · direct 3 · transitive 12 · tests 2 · risk medium");
   });

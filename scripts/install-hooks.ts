@@ -88,9 +88,20 @@ try {
 
 /** Hook definitions that Muninn registers with Claude Code.
  *  v9: Removed enforce-check.sh (PreToolUse) and user-prompt-context.sh (UserPromptSubmit).
- *  Zero ceremony — no edit blocking, no workflow enforcement. */
+ *  Zero ceremony — no edit blocking, no workflow enforcement.
+ *  v10: Push delivery — post-read-context.sh injects precomputed per-file
+ *  context (additionalContext) whenever Claude reads or edits a file. */
 const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>> = {
   PostToolUse: [
+    {
+      matcher: 'tool == "Read" || tool == "Edit" || tool == "Write"',
+      hooks: [
+        {
+          type: "command",
+          command: "~/.claude/hooks/context-integration/post-read-context.sh",
+        },
+      ],
+    },
     {
       matcher: 'tool == "Edit" || tool == "Write"',
       hooks: [
