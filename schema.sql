@@ -1,6 +1,6 @@
 -- @muninn — context in .muninn/context/
 -- Muninn Database Schema
--- Auto-generated from database at migration v45
+-- Auto-generated from database at migration v47
 -- Generated: 2026-03-20
 --
 -- DO NOT EDIT — regenerate with: bun run scripts/generate-schema.ts

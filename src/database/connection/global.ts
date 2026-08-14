@@ -6,7 +6,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import { loadConfig } from "../../config/index.js";
 import type { DatabaseAdapter } from "../adapter.js";
@@ -134,16 +134,26 @@ async function buildGlobalDb(): Promise<DatabaseAdapter> {
   // Ensure global tables exist (use raw DB for schema init)
   if (config.mode === "local") {
     const rawDb = adapter.raw() as Database;
-    // The inline DDL creates tables at their CURRENT shape. On a fresh
-    // database, replaying append-only migrations over that shape dies on
-    // non-idempotent ALTERs (duplicate column) — stamp a fresh db to latest
-    // so migrations only ever run against dbs that predate them.
+    // Fresh database: build from the full schema snapshot (the inline DDL is
+    // only a subset) and stamp its snapshot version so append-only migrations
+    // don't replay over current-shape tables (duplicate column aborts). The
+    // DDL then fills anything the snapshot lacks, and runMigrations brings
+    // snapshot → latest.
     const isFresh =
       (rawDb.query<{ c: number }, []>(
         "SELECT COUNT(*) c FROM sqlite_master WHERE type = 'table'",
       ).get()?.c ?? 0) === 0;
+    if (isFresh && existsSync(SCHEMA_PATH)) {
+      const schema = readFileSync(SCHEMA_PATH, "utf-8");
+      rawDb.exec(schema);
+      const snapshot = schema.match(/at migration v(\d+)/);
+      if (snapshot) setSchemaVersion(rawDb, parseInt(snapshot[1], 10));
+    }
     initGlobalTables(rawDb);
-    if (isFresh) setSchemaVersion(rawDb, getLatestVersion());
+    if (isFresh && getSchemaVersion(rawDb) === 0) {
+      // No snapshot available: the DDL just created current-shape tables.
+      setSchemaVersion(rawDb, getLatestVersion());
+    }
     // Run local migrations (sync)
     const migResult = runMigrations(rawDb);
     if (!migResult.ok) {

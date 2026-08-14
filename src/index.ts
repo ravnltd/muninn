@@ -81,6 +81,7 @@ import {
   getGlobalDb,
   getProjectDb,
   getProjectDbPath,
+  GLOBAL_DB_PATH,
   initProjectDb,
   LOCAL_DB_DIR,
   LOCAL_DB_NAME,
@@ -124,7 +125,10 @@ async function main(): Promise<void> {
 
   // Handle init (creates project DB and CLAUDE.md)
   if (command === "init") {
-    const db = await initProjectDb(process.cwd());
+    // v10: projects share the global database (rows keyed by project_id).
+    // initProjectDb would build a per-project memory.db that no other command
+    // reads in local mode — bootstrap data would be stranded there.
+    const db = await getProjectDb();
     const projectId = await ensureProject(db);
 
     // Install or update CLAUDE.md
@@ -168,7 +172,7 @@ async function main(): Promise<void> {
     console.error(`✅ Muninn initialized for ${process.cwd()}`);
     outputSuccess({
       projectId,
-      dbPath: join(process.cwd(), LOCAL_DB_DIR, LOCAL_DB_NAME),
+      dbPath: GLOBAL_DB_PATH,
       claudeMd: claudeMdAction,
       bootstrap: bootstrapResult,
     });
