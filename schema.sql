@@ -485,317 +485,78 @@ CREATE TABLE focus (
 
 CREATE VIRTUAL TABLE fts_cognitive_events USING fts5(content, event_type, project, content=cognitive_events, content_rowid=id);
 
-CREATE TABLE 'fts_cognitive_events_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_cognitive_events_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_cognitive_events_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_cognitive_events_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_conversation_messages USING fts5( content, content='conversation_messages', content_rowid='id' );
 
-CREATE TABLE 'fts_conversation_messages_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_conversation_messages_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_conversation_messages_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_conversation_messages_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_decisions USING fts5 (title, decision, reasoning);
 
-CREATE TABLE 'fts_decisions_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_decisions_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1,
-    c2
-);
 
-CREATE TABLE 'fts_decisions_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_decisions_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_decisions_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_files USING fts5 (path, purpose, type);
 
-CREATE TABLE 'fts_files_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_files_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1,
-    c2
-);
 
-CREATE TABLE 'fts_files_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_files_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_files_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_global_learnings USING fts5 (title, content, context);
 
-CREATE TABLE 'fts_global_learnings_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_global_learnings_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1,
-    c2
-);
 
-CREATE TABLE 'fts_global_learnings_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_global_learnings_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_global_learnings_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_issues USING fts5(title, description, workaround, resolution);
 
-CREATE TABLE 'fts_issues_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_issues_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1,
-    c2,
-    c3
-);
 
-CREATE TABLE 'fts_issues_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_issues_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_issues_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_learnings USING fts5 (title, content, context);
 
-CREATE TABLE 'fts_learnings_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_learnings_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1,
-    c2
-);
 
-CREATE TABLE 'fts_learnings_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_learnings_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_learnings_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_observations USING fts5( content, type );
 
-CREATE TABLE 'fts_observations_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_observations_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1
-);
 
-CREATE TABLE 'fts_observations_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_observations_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_observations_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_patterns USING fts5 (name, description, code_example);
 
-CREATE TABLE 'fts_patterns_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_patterns_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1,
-    c2
-);
 
-CREATE TABLE 'fts_patterns_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_patterns_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_patterns_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_questions USING fts5( question, context );
 
-CREATE TABLE 'fts_questions_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_questions_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1
-);
 
-CREATE TABLE 'fts_questions_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_questions_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_questions_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE VIRTUAL TABLE fts_symbols USING fts5 (name, purpose, content_rowid=id);
 
-CREATE TABLE 'fts_symbols_config'(
-    k PRIMARY KEY,
-    v) WITHOUT ROWID;
 
-CREATE TABLE 'fts_symbols_content'(
-    id INTEGER PRIMARY KEY,
-    c0,
-    c1
-);
 
-CREATE TABLE 'fts_symbols_data'(
-    id INTEGER PRIMARY KEY,
-    block BLOB
-);
 
-CREATE TABLE 'fts_symbols_docsize'(
-    id INTEGER PRIMARY KEY,
-    sz BLOB
-);
 
-CREATE TABLE 'fts_symbols_idx'(
-    segid,
-    term,
-    pgno,
-    PRIMARY KEY(segid,
-    term)) WITHOUT ROWID;
 
 CREATE TABLE git_commits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1856,24 +1617,3 @@ CREATE TRIGGER work_queue_cleanup AFTER INSERT ON work_queue BEGIN DELETE FROM w
 -- FTS5 VIRTUAL TABLES (11)
 -- ============================================================================
 
-CREATE VIRTUAL TABLE fts_cognitive_events USING fts5(content, event_type, project, content=cognitive_events, content_rowid=id);
-
-CREATE VIRTUAL TABLE fts_conversation_messages USING fts5( content, content='conversation_messages', content_rowid='id' );
-
-CREATE VIRTUAL TABLE fts_decisions USING fts5 (title, decision, reasoning);
-
-CREATE VIRTUAL TABLE fts_files USING fts5 (path, purpose, type);
-
-CREATE VIRTUAL TABLE fts_global_learnings USING fts5 (title, content, context);
-
-CREATE VIRTUAL TABLE fts_issues USING fts5(title, description, workaround, resolution);
-
-CREATE VIRTUAL TABLE fts_learnings USING fts5 (title, content, context);
-
-CREATE VIRTUAL TABLE fts_observations USING fts5( content, type );
-
-CREATE VIRTUAL TABLE fts_patterns USING fts5 (name, description, code_example);
-
-CREATE VIRTUAL TABLE fts_questions USING fts5( question, context );
-
-CREATE VIRTUAL TABLE fts_symbols USING fts5 (name, purpose, content_rowid=id);

@@ -182,6 +182,23 @@ const GLOBAL_DDL = `
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS deployments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      service_id INTEGER NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+      version TEXT NOT NULL,
+      previous_version TEXT,
+      deployed_by TEXT,
+      deploy_method TEXT,
+      status TEXT DEFAULT 'pending',
+      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at TEXT,
+      duration_seconds INTEGER,
+      output TEXT,
+      error TEXT,
+      rollback_version TEXT,
+      notes TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS infra_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       server_id INTEGER REFERENCES servers(id) ON DELETE SET NULL,
@@ -481,6 +498,7 @@ const GLOBAL_DDL = `
     CREATE INDEX IF NOT EXISTS idx_services_server ON services(server_id);
     CREATE INDEX IF NOT EXISTS idx_routes_service ON routes(service_id);
     CREATE INDEX IF NOT EXISTS idx_deployments_service ON deployments(service_id);
+    CREATE INDEX IF NOT EXISTS idx_deployments_status ON deployments(status);
     CREATE INDEX IF NOT EXISTS idx_infra_events_server ON infra_events(server_id);
     CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id);
     CREATE INDEX IF NOT EXISTS idx_files_fragility ON files(fragility);

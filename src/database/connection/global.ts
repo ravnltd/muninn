@@ -21,6 +21,7 @@ import {
   type MigrationState,
   runMigrations,
   runMigrationsAsync,
+  setSchemaVersion,
 } from "../migrations.js";
 import {
   getMuninnHome,
@@ -133,7 +134,16 @@ async function buildGlobalDb(): Promise<DatabaseAdapter> {
   // Ensure global tables exist (use raw DB for schema init)
   if (config.mode === "local") {
     const rawDb = adapter.raw() as Database;
+    // The inline DDL creates tables at their CURRENT shape. On a fresh
+    // database, replaying append-only migrations over that shape dies on
+    // non-idempotent ALTERs (duplicate column) — stamp a fresh db to latest
+    // so migrations only ever run against dbs that predate them.
+    const isFresh =
+      (rawDb.query<{ c: number }, []>(
+        "SELECT COUNT(*) c FROM sqlite_master WHERE type = 'table'",
+      ).get()?.c ?? 0) === 0;
     initGlobalTables(rawDb);
+    if (isFresh) setSchemaVersion(rawDb, getLatestVersion());
     // Run local migrations (sync)
     const migResult = runMigrations(rawDb);
     if (!migResult.ok) {

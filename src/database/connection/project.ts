@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { DatabaseAdapter } from "../adapter.js";
 import { LocalAdapter } from "../adapters/local.js";
-import { applyReliabilityPragmas, runMigrations, runMigrationsAsync } from "../migrations.js";
+import { applyReliabilityPragmas, runMigrations, runMigrationsAsync, setSchemaVersion } from "../migrations.js";
 import {
   GLOBAL_DB_PATH,
   LOCAL_DB_DIR,
@@ -131,10 +131,19 @@ export async function initProjectDb(path: string): Promise<DatabaseAdapter> {
     const db = new Database(dbPath);
     applyReliabilityPragmas(db);
 
-    // Load and execute schema
-    if (existsSync(SCHEMA_PATH)) {
+    // schema.sql is a full snapshot with plain CREATE TABLE statements: it can
+    // only ever apply to a FRESH database. It also already embodies its
+    // snapshot version, so stamp user_version to it — replaying migrations
+    // 1..snapshot over the snapshot dies on non-idempotent ALTERs.
+    const isFresh =
+      (db.query<{ c: number }, []>(
+        "SELECT COUNT(*) c FROM sqlite_master WHERE type = 'table'",
+      ).get()?.c ?? 0) === 0;
+    if (isFresh && existsSync(SCHEMA_PATH)) {
       const schema = readFileSync(SCHEMA_PATH, "utf-8");
       db.exec(schema);
+      const snapshot = schema.match(/at migration v(\d+)/);
+      if (snapshot) setSchemaVersion(db, parseInt(snapshot[1], 10));
     }
 
     // Run migrations to bring to current version
