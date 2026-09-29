@@ -393,7 +393,11 @@ async function main(): Promise<void> {
   installSignalHandlers();
 }
 
-main().catch((error) => {
-  log.error(`Fatal error: ${error}`);
-  process.exit(1);
-});
+// Only start when run as the entry point; importing (e.g. from tests) must not
+// start the server, whose stdin-close handler exits the whole process.
+if (import.meta.main) {
+  main().catch((error) => {
+    log.error(`Fatal error: ${error}`);
+    process.exit(1);
+  });
+}

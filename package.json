@@ -20,7 +20,7 @@
     "db:migrate": "bunx drizzle-kit migrate",
     "db:studio": "bunx drizzle-kit studio",
     "db:push": "bunx drizzle-kit push",
-    "test": "bun test",
+    "test": "bun test ./tests ./src",
     "test:watch": "bun test --watch",
     "test:coverage": "bun test --coverage",
     "test:coverage:check": "bun test --coverage --coverage-threshold 80",

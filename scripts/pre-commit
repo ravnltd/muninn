@@ -22,7 +22,7 @@ fi
 
 # Tests
 echo "  → Tests..."
-bun test
+bun run test
 if [ $? -ne 0 ]; then
   echo "❌ Tests failed"
   exit 1
