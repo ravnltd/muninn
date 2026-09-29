@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0",
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "^4.3.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "drizzle-orm": "^0.45.3",
     "hono": "^4.13.11",
@@ -51,7 +51,8 @@
   },
   "overrides": {
     "tar": ">=7.5.7",
-    "ajv": ">=8.18.0"
+    "ajv": ">=8.18.0",
+    "protobufjs": "^7.5.5"
   },
   "author": "Ravn Ltd (https://råven.com)",
   "license": "AGPL-3.0-only"
