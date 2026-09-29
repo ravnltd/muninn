@@ -48,6 +48,3 @@ jobs:
 
       - name: Build CLI
         run: bun run build
-
-      - name: Build MCP server
-        run: bun run build:mcp

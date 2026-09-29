@@ -9,7 +9,6 @@ dist/
 *.db-shm
 *.db-wal
 muninn
-muninn-mcp
 context
 context-mcp
 tests/

@@ -8,10 +8,8 @@
   },
   "scripts": {
     "build": "bun build ./src/index.ts --compile --outfile=muninn",
-    "build:mcp": "bun build ./src/mcp-server.ts --compile --outfile=muninn-mcp",
     "build:dashboard": "cd src/dashboard && bun install && bun run build",
-    "build:all": "bun run build:dashboard && bun run build && bun run build:mcp",
-    "install-global": "bun build ./src/index.ts --compile --outfile=/usr/local/bin/muninn && bun build ./src/mcp-server.ts --compile --outfile=/usr/local/bin/muninn-mcp",
+    "build:all": "bun run build:dashboard && bun run build",
     "mcp": "bun run src/mcp-server.ts",
     "dev": "bun run src/index.ts",
     "dev:dashboard": "cd src/dashboard && bun run dev",
