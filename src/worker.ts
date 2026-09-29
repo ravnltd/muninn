@@ -441,6 +441,9 @@ async function main(): Promise<void> {
   }
 
   db.close();
+  // Exit explicitly: Bun 1.3.x can leave the event loop spinning at 100% CPU
+  // after fetch/AbortSignal.timeout work, orphaning detached workers for days.
+  process.exit(0);
 }
 
 main().catch((error) => {
