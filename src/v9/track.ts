@@ -49,7 +49,7 @@ export async function track(
   if (input.action === "add") {
     return trackAdd(db, projectId, input);
   }
-  return trackResolve(db, input);
+  return trackResolve(db, projectId, input);
 }
 
 async function trackAdd(
@@ -113,22 +113,23 @@ async function trackAdd(
 
 async function trackResolve(
   db: DatabaseAdapter,
+  projectId: number,
   input: TrackResolveInput,
 ): Promise<TrackResult> {
   // Get issue title before resolving
   const issue = await db.get<{ title: string }>(
-    `SELECT title FROM issues WHERE id = ?`,
-    [input.id],
+    `SELECT title FROM issues WHERE id = ? AND project_id = ?`,
+    [input.id, projectId],
   );
 
   if (!issue) {
-    throw new Error(`Issue #${input.id} not found`);
+    throw new Error(`Issue #${input.id} not found in this project`);
   }
 
   await db.run(
     `UPDATE issues SET status = 'resolved', resolution = ?, resolved_at = datetime('now')
-     WHERE id = ?`,
-    [input.resolution, input.id],
+     WHERE id = ? AND project_id = ?`,
+    [input.resolution, input.id, projectId],
   );
 
   // Publish event for Huginn perturbation bridge

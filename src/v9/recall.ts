@@ -766,16 +766,16 @@ function applyBoostsAndStageRanking(
 }
 
 function escapeFtsQuery(query: string): string {
-  // Remove FTS operators and wrap each word in quotes
+  // Remove FTS operators and wrap each word in quotes. OR, not implicit AND, so natural-language queries match; bm25 ranks.
   const stopWords = new Set(["and", "or", "not", "near"]);
   const words = query
     .replace(/[`$(){}|;&<>\\]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length > 0 && !stopWords.has(w.toLowerCase()));
+    .filter((w) => w.length >= 3 && !stopWords.has(w.toLowerCase()));
 
   if (words.length === 0) return "";
 
-  return words.map((w) => `"${w}"`).join(" ");
+  return words.map((w) => `"${w}"`).join(" OR ");
 }
 
 // ============================================================================

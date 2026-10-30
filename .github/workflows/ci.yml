@@ -8,20 +8,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, node1]
+    container:
+      image: oven/bun:1.3.6-debian
+      options: --memory=3g --memory-swap=3g --cpus=2 --user 1000:1000
+      env:
+        HOME: /tmp
+      volumes:
+        - /srv/ci-cache/muninn/bun:/tmp/.bun/install/cache
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Install dependencies
-        run: bun install && bun install --cwd cloud && bun install --cwd api
-
-      - name: Setup test environment
-        run: mkdir -p ~/.claude
+        run: bun install --frozen-lockfile
 
       - name: Type check
         run: bun run typecheck
@@ -30,21 +30,4 @@ jobs:
         run: bun run lint
 
       - name: Test
-        run: bun test
-
-  build:
-    runs-on: ubuntu-latest
-    needs: test
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install && bun install --cwd cloud && bun install --cwd api
-
-      - name: Build CLI
-        run: bun run build
+        run: bun run test

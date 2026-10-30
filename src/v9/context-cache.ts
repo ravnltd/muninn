@@ -95,7 +95,7 @@ export async function refreshContextCache(
 
 /** Home-level path so brand-new projects get global context on day one. */
 export function globalContextPath(): string {
-  return join(homedir(), ".muninn", "context", "global.md");
+  return join(process.env.MUNINN_HOME ?? join(homedir(), ".muninn"), "context", "global.md");
 }
 
 function writeGlobalContext(content: string): void {
@@ -119,13 +119,13 @@ async function generateGlobalContext(db: DatabaseAdapter): Promise<string> {
     db.all<{ id: number; title: string; decision: string }>(
       `SELECT id, title, decision FROM decisions
        WHERE durability = 'permanent' AND status = 'active'
-       ORDER BY decided_at DESC LIMIT 5`,
+       ORDER BY decided_at DESC LIMIT 50`,
       [],
     ).catch(() => []),
     db.all<{ title: string; content: string }>(
       `SELECT title, content FROM learnings
        WHERE durability = 'permanent' AND archived_at IS NULL
-       ORDER BY created_at DESC LIMIT 5`,
+       ORDER BY created_at DESC LIMIT 50`,
       [],
     ).catch(() => []),
     db.all<{ category: string; title: string; content: string }>(
@@ -141,19 +141,19 @@ async function generateGlobalContext(db: DatabaseAdapter): Promise<string> {
   if (permanentDecisions.length > 0) {
     lines.push("", "Standing decisions:");
     for (const d of permanentDecisions) {
-      lines.push(`- ${d.title}${differs(d.title, d.decision) ? ` — ${cap(d.decision, 300)}` : ""}`);
+      lines.push(`- ${standingRule(d.title, d.decision)}`);
     }
   }
   if (permanentLearnings.length > 0) {
     lines.push("", "Permanent learnings:");
     for (const l of permanentLearnings) {
-      lines.push(`- ${l.title}${differs(l.title, l.content) ? ` — ${cap(l.content, 300)}` : ""}`);
+      lines.push(`- ${standingRule(l.title, l.content)}`);
     }
   }
   if (provenGlobals.length > 0) {
     lines.push("", "Proven cross-project patterns:");
     for (const g of provenGlobals) {
-      lines.push(`- [${g.category}] ${g.title}${differs(g.title, g.content) ? ` — ${cap(g.content, 200)}` : ""}`);
+      lines.push(`- [${g.category}] ${g.title}${withBody(g.title, g.content, (b) => cap(b, 200))}`);
     }
   }
 
@@ -300,7 +300,7 @@ async function generateSessionStart(db: DatabaseAdapter, projectId: number): Pro
   if (decisions.length > 0) {
     lines.push("", "Active decisions (most recent):");
     for (const d of decisions) {
-      lines.push(`- D${d.id}: ${d.title}${differs(d.title, d.decision) ? ` — ${firstSentence(d.decision)}` : ""}`);
+      lines.push(`- D${d.id}: ${d.title}${withBody(d.title, d.decision, firstSentence)}`);
     }
   }
 
@@ -602,7 +602,7 @@ export function formatFileBundle(data: FileBundleData): string | null {
   if (data.decisions.length > 0) {
     lines.push("", "Decisions that govern this file:");
     for (const d of data.decisions) {
-      const body = differs(d.title, d.decision) ? ` — ${cap(d.decision, DECISION_TEXT_CAP)}` : "";
+      const body = withBody(d.title, d.decision, (b) => cap(b, DECISION_TEXT_CAP));
       const why = d.reasoning ? ` Why: ${cap(d.reasoning, DECISION_TEXT_CAP)}` : "";
       lines.push(`- D${d.id} (${d.decidedAt.slice(0, 10)}): ${d.title}${body}${why}`);
     }
@@ -774,7 +774,7 @@ function pruneStaleBundles(filesDir: string, written: Set<string>): void {
  * `files/` plus reserved top-level names; everything else is stale.
  */
 function cleanLegacySidecars(contextDir: string): number {
-  const reserved = new Set([FILES_DIR, "session-start.md", "global.md", "map.json", "meta.json"]);
+  const reserved = new Set([FILES_DIR, "session-start.md", "global.md", "map.json", "meta.json", "injections.log"]);
   let cleaned = 0;
   if (!existsSync(contextDir)) return 0;
 
@@ -814,11 +814,28 @@ function sentence(text: string | null): string {
   return /[.!?]$/.test(clean) ? clean : `${clean}.`;
 }
 
-/** True when body text adds information beyond the title (avoids echoing title twice). */
-function differs(title: string, body: string): boolean {
-  const t = title.trim().toLowerCase();
-  const b = body.trim().toLowerCase();
-  return b.length > t.length + 10 && !b.startsWith(t.slice(0, Math.min(t.length, 40)));
+/**
+ * What the body adds beyond the title, or null if nothing meaningful. Titles are
+ * usually a prefix of the body, so strip the title and leading punctuation.
+ */
+function bodyAfterTitle(title: string, body: string): string | null {
+  const t = title.trim().replace(/\s+/g, " ");
+  const b = body.trim().replace(/\s+/g, " ");
+  if (b.length <= t.length + 10) return null;
+  if (!b.toLowerCase().startsWith(t.toLowerCase())) return b;
+  return b.slice(t.length).replace(/^[\s\p{P}]+/u, "") || null;
+}
+
+/** " — <rendered remainder>" or "" when the body adds nothing to the title. */
+function withBody(title: string, body: string, render: (rest: string) => string): string {
+  const rest = bodyAfterTitle(title, body);
+  return rest ? ` — ${render(rest)}` : "";
+}
+
+/** Standing rules render in full — truncating a rule mid-sentence changes its meaning. */
+function standingRule(title: string, body: string): string {
+  const full = body.trim().replace(/\s+/g, " ");
+  return full || title.trim();
 }
 
 function walkMarkdown(dir: string, callback: (path: string) => void): void {

@@ -126,14 +126,23 @@ if command -v claude &> /dev/null; then
     # Remove old registration (ignore errors if not registered)
     claude mcp remove muninn 2>/dev/null || true
 
-    # Detect mode from environment or default to local
-    MUNINN_MODE="${MUNINN_MODE:-local}"
-    if [ "$MUNINN_MODE" = "http" ] && [ -n "$MUNINN_PRIMARY_URL" ]; then
-        claude mcp add --scope user muninn -- env MUNINN_MODE=http MUNINN_PRIMARY_URL="$MUNINN_PRIMARY_URL" muninn-mcp
-        echo "✓ MCP registered (http mode: $MUNINN_PRIMARY_URL)"
+    # Mode lives in ~/.muninn/config.json so hooks and MCP read the same
+    # settings. Env vars at install time (re)write it; otherwise keep it.
+    CONFIG_FILE="${MUNINN_HOME:-$HOME/.muninn}/config.json"
+    if [ "${MUNINN_MODE:-}" = "http" ] && [ -n "${MUNINN_PRIMARY_URL:-}" ]; then
+        mkdir -p "$(dirname "$CONFIG_FILE")"
+        printf '{\n  "mode": "http",\n  "primaryUrl": "%s"\n}\n' "$MUNINN_PRIMARY_URL" > "$CONFIG_FILE"
+        echo "✓ Wrote $CONFIG_FILE (http mode: $MUNINN_PRIMARY_URL)"
+    elif [ -n "${MUNINN_MODE:-}" ] && [ "$MUNINN_MODE" != "http" ]; then
+        mkdir -p "$(dirname "$CONFIG_FILE")"
+        printf '{\n  "mode": "%s"\n}\n' "$MUNINN_MODE" > "$CONFIG_FILE"
+        echo "✓ Wrote $CONFIG_FILE ($MUNINN_MODE mode)"
+    fi
+    claude mcp add --scope user muninn -- muninn-mcp
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "✓ MCP registered (settings from $CONFIG_FILE)"
     else
-        claude mcp add --scope user muninn -- muninn-mcp
-        echo "✓ MCP registered (local mode)"
+        echo "✓ MCP registered (local mode; set MUNINN_MODE=http MUNINN_PRIMARY_URL=... and re-run for the hub)"
     fi
 else
     echo "⚠️  Claude Code CLI not found — register MCP manually:"

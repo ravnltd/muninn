@@ -90,3 +90,22 @@ describe("v9 Track", () => {
       .toBe("Issue #5 resolved: Bug X");
   });
 });
+
+describe("v9 Track project scoping", () => {
+  test("resolve cannot close another project's issue", async () => {
+    const t = createTestDb();
+    try {
+      const other = Number(
+        (await t.db.run("INSERT INTO projects (path, name, type, stack) VALUES ('/other', 'other', 'x', 'x')")).lastInsertRowid,
+      );
+      const mine = await track(t.db, t.projectId, { action: "add", title: "Mine" });
+      await expect(
+        track(t.db, other, { action: "resolve", id: mine.id, resolution: "nope" }),
+      ).rejects.toThrow("not found in this project");
+      const row = await t.db.get<{ status: string }>("SELECT status FROM issues WHERE id = ?", [mine.id]);
+      expect(row?.status).toBe("open");
+    } finally {
+      t.cleanup();
+    }
+  });
+});

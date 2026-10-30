@@ -6,6 +6,9 @@
  * Uses Zod for runtime validation to ensure config is valid on startup.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 
 // Configuration schema
@@ -19,8 +22,34 @@ const ConfigSchema = z.object({
 
 export type MuninnConfig = z.infer<typeof ConfigSchema>;
 
+// Machine-wide settings file. Hooks run the CLI with no MUNINN_* env, so
+// without this file they silently fall back to local mode while the MCP
+// server talks to the hub (the hook/MCP split brain).
+const FileConfigSchema = z.object({
+  mode: z.enum(["local", "http"]).optional(),
+  primaryUrl: z.string().url().optional(),
+  authToken: z.string().optional(),
+});
+
+type FileConfig = z.infer<typeof FileConfigSchema>;
+
+export function configFilePath(): string {
+  const home = process.env.MUNINN_HOME || join(process.env.HOME || homedir(), ".muninn");
+  return join(home, "config.json");
+}
+
+function loadConfigFile(): FileConfig {
+  const path = configFilePath();
+  if (!existsSync(path)) return {};
+  const result = FileConfigSchema.safeParse(JSON.parse(readFileSync(path, "utf-8")));
+  if (!result.success) {
+    throw new Error(`Invalid Muninn config file ${path}: ${result.error.message}`);
+  }
+  return result.data;
+}
+
 /**
- * Load configuration from environment variables
+ * Load configuration. Resolution per field: environment → ~/.muninn/config.json → default.
  *
  * Environment variables:
  * - MUNINN_MODE: 'local' (default) or 'http'
@@ -29,10 +58,11 @@ export type MuninnConfig = z.infer<typeof ConfigSchema>;
  * - MUNINN_SYNC_INTERVAL: Sync interval in ms (default: 60000)
  */
 export function loadConfig(): MuninnConfig {
+  const file = loadConfigFile();
   const raw = {
-    mode: process.env.MUNINN_MODE || "local",
-    primaryUrl: process.env.MUNINN_PRIMARY_URL,
-    authToken: process.env.MUNINN_AUTH_TOKEN,
+    mode: process.env.MUNINN_MODE || file.mode || "local",
+    primaryUrl: process.env.MUNINN_PRIMARY_URL || file.primaryUrl,
+    authToken: process.env.MUNINN_AUTH_TOKEN || file.authToken,
     syncInterval: process.env.MUNINN_SYNC_INTERVAL
       ? parseInt(process.env.MUNINN_SYNC_INTERVAL, 10)
       : 60000,
@@ -51,7 +81,7 @@ export function loadConfig(): MuninnConfig {
   // Additional validation: http mode requires primaryUrl
   if (config.mode === "http" && !config.primaryUrl) {
     throw new Error(
-      "HTTP mode requires MUNINN_PRIMARY_URL environment variable"
+      `HTTP mode requires MUNINN_PRIMARY_URL (env) or primaryUrl in ${configFilePath()}`
     );
   }
 

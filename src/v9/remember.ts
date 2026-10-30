@@ -107,20 +107,20 @@ function detectType(content: string): RememberType {
 
 /**
  * Extract a short title from the content.
- * Takes the first sentence or first 60 chars.
+ * Takes the first sentence (<=160 chars) or first 120 chars.
  */
 function extractTitle(content: string): string {
   // First sentence
   const sentenceEnd = content.search(/[.!?]\s/);
-  if (sentenceEnd > 0 && sentenceEnd <= 80) {
+  if (sentenceEnd > 0 && sentenceEnd <= 160) {
     return content.slice(0, sentenceEnd + 1);
   }
 
-  // First 60 chars at word boundary
-  if (content.length <= 60) return content;
+  // First 120 chars at word boundary
+  if (content.length <= 120) return content;
 
-  const cutoff = content.lastIndexOf(" ", 60);
-  return content.slice(0, cutoff > 20 ? cutoff : 60);
+  const cutoff = content.lastIndexOf(" ", 120);
+  return content.slice(0, cutoff > 20 ? cutoff : 120);
 }
 
 /**
@@ -213,6 +213,126 @@ async function findDuplicate(
   return null;
 }
 
+type TitledRow = { id: number; title: string };
+
+/** Find the record an amend-by-id targets. Decisions and learnings have overlapping ids. */
+async function resolveAmendTarget(
+  db: DatabaseAdapter,
+  projectId: number,
+  id: number,
+  type: RememberType | undefined,
+): Promise<{ decision: TitledRow | null; learning: TitledRow | null }> {
+  const decision = type === "learning" ? null : await db.get<TitledRow>(
+    "SELECT id, title FROM decisions WHERE id = ? AND project_id = ?",
+    [id, projectId],
+  );
+  const learning = type === "decision" ? null : await db.get<TitledRow>(
+    "SELECT id, title FROM learnings WHERE id = ? AND project_id = ?",
+    [id, projectId],
+  );
+  if (decision && learning) {
+    throw new Error(
+      `Record #${id} exists as both a decision and a learning; pass type: "decision" or type: "learning"`,
+    );
+  }
+  return { decision: decision ?? null, learning: learning ?? null };
+}
+
+/** Verify a supersedes target exists in the same table as the new record. */
+async function assertSupersedable(
+  db: DatabaseAdapter,
+  projectId: number,
+  type: RememberType,
+  targetId: number,
+): Promise<void> {
+  const table = type === "decision" ? "decisions" : "learnings";
+  const row = await db.get<{ id: number }>(
+    `SELECT id FROM ${table} WHERE id = ? AND project_id = ?`,
+    [targetId, projectId],
+  );
+  if (row) return;
+  const label = type === "decision" ? "Decision" : "Learning";
+  throw new Error(
+    `${label} #${targetId} not found in this project; supersedes must reference a record of the same type`,
+  );
+}
+
+/** Append new content to a duplicate-matched record instead of overwriting it. */
+async function mergeIntoExisting(
+  db: DatabaseAdapter,
+  type: RememberType,
+  existingId: number,
+  content: string,
+): Promise<void> {
+  const stamp = `[updated ${new Date().toISOString().slice(0, 10)}]`;
+  const append = (old: string | null): string => `${old ?? ""}\n\n---\n${stamp} ${content}`;
+
+  if (type === "decision") {
+    const row = await db.get<{ title: string; decision: string | null; reasoning: string | null }>(
+      "SELECT title, decision, reasoning FROM decisions WHERE id = ?",
+      [existingId],
+    );
+    if (!row || row.decision?.includes(content)) return;
+    const decision = append(row.decision);
+    const reasoning = row.reasoning === row.decision ? decision : append(row.reasoning);
+    await db.run(
+      "UPDATE decisions SET decision = ?, reasoning = ?, updated_at = datetime('now') WHERE id = ?",
+      [decision, reasoning, existingId],
+    );
+    try {
+      await db.run("DELETE FROM fts_decisions WHERE rowid = ?", [existingId]);
+      await db.run(
+        "INSERT INTO fts_decisions (rowid, title, decision, reasoning) VALUES (?, ?, ?, ?)",
+        [existingId, row.title, decision, reasoning],
+      );
+    } catch { /* FTS update best-effort */ }
+    return;
+  }
+
+  const row = await db.get<{ title: string; content: string | null }>(
+    "SELECT title, content FROM learnings WHERE id = ?",
+    [existingId],
+  );
+  if (!row || row.content?.includes(content)) return;
+  const merged = append(row.content);
+  await db.run(
+    `UPDATE learnings SET content = ?, updated_at = datetime('now'),
+     times_applied = times_applied + 1 WHERE id = ?`,
+    [merged, existingId],
+  );
+  try {
+    await db.run("DELETE FROM fts_learnings WHERE rowid = ?", [existingId]);
+    await db.run(
+      "INSERT INTO fts_learnings (rowid, title, content, context) VALUES (?, ?, ?, ?)",
+      [existingId, row.title, merged, ""],
+    );
+  } catch { /* FTS update best-effort */ }
+}
+
+async function supersedeRecord(
+  db: DatabaseAdapter,
+  projectId: number,
+  type: RememberType,
+  newId: number,
+  oldId: number,
+): Promise<void> {
+  if (type === "learning") {
+    await db.run(
+      "UPDATE learnings SET archived_at = datetime('now'), consolidated_into = ? WHERE id = ? AND project_id = ?",
+      [newId, oldId, projectId],
+    );
+    return;
+  }
+  await db.run(
+    "UPDATE decisions SET status = 'superseded', superseded_by = ? WHERE id = ? AND project_id = ?",
+    [newId, oldId, projectId],
+  );
+  await db.run(
+    "INSERT INTO decision_links (decision_id, linked_decision_id, link_type, strength) VALUES (?, ?, 'supersedes', 1.0)",
+    [newId, oldId],
+  ).catch(silentCatch("remember:supersede-link"));
+}
+
 // ============================================================================
 // Similarity Detection (Advisory)
 // ============================================================================
@@ -259,10 +379,7 @@ export async function remember(
 
   // --- Amend by ID ---
   if (input.id) {
-    const decision = await db.get<{ id: number; title: string }>(
-      "SELECT id, title FROM decisions WHERE id = ? AND project_id = ?",
-      [input.id, projectId],
-    );
+    const { decision, learning } = await resolveAmendTarget(db, projectId, input.id, input.type);
 
     if (decision) {
       const sets: string[] = ["decision = ?", "reasoning = ?", "updated_at = datetime('now')"];
@@ -288,11 +405,6 @@ export async function remember(
 
       return { id: input.id, detectedType: "decision", title: decision.title, deduplicated: false, amended: true };
     }
-
-    const learning = await db.get<{ id: number; title: string }>(
-      "SELECT id, title FROM learnings WHERE id = ? AND project_id = ?",
-      [input.id, projectId],
-    );
 
     if (learning) {
       const sets: string[] = ["content = ?", "updated_at = datetime('now')", "times_applied = times_applied + 1"];
@@ -320,25 +432,17 @@ export async function remember(
     throw new Error(`Record #${input.id} not found in this project`);
   }
 
+  // Validate supersedes before any write so a bad reference leaves nothing half-done
+  if (input.supersedes) {
+    await assertSupersedable(db, projectId, type, input.supersedes);
+  }
+
   // Check for duplicates
-  const existing = await findDuplicate(db, projectId, type, title, content);
+  // An explicit supersedes is a deliberate new version — never merge it into a match
+  const existing = input.supersedes ? null : await findDuplicate(db, projectId, type, title, content);
 
   if (existing) {
-    // Update existing record
-    if (type === "decision") {
-      await db.run(
-        `UPDATE decisions SET decision = ?, reasoning = ?, updated_at = datetime('now')
-         WHERE id = ?`,
-        [content, content, existing.id],
-      );
-    } else {
-      await db.run(
-        `UPDATE learnings SET content = ?, updated_at = datetime('now'),
-         times_applied = times_applied + 1
-         WHERE id = ?`,
-        [content, existing.id],
-      );
-    }
+    await mergeIntoExisting(db, type, existing.id, content);
 
     return {
       id: existing.id,
@@ -444,20 +548,7 @@ export async function remember(
 
   // --- Supersede old record ---
   if (input.supersedes) {
-    if (type === "decision") {
-      db.run(
-        "UPDATE decisions SET status = 'superseded', superseded_by = ? WHERE id = ? AND project_id = ?",
-        [id, input.supersedes, projectId],
-      ).catch(() => {});
-    }
-    db.run(
-      "UPDATE learnings SET archived_at = datetime('now'), consolidated_into = ? WHERE id = ? AND project_id = ?",
-      [id, input.supersedes, projectId],
-    ).catch(() => {});
-    db.run(
-      "INSERT INTO decision_links (decision_id, linked_decision_id, link_type, strength) VALUES (?, ?, 'supersedes', 1.0)",
-      [id, input.supersedes],
-    ).catch(() => {});
+    await supersedeRecord(db, projectId, type, id, input.supersedes);
   }
 
   // --- Contradiction detection (advisory) ---

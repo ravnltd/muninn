@@ -8,9 +8,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { createTestDb, type TestDb } from "../helpers/db-setup";
-import { refreshContextCache, refreshFileBundle } from "../../src/v9/context-cache";
+import { globalContextPath, refreshContextCache, refreshFileBundle } from "../../src/v9/context-cache";
 
 const FRAGILE_FILE = "src/core/engine.ts";
 const BORING_FILE = "src/utils/strings.ts";
@@ -168,5 +169,47 @@ describe("refreshFileBundle", () => {
 
     expect(wrote).toBe(false);
     expect(existsSync(join(testDb.tempDir, `.muninn/context/files/${FRAGILE_FILE}.md`))).toBe(false);
+  });
+
+  test("global.md is written under MUNINN_HOME, never the real home", async () => {
+    await refreshContextCache(testDb.db, testDb.projectId, testDb.tempDir);
+
+    const home = process.env.MUNINN_HOME as string;
+    expect(globalContextPath()).toBe(join(home, "context", "global.md"));
+    expect(home).toContain("muninn-test-home-");
+    expect(existsSync(join(home, "context", "global.md"))).toBe(true);
+    expect(globalContextPath()).not.toBe(join(userInfo().homedir, ".muninn", "context", "global.md"));
+  });
+
+  test("global.md renders full text of permanent rules, with no LIMIT 5", async () => {
+    const rule = "HARD RULE from the owner (2026-08-30): NEVER put their name in commits. Applies to every repo.";
+    // Test schema predates the durability column (added by a later migration)
+    if (!testDb.rawDb.query("PRAGMA table_info(decisions)").all().some((c) => (c as { name: string }).name === "durability")) {
+      testDb.rawDb.exec("ALTER TABLE decisions ADD COLUMN durability TEXT DEFAULT 'standard'");
+    }
+    const insert = testDb.rawDb.query(
+      `INSERT INTO decisions (project_id, title, decision, status, durability)
+       VALUES (?, ?, ?, 'active', 'permanent')`,
+    );
+    insert.run(testDb.projectId, "HARD RULE from the owner (2026-08-30): NEVER put their", rule);
+    for (let i = 1; i <= 6; i++) insert.run(testDb.projectId, `Rule ${i}`, `Rule ${i} body text that is long enough to count.`);
+
+    await refreshContextCache(testDb.db, testDb.projectId, testDb.tempDir);
+    const global = readFileSync(globalContextPath(), "utf-8");
+
+    expect(global).toContain(rule);
+    for (let i = 1; i <= 6; i++) expect(global).toContain(`Rule ${i} body text that is long enough to count.`);
+  });
+
+  test("session-start decision with title-prefixed body shows the remainder once", async () => {
+    testDb.rawDb
+      .query(`INSERT INTO decisions (project_id, title, decision, status) VALUES (?, 'Use WAL mode', ?, 'active')`)
+      .run(testDb.projectId, "Use WAL mode: concurrent readers need it. More detail follows.");
+
+    await refreshContextCache(testDb.db, testDb.projectId, testDb.tempDir);
+    const orientation = readFileSync(join(testDb.tempDir, ".muninn/context/session-start.md"), "utf-8");
+
+    expect(orientation).toContain("Use WAL mode — concurrent readers need it.");
+    expect(orientation).not.toContain("Use WAL mode: concurrent");
   });
 });

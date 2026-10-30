@@ -18,7 +18,7 @@ Status: planned, not started. Review before executing.
    | Decisions | 36 | 10 |
    | Permanent decisions | 5 | 3 |
    | Sessions | 291 | 1937 |
-   | Files for /home/ross/muninn | 0 | 3432 |
+   | Files for ~/muninn | 0 | 3432 |
 
 2. **All repos collapse into one local project.** Local-mode rename detection
    in `src/database/connection/ensure.ts` (lines ~30-60) re-paths the project
@@ -57,7 +57,7 @@ not found" errors are from February.
 - Write `~/.muninn/config.json` → http, `http://127.0.0.1:8081`.
 - `muninn context refresh` in each active repo: muninn, intelligence-engine,
   geo-email, elsker, raven-intelligence, denveropenmic, dmv-wt/content.
-- Confirm hub project 20 (`/home/ross/muninn`) gets files indexed; hub
+- Confirm hub project 20 (`~/muninn`) gets files indexed; hub
   currently has 0 files for it.
 
 ### D. Verify (~10-15 min)

@@ -145,7 +145,9 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
       ],
     },
   ],
-  Stop: [
+  // SessionEnd, not Stop: Stop fires after every assistant turn, which ended
+  // the muninn session and ran a full refresh on every turn.
+  SessionEnd: [
     {
       matcher: "*",
       hooks: [
@@ -158,10 +160,11 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
   ],
 }
 
-/** Hook types that were removed in v9 — clean up from settings.json.
+/** Hook types muninn no longer uses (PreToolUse since v9, Stop since v10.1)
+ *  — only muninn's own entries are removed from settings.json.
  *  UserPromptSubmit returned in v10 (task map); its stale entries are
  *  replaced by the normal register loop below. */
-const REMOVED_HOOK_TYPES = ["PreToolUse"]
+const REMOVED_HOOK_TYPES = ["PreToolUse", "Stop"]
 
 /** Check if a hook group contains a context-integration command */
 function isMuninnHookGroup(group: { hooks?: Array<{ command?: string }> }): boolean {

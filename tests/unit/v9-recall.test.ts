@@ -103,6 +103,24 @@ describe("v9 Recall", () => {
     expect(result.results.length).toBeGreaterThanOrEqual(1);
   });
 
+  test("search mode matches natural-language queries via OR semantics", async () => {
+    const { rawDb, projectId } = testDb;
+    const inserted = rawDb.run(
+      `INSERT INTO decisions (project_id, title, decision, reasoning, affects, status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [projectId, "Add API rate limiting", "Rate limiting on the public API", "Protect upstream", "[]", "active"],
+    );
+    rawDb.run(
+      `INSERT INTO fts_decisions (rowid, title, decision, reasoning) VALUES (?, ?, ?, ?)`,
+      [Number(inserted.lastInsertRowid), "Add API rate limiting", "Rate limiting on the public API", "Protect upstream"],
+    );
+
+    const result = await recall(testDb.db, projectId, testDb.tempDir, {
+      query: "how do we handle rate limiting in the api",
+    });
+    expect(result.results.some((r) => r.title === "Add API rate limiting")).toBe(true);
+  });
+
   test("plan mode returns related files via FTS", async () => {
     const result = await recall(testDb.db, testDb.projectId, testDb.tempDir, { task: "fix authentication" });
     expect(result.mode).toBe("plan");

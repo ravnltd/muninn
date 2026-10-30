@@ -24,13 +24,11 @@ export async function ensureProject(adapter: DatabaseAdapter, projectPath?: stri
     return existing.id;
   }
 
-  // Detect project rename: if no match by path, check for a project
-  // with the most data that likely IS this project under an old path.
-  // ONLY for local mode — local DBs are project-scoped (one project per DB),
-  // so a stale path means the project was renamed/moved.
-  // In HTTP mode the DB is shared across all projects, so rename detection
-  // would incorrectly merge unrelated projects.
-  if (getConfig().mode !== "http") {
+  // Detect project rename: if no match by path, adopt the project with the
+  // most data under its old path. Opt-in only (MUNINN_RENAME_DETECTION=1):
+  // since v2 every mode uses ONE shared database, so this heuristic re-pathed
+  // a single project into every cwd it ran in and merged unrelated repos.
+  if (getConfig().mode !== "http" && process.env.MUNINN_RENAME_DETECTION === "1") {
     const renamed = await adapter.get<{ id: number; path: string }>(`
       SELECT p.id, p.path FROM projects p
       LEFT JOIN files f ON f.project_id = p.id
