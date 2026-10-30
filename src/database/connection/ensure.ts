@@ -3,7 +3,8 @@
  */
 
 import { existsSync } from "node:fs";
-import { basename, join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type { DatabaseAdapter } from "../adapter.js";
 import { getConfig, getGlobalDb, LOCAL_DB_DIR, LOCAL_DB_NAME } from "./global.js";
 import { closeGlobalDb } from "./global.js";
@@ -13,11 +14,36 @@ import { closeProjectDb } from "./project.js";
 // Project Management
 // ---------------------------------------------------------------------------
 
+/**
+ * The directory a project is keyed by: the main checkout for git worktrees and
+ * subdirectories, $HOME outside any repo. Without this every cwd (/tmp, $HOME,
+ * each worktree) became its own project on the hub.
+ */
+export function resolveProjectRoot(dir: string): string {
+  try {
+    const git = Bun.spawnSync(
+      ["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
+      // Inside git hooks GIT_DIR etc. are set and would override -C
+      { stderr: "ignore", env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_"))) }
+    );
+    if (git.exitCode !== 0) return process.env.HOME || homedir();
+    const [commonDir, toplevel] = git.stdout.toString().trim().split("\n");
+    // Worktrees share the main checkout's .git; submodules and bare repos don't end in /.git
+    return commonDir.endsWith("/.git") ? dirname(commonDir) : toplevel || dir;
+  } catch {
+    return dir; // git not installed: keep the old per-directory behaviour
+  }
+}
+
 export async function ensureProject(adapter: DatabaseAdapter, projectPath?: string): Promise<number> {
-  const path = projectPath || process.cwd();
+  const cwd = projectPath || process.cwd();
+  const path = resolveProjectRoot(cwd);
   const name = basename(path);
 
-  const existing = await adapter.get<{ id: number }>("SELECT id FROM projects WHERE path = ?", [path]);
+  // Legacy rows keyed by the raw directory stay reachable; new ones never get created
+  const existing =
+    (await adapter.get<{ id: number }>("SELECT id FROM projects WHERE path = ?", [path])) ??
+    (cwd !== path ? await adapter.get<{ id: number }>("SELECT id FROM projects WHERE path = ?", [cwd]) : undefined);
 
   if (existing) {
     syncProjectToGlobal(path, name);

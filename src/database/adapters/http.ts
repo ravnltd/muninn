@@ -38,9 +38,11 @@ interface HranaRequest {
   type: "execute" | "batch" | "close";
   stmt?: HranaStatement;
   batch?: {
-    steps: Array<{ stmt: HranaStatement }>;
+    steps: Array<{ stmt: HranaStatement; condition?: HranaCondition }>;
   };
 }
+
+type HranaCondition = { type: "ok"; step: number } | { type: "and"; conds: HranaCondition[] };
 
 interface HranaColumn {
   name: string;
@@ -64,7 +66,7 @@ interface HranaResult {
   type: "ok" | "error";
   response?: {
     type: "execute" | "batch";
-    result?: HranaStmtResult;
+    result?: HranaStmtResult & { step_errors?: Array<HranaError | null> };
     results?: Array<{ type: "ok" | "error"; response?: { result?: HranaStmtResult }; error?: HranaError }>;
   };
   error?: HranaError;
@@ -338,9 +340,11 @@ export class HttpAdapter implements DatabaseAdapter {
       headers.Authorization = `Bearer ${this.config.authToken}`;
     }
 
+    // Always close the stream: an unclosed one holds a sqld connection (and any
+    // open transaction's write lock) until it expires, exhausting the pool.
     const body = JSON.stringify({
       baton: null,
-      requests,
+      requests: [...requests, { type: "close" }],
     });
 
     let lastError: unknown;
@@ -774,7 +778,14 @@ export class HttpAdapter implements DatabaseAdapter {
           want_rows: false,
         } as HranaStatement,
       })),
-      { stmt: { sql: "COMMIT", want_rows: false } as HranaStatement },
+      // COMMIT only if every step succeeded; otherwise closing the stream rolls back
+      {
+        stmt: { sql: "COMMIT", want_rows: false } as HranaStatement,
+        condition: {
+          type: "and",
+          conds: [0, ...statements.map((_, i) => i + 1)].map((step) => ({ type: "ok", step })),
+        } as HranaCondition,
+      },
     ];
 
     const response = await this.executeRequest([
@@ -784,6 +795,9 @@ export class HttpAdapter implements DatabaseAdapter {
       },
     ]);
     this.checkResultErrors(response);
+    // Batch step failures come back as "ok" with the error in step_errors
+    const failed = response.results[0]?.response?.result?.step_errors?.find((e) => e);
+    if (failed) throw new Error(failed.message);
   }
 
   /**
