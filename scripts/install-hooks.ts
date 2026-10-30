@@ -92,6 +92,18 @@ try {
  *  v10: Push delivery — post-read-context.sh injects precomputed per-file
  *  context (additionalContext) whenever Claude reads or edits a file. */
 const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>> = {
+  // Guard, not ceremony: blocks Claude attribution in commits/PRs on every machine.
+  PreToolUse: [
+    {
+      matcher: "Bash|mcp__.*github.*",
+      hooks: [
+        {
+          type: "command",
+          command: "~/.claude/hooks/context-integration/block-attribution.sh",
+        },
+      ],
+    },
+  ],
   PostToolUse: [
     {
       matcher: 'tool == "Read" || tool == "Edit" || tool == "Write"',
@@ -160,11 +172,10 @@ const MUNINN_HOOKS: Record<string, Array<{ matcher: string; hooks: Array<{ type:
   ],
 }
 
-/** Hook types muninn no longer uses (PreToolUse since v9, Stop since v10.1)
- *  — only muninn's own entries are removed from settings.json.
- *  UserPromptSubmit returned in v10 (task map); its stale entries are
- *  replaced by the normal register loop below. */
-const REMOVED_HOOK_TYPES = ["PreToolUse", "Stop"]
+/** Hook types muninn no longer uses (Stop since v10.1) — only muninn's own
+ *  entries are removed from settings.json. PreToolUse returned in v10.1
+ *  (attribution guard); stale entries are replaced by the register loop. */
+const REMOVED_HOOK_TYPES = ["Stop"]
 
 /** Check if a hook group contains a context-integration command */
 function isMuninnHookGroup(group: { hooks?: Array<{ command?: string }> }): boolean {
@@ -217,6 +228,10 @@ for (const [type, muninnEntries] of Object.entries(MUNINN_HOOKS)) {
   // Append fresh muninn entries
   hooks[type] = [...filtered, ...muninnEntries]
 }
+
+// Never attribute commits or PRs to Claude Code (empty string = no line)
+settings.attribution = { commit: "", pr: "" }
+settings.includeCoAuthoredBy = false
 
 // Atomic write: write to .tmp then rename
 const tmp = SETTINGS + ".tmp"

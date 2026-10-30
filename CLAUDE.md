@@ -26,7 +26,7 @@ All hook context comes from precomputed `.muninn/context/` files (refreshed by `
 - **Runtime:** Bun, TypeScript strict, SQLite via libsql/sqld
 - **Hub:** sqld at `MUNINN_PRIMARY_URL` (all machines share one brain)
 - **Mode:** HTTP (stateless, multi-machine) or local (single machine)
-- **v10 core:** `src/v9/context-cache.ts` (precompute), `src/v9/prompt-map.ts` (task map), `src/v9/purpose-summarizer.ts` (LLM purposes), `src/v9/session-digest.ts` (PreCompact), `scripts/install-hooks.ts` (6 hooks / 5 events)
+- **v10 core:** `src/v9/context-cache.ts` (precompute), `src/v9/prompt-map.ts` (task map), `src/v9/purpose-summarizer.ts` (LLM purposes), `src/v9/session-digest.ts` (PreCompact), `scripts/install-hooks.ts` (7 hooks / 6 events)
 - **Schema:** append-only migrations (`src/database/migrations/versions.ts`, fragility 9). Table usage map: `docs/SCHEMA-AUDIT.md`
 - **License:** AGPL-3.0-only
 
