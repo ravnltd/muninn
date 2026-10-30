@@ -78,6 +78,7 @@ import { handleWorkflowCommand } from "./commands/workflow";
 import {
   closeAll,
   ensureProject,
+  getConfig,
   getGlobalDb,
   getProjectDb,
   getProjectDbPath,
@@ -231,11 +232,13 @@ async function main(): Promise<void> {
   let db: DatabaseAdapter;
   const dbPath = getProjectDbPath();
 
-  // Auto-init if no DB exists
-  if (!existsSync(dbPath) && dbPath.includes(LOCAL_DB_DIR)) {
+  // Auto-init if no DB exists. Local mode only: in http mode the hub is the
+  // database, and init would replay the full schema.sql snapshot against it.
+  const isLocal = getConfig().mode === "local";
+  if (isLocal && !existsSync(dbPath) && dbPath.includes(LOCAL_DB_DIR)) {
     console.error("📁 No context database found. Initializing...\n");
     db = await initProjectDb(process.cwd());
-  } else if (command === "analyze" && !existsSync(join(process.cwd(), LOCAL_DB_DIR, LOCAL_DB_NAME))) {
+  } else if (isLocal && command === "analyze" && !existsSync(join(process.cwd(), LOCAL_DB_DIR, LOCAL_DB_NAME))) {
     // Allow analyze to init if needed
     db = await initProjectDb(process.cwd());
   } else {
