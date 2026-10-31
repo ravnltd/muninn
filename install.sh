@@ -155,10 +155,11 @@ echo ""
 if command -v crontab &> /dev/null; then
     CRON_LINE="*/10 * * * * $SCRIPT_DIR/scripts/auto-update.sh # muninn-auto-update"
     if [ "${MUNINN_AUTO_UPDATE:-1}" = "0" ]; then
-        (crontab -l 2>/dev/null | grep -v 'muninn-auto-update') | crontab -
+        { crontab -l 2>/dev/null | grep -v 'muninn-auto-update' || true; } | crontab -
         echo "✓ Auto-update disabled"
     else
-        (crontab -l 2>/dev/null | grep -v 'muninn-auto-update'; echo "$CRON_LINE") | crontab -
+        # || true: under set -e an empty grep result would abort before echo and wipe the line
+        { crontab -l 2>/dev/null | grep -v 'muninn-auto-update' || true; echo "$CRON_LINE"; } | crontab -
         echo "✓ Auto-update every 10 min (log: ${MUNINN_HOME:-$HOME/.muninn}/auto-update.log)"
     fi
 else
