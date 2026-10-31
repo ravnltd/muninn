@@ -203,6 +203,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Handle projects commands (hub-wide, not tied to the cwd's project)
+  if (command === "projects") {
+    const { handleProjectsCommand } = await import("./commands/projects.js");
+    const db = await getProjectDb();
+    try {
+      await handleProjectsCommand(db, subArgs);
+    } finally {
+      closeAll();
+    }
+    return;
+  }
+
   // Handle pattern commands (uses global DB only)
   if (command === "pattern") {
     await handlePatternCommand(await getGlobalDb(), subArgs);

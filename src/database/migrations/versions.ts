@@ -2460,4 +2460,33 @@ export const MIGRATIONS: Migration[] = [
       return remaining.length === 0;
     },
   },
+  {
+    version: 52,
+    name: "project_repo_identity",
+    description:
+      "Identify projects by git remote (repo_key = owner/repo) and record every checkout " +
+      "per machine, so the same repo on several machines or paths is one project",
+    up: `
+      ALTER TABLE projects ADD COLUMN repo_key TEXT DEFAULT NULL;
+      CREATE INDEX IF NOT EXISTS idx_projects_repo_key ON projects(repo_key);
+      CREATE TABLE IF NOT EXISTS project_locations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        machine TEXT NOT NULL,
+        path TEXT NOT NULL,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(machine, path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_project_locations_project ON project_locations(project_id);
+    `,
+    validate: (db) => {
+      const cols = db.query<{ name: string }, []>("PRAGMA table_info(projects)").all();
+      const table = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_locations'",
+        )
+        .get();
+      return cols.some((c) => c.name === "repo_key") && !!table;
+    },
+  },
 ];

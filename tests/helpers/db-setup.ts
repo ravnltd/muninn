@@ -43,8 +43,19 @@ export function createTestDb(): TestDb {
       stack TEXT,
       status TEXT DEFAULT 'active',
       mode TEXT DEFAULT 'exploring',
+      previous_paths TEXT DEFAULT '[]',
+      repo_key TEXT DEFAULT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE project_locations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      machine TEXT NOT NULL,
+      path TEXT NOT NULL,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(machine, path)
     );
 
     -- Files

@@ -3,91 +3,76 @@
  */
 
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { hostname } from "node:os";
+import { basename, join } from "node:path";
 import type { DatabaseAdapter } from "../adapter.js";
-import { getConfig, getGlobalDb, LOCAL_DB_DIR, LOCAL_DB_NAME } from "./global.js";
+import { getGlobalDb, LOCAL_DB_DIR, LOCAL_DB_NAME } from "./global.js";
 import { closeGlobalDb } from "./global.js";
+import { resolveProjectRoot, resolveRepoKey } from "./identity.js";
 import { closeProjectDb } from "./project.js";
+
+export { resolveProjectRoot } from "./identity.js";
 
 // ---------------------------------------------------------------------------
 // Project Management
 // ---------------------------------------------------------------------------
 
-/**
- * The directory a project is keyed by: the main checkout for git worktrees and
- * subdirectories, $HOME outside any repo. Without this every cwd (/tmp, $HOME,
- * each worktree) became its own project on the hub.
- */
-export function resolveProjectRoot(dir: string): string {
-  try {
-    const git = Bun.spawnSync(
-      ["git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"],
-      // Inside git hooks GIT_DIR etc. are set and would override -C
-      { stderr: "ignore", env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_"))) }
-    );
-    if (git.exitCode !== 0) return process.env.HOME || homedir();
-    const [commonDir, toplevel] = git.stdout.toString().trim().split("\n");
-    // Worktrees share the main checkout's .git; submodules and bare repos don't end in /.git
-    return commonDir.endsWith("/.git") ? dirname(commonDir) : toplevel || dir;
-  } catch {
-    return dir; // git not installed: keep the old per-directory behaviour
-  }
-}
+type Match = { id: number; prio: number; repo_key: string | null; loc_project: number | null; loc_fresh: number | null };
+
+// One round trip, best match first: this machine's recorded checkout, then the
+// root path, then a legacy row keyed by the raw cwd, then the repo's remote.
+const FIND_PROJECT = `
+  SELECT m.id, m.prio, p.repo_key,
+    (SELECT project_id FROM project_locations WHERE machine = ? AND path = ?) AS loc_project,
+    (SELECT last_seen > datetime('now', '-1 day') FROM project_locations WHERE machine = ? AND path = ?) AS loc_fresh
+  FROM (
+    SELECT project_id AS id, 1 AS prio FROM project_locations WHERE machine = ? AND path = ?
+    UNION ALL SELECT id, 2 FROM projects WHERE path = ?
+    UNION ALL SELECT id, 3 FROM projects WHERE path = ?
+    UNION ALL SELECT id, 4 FROM projects WHERE repo_key = ?
+  ) m JOIN projects p ON p.id = m.id
+  ORDER BY m.prio, m.id LIMIT 1`;
 
 export async function ensureProject(adapter: DatabaseAdapter, projectPath?: string): Promise<number> {
   const cwd = projectPath || process.cwd();
   const path = resolveProjectRoot(cwd);
-  const name = basename(path);
+  const repoKey = resolveRepoKey(path);
+  const machine = hostname();
 
-  // Legacy rows keyed by the raw directory stay reachable; new ones never get created
-  const existing =
-    (await adapter.get<{ id: number }>("SELECT id FROM projects WHERE path = ?", [path])) ??
-    (cwd !== path ? await adapter.get<{ id: number }>("SELECT id FROM projects WHERE path = ?", [cwd]) : undefined);
-
-  if (existing) {
-    syncProjectToGlobal(path, name);
-    return existing.id;
-  }
-
-  // Detect project rename: if no match by path, adopt the project with the
-  // most data under its old path. Opt-in only (MUNINN_RENAME_DETECTION=1):
-  // since v2 every mode uses ONE shared database, so this heuristic re-pathed
-  // a single project into every cwd it ran in and merged unrelated repos.
-  if (getConfig().mode !== "http" && process.env.MUNINN_RENAME_DETECTION === "1") {
-    const renamed = await adapter.get<{ id: number; path: string }>(`
-      SELECT p.id, p.path FROM projects p
-      LEFT JOIN files f ON f.project_id = p.id
-      GROUP BY p.id
-      ORDER BY COUNT(f.id) DESC
-      LIMIT 1
-    `);
-
-    if (renamed && renamed.path !== path) {
-      // Preserve old path in rename history
-      const prev = await adapter.get<{ previous_paths: string | null }>(
-        "SELECT previous_paths FROM projects WHERE id = ?",
-        [renamed.id]
+  const loc = [machine, path];
+  const match = await adapter.get<Match>(FIND_PROJECT, [...loc, ...loc, ...loc, path, cwd, repoKey]);
+  const id = match
+    ? match.id
+    : Number(
+        (await adapter.run("INSERT INTO projects (path, name, repo_key) VALUES (?, ?, ?)", [path, basename(path), repoKey]))
+          .lastInsertRowid
       );
-      const history: string[] = prev?.previous_paths ? JSON.parse(prev.previous_paths) : [];
-      if (!history.includes(renamed.path)) {
-        history.push(renamed.path);
-      }
-      await adapter.run("UPDATE projects SET path = ?, name = ?, previous_paths = ? WHERE id = ?", [
-        path,
-        name,
-        JSON.stringify(history),
-        renamed.id,
-      ]);
-      await syncProjectToGlobal(path, name);
-      return renamed.id;
-    }
+
+  // A legacy per-directory row is used as-is but never becomes this checkout's identity
+  if (match?.prio !== 3) await recordCheckout(adapter, match, { id, machine, path, repoKey });
+
+  syncProjectToGlobal(path, basename(path));
+  return id;
+}
+
+/** Remember this checkout and the repo's key; writes only when something changed or went stale. */
+async function recordCheckout(
+  adapter: DatabaseAdapter,
+  match: Match | null | undefined,
+  c: { id: number; machine: string; path: string; repoKey: string | null }
+): Promise<void> {
+  const statements: Array<{ sql: string; params: unknown[] }> = [];
+  if (match && c.repoKey && match.repo_key !== c.repoKey) {
+    statements.push({ sql: "UPDATE projects SET repo_key = ? WHERE id = ?", params: [c.repoKey, c.id] });
   }
-
-  const result = await adapter.run("INSERT INTO projects (path, name) VALUES (?, ?)", [path, name]);
-
-  await syncProjectToGlobal(path, name);
-  return Number(result.lastInsertRowid);
+  if (match?.loc_project !== c.id || !match?.loc_fresh) {
+    statements.push({
+      sql: `INSERT INTO project_locations (project_id, machine, path) VALUES (?, ?, ?)
+            ON CONFLICT(machine, path) DO UPDATE SET project_id = excluded.project_id, last_seen = CURRENT_TIMESTAMP`,
+      params: [c.id, c.machine, c.path],
+    });
+  }
+  if (statements.length > 0) await adapter.batch(statements);
 }
 
 // ---------------------------------------------------------------------------
