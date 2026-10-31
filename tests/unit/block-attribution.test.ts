@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { resolve } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const HOOK = resolve(import.meta.dir, "../../hooks/block-attribution.sh");
 
@@ -32,5 +34,28 @@ describe("block-attribution hook", () => {
   test("allows non-git commands and non-git tools that mention the pattern", () => {
     expect(run(bash('echo "Co-Authored-By: Claude" > notes.txt'))).toBe(0);
     expect(run({ tool_name: "Write", tool_input: { content: "Generated with Claude Code" } })).toBe(0);
+  });
+
+  describe("git commit -F / --file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "attr-"));
+    const attributed = "fix: thing\n\n" + "Co-Authored-By" + ": Claude <noreply@" + "anthropic.com>";
+    writeFileSync(join(dir, "bad.txt"), attributed);
+    writeFileSync(join(dir, "good.txt"), "fix: thing\n");
+
+    test("blocks -F with an attributed file", () => {
+      expect(run(bash(`git commit -F ${join(dir, "bad.txt")}`))).toBe(2);
+    });
+
+    test("blocks --file= with a relative path resolved via cwd", () => {
+      expect(run({ ...bash("git commit --file=bad.txt"), cwd: dir })).toBe(2);
+    });
+
+    test("allows -F with a clean file", () => {
+      expect(run(bash(`git commit -F ${join(dir, "good.txt")}`))).toBe(0);
+    });
+
+    test("allows a missing file", () => {
+      expect(run({ ...bash("git commit -F nope.txt"), cwd: dir })).toBe(0);
+    });
   });
 });

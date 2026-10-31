@@ -8,6 +8,17 @@
 input=$(cat)
 
 attribution='co-authored-by:.{0,80}(claude|anthropic)|generated with \[?claude code|noreply@anthropic\.com'
+# git commit -F/--file: the message lives in a file, so append its contents to the scanned text.
+if echo "$input" | grep -qE 'git commit'; then
+  cwd=$(echo "$input" | grep -oE '"cwd" *: *"[^"]*"' | head -1 | sed -E 's/^"cwd" *: *"(.*)"$/\1/')
+  for f in $(echo "$input" | grep -oE '(^|[ "])(-F ?|--file[ =])[^ "\\]+' | sed -E 's/^[ "]?(-F ?|--file[ =])//'); do
+    [ "$f" = "-" ] && continue
+    case "$f" in /*) ;; *) f="$cwd/$f" ;; esac
+    [ -r "$f" ] && input="$input
+$(head -c 65536 "$f" 2>/dev/null)"
+  done
+fi
+
 echo "$input" | grep -qiE "$attribution" || exit 0
 
 tool=$(echo "$input" | grep -oE '"tool_name" *: *"[^"]*"' | head -1)
