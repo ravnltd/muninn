@@ -149,6 +149,22 @@ else
     echo "   claude mcp add --scope user muninn -- muninn-mcp"
 fi
 
+# Auto-update: cron fast-forwards this install to origin/main every 10 minutes,
+# verifies it and rolls back on failure. MUNINN_AUTO_UPDATE=0 opts out.
+echo ""
+if command -v crontab &> /dev/null; then
+    CRON_LINE="*/10 * * * * $SCRIPT_DIR/scripts/auto-update.sh # muninn-auto-update"
+    if [ "${MUNINN_AUTO_UPDATE:-1}" = "0" ]; then
+        (crontab -l 2>/dev/null | grep -v 'muninn-auto-update') | crontab -
+        echo "✓ Auto-update disabled"
+    else
+        (crontab -l 2>/dev/null | grep -v 'muninn-auto-update'; echo "$CRON_LINE") | crontab -
+        echo "✓ Auto-update every 10 min (log: ${MUNINN_HOME:-$HOME/.muninn}/auto-update.log)"
+    fi
+else
+    echo "⚠️  crontab not found — auto-update not installed"
+fi
+
 # Check if in PATH
 PATH_OK=false
 if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then

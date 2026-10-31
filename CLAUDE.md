@@ -32,6 +32,8 @@ All hook context comes from precomputed `.muninn/context/` files (refreshed by `
 
 ### Install / Update
 
+Installs update themselves: `install.sh` adds a cron job that runs `scripts/auto-update.sh` every 10 minutes. It fast-forwards to `origin/main`, checks the CLI and MCP server still build, rolls back if not, and skips checkouts with local changes or local commits. Log: `~/.muninn/auto-update.log`. Opt out with `MUNINN_AUTO_UPDATE=0 ./install.sh`.
+
 ```bash
 # Update existing (history was rewritten — pull may not fast-forward)
 cd ~/.local/share/muninn && git fetch origin && git reset --hard origin/main && bun install && ./install.sh
