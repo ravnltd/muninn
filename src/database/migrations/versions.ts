@@ -2489,4 +2489,30 @@ export const MIGRATIONS: Migration[] = [
       return cols.some((c) => c.name === "repo_key") && !!table;
     },
   },
+  {
+    version: 53,
+    name: "drop_dead_tables_again",
+    description:
+      "Repeat of v51: the hub was rebuilt and stamped past v51, and the inline GLOBAL_DDL kept " +
+      "recreating deployments, so the 7 dead tables survived. GLOBAL_DDL no longer creates them; " +
+      "all had 0 rows on the hub and no runtime code reads or writes them",
+    up: `
+      DROP TABLE IF EXISTS agent_handoffs;
+      DROP TABLE IF EXISTS agent_profiles;
+      DROP TABLE IF EXISTS agent_scratchpad;
+      DROP TABLE IF EXISTS deployments;
+      DROP TABLE IF EXISTS mode_transitions;
+      DROP TABLE IF EXISTS quality_standards;
+      DROP TABLE IF EXISTS ab_tests;
+    `,
+    validate: (db) => {
+      const remaining = db
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN " +
+            "('agent_handoffs','agent_profiles','agent_scratchpad','deployments','mode_transitions','quality_standards','ab_tests')",
+        )
+        .all();
+      return remaining.length === 0;
+    },
+  },
 ];
