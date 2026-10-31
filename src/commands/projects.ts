@@ -155,11 +155,21 @@ async function countRows(db: DatabaseAdapter, tables: string[], projectId: numbe
   return counts;
 }
 
+// Pages keep each hub response under sqld's size limit (file rows carry embeddings)
+async function allPaged(db: DatabaseAdapter, sql: string, params: unknown[], page = 100): Promise<unknown[]> {
+  const rows: unknown[] = [];
+  for (let offset = 0; ; offset += page) {
+    const batch = await db.all(`${sql} LIMIT ${page} OFFSET ${offset}`, params);
+    rows.push(...batch);
+    if (batch.length < page) return rows;
+  }
+}
+
 async function writeBackup(db: DatabaseAdapter, tables: string[], from: number, into: number): Promise<string> {
   const data: Record<string, unknown[]> = {
     projects: await db.all("SELECT * FROM projects WHERE id IN (?, ?)", [from, into]),
   };
-  for (const t of tables) data[t] = await db.all(`SELECT * FROM ${t} WHERE project_id IN (?, ?)`, [from, into]);
+  for (const t of tables) data[t] = await allPaged(db, `SELECT * FROM ${t} WHERE project_id IN (?, ?) ORDER BY rowid`, [from, into]);
   const dir = join(process.env.MUNINN_HOME || join(process.env.HOME || homedir(), ".muninn"), "merge-backups");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${from}-into-${into}.json`);
