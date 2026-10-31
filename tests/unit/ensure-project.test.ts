@@ -13,7 +13,8 @@ const git = (cwd: string, ...args: string[]) =>
     env: Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_"))),
   });
 
-describe("project identity", () => {
+// Needs git; the CI image has none (the pre-commit hook runs these on every commit)
+describe.skipIf(!Bun.which("git"))("project identity", () => {
   let root: string;
   let repo: string;
   let worktree: string;

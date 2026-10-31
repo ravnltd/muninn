@@ -13,7 +13,8 @@ function sh(cwd: string, ...cmd: string[]): string {
   return p.stdout.toString().trim();
 }
 
-describe("auto-update.sh", () => {
+// Needs git; the CI image has none (the pre-commit hook runs these on every commit)
+describe.skipIf(!Bun.which("git"))("auto-update.sh", () => {
   let root: string;
   let dev: string;
   let install: string;
